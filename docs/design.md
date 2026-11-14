@@ -51,6 +51,44 @@ Metres, seconds, metres per second. These live in `src/shared/constants.ts`.
 
 Braking distance is speed squared divided by twice `BRAKE`. The speed that can stop within a distance `d` is the square root of `2 * BRAKE * d`. Call that `safeSpeed(d)`.
 
+The timers the rules use are constants too.
+
+| Name | Value | Meaning |
+|---|---|---|
+| `PERMIT_FRESH` | 5 | A permit older than this is dropped |
+| `PERMIT_INTERVAL` | 1 | How often the control centre sends permits |
+| `POSITION_INTERVAL` | 1 | How often a train broadcasts its position |
+| `REQUEST_REPEAT` | 2 | How often a train repeats a lock request |
+| `MERGE_TIMEOUT` | 10 | Silence from the merge actor before a train uses clock slots |
+| `STATION_TIMEOUT` | 10 | Silence from the station actor before a stopped train uses the fixed split |
+| `RESUME_SETTLE` | 5 | How long a local actor grants nothing after it is switched back on |
+| `SLOT_LENGTH`, `SLOT_WINDOW`, `SLOT_COUNT` | 60, 15, 4 | The clock slots |
+
+### The parameter file
+
+These values are the defaults. A parameter file can change them for one run. It is one JSON file, and every part of it is optional.
+
+```json
+{
+  "name": "centre outage",
+  "physics": { "maxSpeed": 45, "brake": 0.9, "sensorRange": 300 },
+  "timers": { "mergeTimeout": 10 },
+  "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
+  "start": { "centre": true, "radioDrop": 0 },
+  "failures": [
+    { "at": 300, "centre": false },
+    { "at": 480, "centre": true },
+    { "at": 600, "breakDown": 3 }
+  ],
+  "runLength": 3600
+}
+```
+
+- `src/shared/params.ts` reads and checks the file, and lists every problem at once.
+- `applyParams` replaces the constants before a run starts. The constants are declared with `let`, so every file that imports one sees the new value. Read a constant where you use it, inside a function. A copy made when a file loads keeps the old value.
+- The map is not a parameter.
+- `npm run sim -- params/centre-outage.json` runs a file with our program and with the baseline, and prints both. Example files are in `params/`.
+
 ## The actors
 
 - A train knows its own state, the timetable, and whatever messages it has received. It never reads another train's state directly.
@@ -150,6 +188,11 @@ The engine calls `decide` on every train each tick, applies the returned acceler
 - The path follows the `nextTrack` the train returned on the previous tick. When `nextTrack` is null, the path ends at the end of the current track.
 - A train may change `nextTrack` on any tick until its front crosses the end of the track.
 - It reports the nearest obstacle on the path, whether that is a train or the edge of an occupied junction zone.
+- The distance is from this train's front to the rear of the obstacle.
+
+A message sent on tick t is in the inbox on tick t + 1. This holds for trains, local actors and the control centre.
+
+A train enters at the start of A or B at `SIGHT_SPEED`, the one speed that can always stop within what it sees. It waits outside the map until the first `SENSOR_RANGE + TRAIN_LENGTH` metres of its entry track are clear, and the wait counts as delay. Trains on one entry track enter in timetable order.
 
 ## Train rules
 
@@ -158,6 +201,11 @@ The engine calls `decide` on every train each tick, applies the returned acceler
 Each train broadcasts a `position` message every second over long range.
 
 A train knows who its leader is. On A and B the timetable names it. On EXIT the merge actor names it in the `follow` field of the grant.
+
+"No leader" and "leader unknown" are different.
+
+- **No leader.** The timetable gives `leader: null` for the first train on an entry track, and a junction grant gives `follow: null` when no train has entered EXIT. The line ahead is clear. The train has no limit point, so only `MAX_SPEED`, `sightAhead` and stop points limit it. It shows `full`.
+- **Leader unknown.** A train that left on a clock slot does not know who is ahead. Nor does a train whose junction grant names its own ID in `follow`, which is how a merge actor that was just switched back on says it does not know. The train stays at `SIGHT_SPEED` or below and shows `blind`.
 
 The limit point is the leader's last reported rear minus `MARGIN`, however old that report is. The leader cannot have moved backwards, so the track up to that point is clear.
 
@@ -215,14 +263,17 @@ When permits return, the train follows them again on the next tick. It keeps any
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
+6. A broken-down train brakes, keeps broadcasting its position and sends no lock requests.
 
 The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave. If two trains ask for the same free platform on the same tick, the train with the earlier `enterAt` gets it.
+
+The station actor grants only to the front train on each entry track. Trains on one entry track stand in a queue and cannot pass each other. A platform given to a train further back could never be reached, and the queue would stop for good. So while a train with no lock is still asking, the actor refuses every train that entered the same entry track after it.
 
 The train counts its own dwell time from the moment it stops in the platform.
 
 ### Station switched off
 
-A train stopped at the end of its entry track with no reply uses the fixed split. Track A owns P1 and P2. Track B owns P3 and P4.
+A train stopped at the end of its entry track with no reply for `STATION_TIMEOUT` uses the fixed split. The time counts from the later of its first request and the last reply it heard. Track A owns P1 and P2. Track B owns P3 and P4.
 
 ```
 for each platform my entry track owns, lowest number first:
@@ -260,6 +311,16 @@ The station actor cannot tell a dead sensor from a train arriving, or the sensor
 3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted. The merge actor never refuses the train that holds the lock, and a train that holds the grant ignores any later `JUNCTION` refusal.
 4. On a grant the train stops asking, sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
 5. The merge actor releases the lock when its sensor shows the junction zone is empty again.
+6. A grant that is not used runs out. If the junction zone has not become occupied within `MERGE_TIMEOUT` of a grant, the merge actor releases it. This covers a train that breaks down in its platform after being granted. A train that cannot enter the zone within `MERGE_TIMEOUT - REQUEST_REPEAT` of its grant drops the grant and asks again, so it never enters on a grant the actor has released.
+
+### A local actor switched back on
+
+The engine steps a local actor only while its switch is on, so an actor that comes back still has the memory it had when it went off. Trains may have used the fixed split or clock slots in between.
+
+- For `RESUME_SETTLE` seconds after it comes back, an actor grants nothing and refuses every request. A waiting train hears a reply, so it stops falling back.
+- The station actor keeps every lock it had. It releases a lock whose train it never saw arrive only if the platform reads empty and the holder stayed silent for the whole settle time.
+- The merge actor does not know who last entered EXIT. Its first grant after coming back names the granted train's own ID in `follow`, which the train reads as "leader unknown".
+- A platform that read occupied with no lock on it must read empty for `RESUME_SETTLE` before it is granted. A train on the fixed split may still be near it.
 
 ### Merge switched off
 
@@ -295,7 +356,9 @@ The baseline's centre uses no locks, so a local fault needs its own rule.
 - A dead platform sensor means the centre cannot tell if that platform is clear. It treats the platform as occupied and permits no train into it.
 - A dead station actor or merge actor means the centre treats that piece of track as unavailable. It permits no train through it.
 
-The team has not yet decided whether the dead actor rule also applies to the permits the centre sends our trains.
+The dead actor and dead sensor rules apply to the baseline only. For our trains the centre never holds a train that its locks would let through, and it does not order the junction. Its `untilX` only keeps a train `MARGIN` behind the true rear of the train ahead, and its `nextTrack` only suggests a platform. Otherwise our trains would stop in a local fault exactly as the baseline does, and the centre could deadlock against the merge actor.
+
+The baseline train also brakes for `sightAhead`, as a driver would. The centre is safe without it.
 
 ## Metrics
 
@@ -308,14 +371,17 @@ The team has not yet decided whether the dead actor rule also applies to the per
 
 | Folder | Holds |
 |---|---|
-| `src/shared/` | Types and constants |
-| `src/engine/` | Clock, physics, map, radio, timetable, failure switches, metrics |
+| `src/shared/` | Types, constants, the map and the parameter file |
+| `src/engine/` | Clock, physics, radio, timetable, failure switches, metrics |
+| `src/scenarios/` | The demo's scenarios, as data only |
+| `src/runner/` | Live and batch runs, parameter file runs, and the two programs |
 | `src/train/` | The train agent |
 | `src/locks/` | Station actor, merge actor, platform sensors |
 | `src/baseline/` | The control centre, used by both train programs, and the baseline train agent |
-| `src/ui/` | Canvas, controls, metrics panel |
+| `src/ui/` | The three.js view, controls, metrics panel |
+| `params/` | Example parameter files |
 
-Stack: TypeScript, Vite, a canvas, and Vitest for tests. No server.
+Stack: TypeScript, Vite, three.js for the view, and Vitest for tests. No server.
 
 ## Stretch goals
 
