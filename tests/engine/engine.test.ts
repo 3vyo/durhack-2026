@@ -416,6 +416,63 @@ describe('Engine overlay facts', () => {
   });
 });
 
+describe('Engine leader from a junction grant', () => {
+  // Train 1 enters on A and broadcasts its position every tick. Train 2 enters on B, accelerates
+  // into merge range at about 146 s, and asks for the junction. The merge actor grants it.
+  function program(follow: number | null): TrainProgram {
+    const merge: LocalActor = {
+      id: 'merge',
+      step: (_now, inbox) =>
+        inbox.flatMap((m: Message): Outgoing[] =>
+          m.type === 'lockRequest' && m.resource === 'JUNCTION'
+            ? [{ msg: { type: 'lockGrant', to: m.from, resource: 'JUNCTION', follow }, range: 'short' }]
+            : [],
+        ),
+    };
+    return {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          const outbox: Outgoing[] = [];
+          if (id === 1) {
+            outbox.push({
+              msg: { type: 'position', from: 1, pos: input.self.pos, speed: input.self.speed, sentAt: input.now },
+              range: 'long',
+            });
+          } else {
+            outbox.push({ msg: { type: 'lockRequest', from: 2, resource: 'JUNCTION' }, range: 'short' });
+          }
+          return { accel: id === 1 ? 0 : ACCEL, nextTrack: 'P3', outbox, mode: 'blind' };
+        },
+      }),
+      makeActors: () => [merge],
+      makeCentre: () => null,
+    };
+  }
+  const tt = (leaderOfTwo: number | null): TimetableEntry[] => [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: leaderOfTwo, dwell: 30 },
+  ];
+  const train2 = (e: Engine) => e.snapshot().trains.find((t) => t.id === 2)!;
+
+  it('follows the train the merge actor names, whatever the timetable said', () => {
+    const engine = new Engine(config(tt(null), 300, program(1)));
+    while (engine.now < 140) engine.step();
+    expect(train2(engine).leaderAge).toBeNull();
+    while (engine.now < 152) engine.step();
+    expect(train2(engine).leaderAge).not.toBeNull();
+    expect(train2(engine).leaderAge as number).toBeLessThan(0.5);
+  });
+
+  it('stops showing the entry-track leader once the merge actor says there is no train ahead', () => {
+    const engine = new Engine(config(tt(1), 300, program(null)));
+    while (engine.now < 140) engine.step();
+    expect(train2(engine).leaderAge as number).toBeLessThan(0.5);
+    while (engine.now < 152) engine.step();
+    expect(train2(engine).leaderAge).toBeNull();
+  });
+});
+
 describe('Engine display reason', () => {
   function withReason(reason: unknown): TrainProgram {
     return {

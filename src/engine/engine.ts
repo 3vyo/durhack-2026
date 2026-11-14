@@ -280,8 +280,15 @@ export class Engine {
       } else if (m.type === 'permit') {
         rt.lastPermitAt = now;
       } else if (m.type === 'lockGrant') {
-        if (m.resource === 'JUNCTION') rt.lastGrants.junction = true;
-        else rt.lastGrants.platform = m.resource;
+        if (m.resource === 'JUNCTION') {
+          rt.lastGrants.junction = true;
+          // On EXIT the merge actor names the train ahead, or says there is none. That replaces
+          // the entry-track leader from the timetable, which is no longer the train in front.
+          rt.leaderId = m.follow;
+          rt.lastLeaderAt = null;
+        } else {
+          rt.lastGrants.platform = m.resource;
+        }
       }
     }
   }
