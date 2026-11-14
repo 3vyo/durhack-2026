@@ -175,7 +175,7 @@ export interface TrainOutput {
   accel: number;             // between -BRAKE and ACCEL
   nextTrack: TrackId | null; // where to go at the end of the current track
   outbox: Outgoing[];
-  mode: 'central' | 'full' | 'stale' | 'blind'; // for the display only
+  mode: 'central' | 'radio' | 'full' | 'stale' | 'blind'; // for the display only
 }
 
 export interface TrainAgent {
@@ -278,7 +278,8 @@ The display labels each train with a mode.
 
 | Mode | Meaning |
 |---|---|
-| central | The train holds a permit under `PERMIT_FRESH` seconds old and obeys it. This label takes priority over the other three |
+| central | The train holds a permit under `PERMIT_FRESH` seconds old and obeys it. This label takes priority over the others |
+| radio | A baseline train moving on a radio working permit (`caution: true`) under `PERMIT_FRESH` seconds old. Our trains never show it, because they ignore those permits |
 | full | Leader's report is under `FRESH` seconds old |
 | stale | Leader's report is older |
 | blind | No report from the leader, or leader unknown |
@@ -399,7 +400,7 @@ A toggle swaps in a baseline. A central controller sees the true state of every 
 When the centre has been down for `RADIO_WORKING_DELAY` seconds, staff start moving the stopped trains by radio. This is today's "emergency special working". The 20 minutes is from a 2019 Modern Railways article on it.
 
 - Staff release one stopped train every `RADIO_RELEASE_GAP` seconds, the one furthest along first. The time per train is our assumption. No source gives one.
-- Staff know where every train is and make the same decisions as the centre. Their permits carry `caution: true`, and a train holding one stays at `SIGHT_SPEED` or below.
+- Staff know where every train is and make the same decisions as the centre. Their permits carry `caution: true`, and a train holding one stays at `SIGHT_SPEED` or below. It shows the `radio` mode on screen.
 - The permits go over the radio, so the radio slider drops them. With the radio fully down, no train moves until the centre is back.
 - When the centre comes back it takes over at once, unless the slow restart is on.
 

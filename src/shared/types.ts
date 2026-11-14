@@ -53,7 +53,7 @@ export interface TrainOutput {
   accel: number;             // between -BRAKE and ACCEL
   nextTrack: TrackId | null; // where to go at the end of the current track
   outbox: Outgoing[];
-  mode: 'central' | 'full' | 'stale' | 'blind'; // for the display only
+  mode: 'central' | 'radio' | 'full' | 'stale' | 'blind'; // for the display only
 }
 
 export interface TrainAgent {
