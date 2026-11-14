@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "batch": "vite-node src/runner/batch-cli.ts",
-    "sim": "vite-node src/runner/params-cli.ts"
+    "sim": "vite-node src/runner/params-cli.ts",
+    "demo-check": "node scripts/demo-check.mjs"
   },
   "dependencies": {
     "three": "0.187.0"

@@ -88,6 +88,13 @@ baselineView.onPick((id) => {
 oursView.onPick((id) => {
   selected.ours = id;
 });
+// The demo check (scripts/demo-check.mjs) opens the page with ?check and reads where the
+// trains are, so it can click a real one. The page never reads this itself.
+if (new URLSearchParams(location.search).has('check')) {
+  (window as unknown as { demoCheck: unknown }).demoCheck = {
+    trainPoints: () => oursView.trainScreenPoints(),
+  };
+}
 const baselineMap = createMinimap(panel.baselineMinimap);
 const oursMap = createMinimap(panel.oursMinimap);
 window.addEventListener('resize', () => {
