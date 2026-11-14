@@ -1,3 +1,7 @@
+// Placeholder tests: "gives actors whose step sends nothing yet" checks the placeholder
+// steps. Delete it in the commit that makes either step send something. Do not edit it
+// to pass.
+
 import { describe, expect, it } from 'vitest';
 import { makeActors } from '../../src/locks';
 import type { SensorReadings, TimetableEntry } from '../../src/shared/types';
