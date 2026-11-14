@@ -1,17 +1,16 @@
+import { BRAKE, MARGIN, MAX_SPEED, SIGHT_SPEED, TICK, TRAIN_LENGTH, safeSpeed } from '../shared/constants';
 import type {
   Message,
   Outgoing,
   PlatformId,
   Position,
-  TrackId,
   TrainId,
   TrainOutput,
   TrainState,
 } from '../shared/types';
-import type { TrainNumbers } from './numbers';
+import { STOP_SHORT, type TrainNumbers } from './numbers';
 
 // Rules from docs/design.md, "Train rules" > "Following".
-// Every function here is a placeholder that returns the safest value.
 
 /**
  * Who the train follows. 'none' means the train knows there is no train ahead, as when
@@ -30,98 +29,143 @@ export interface PositionReport {
 /** The newest position report heard from each train, by train ID. */
 export type ReportLog = Record<TrainId, PositionReport>;
 
+/** True once `span` seconds have passed, allowing `slack` for rounding in the clock. */
+export function elapsed(since: number, now: number, span: number, slack: number): boolean {
+  return now - since >= span - slack;
+}
+
+/**
+ * The speed a train may have after this tick and still stop within distance d. This is
+ * safeSpeed(d) braked one tick early: the engine moves in steps of TICK, so a train that
+ * followed safeSpeed exactly would run about half a tick past the point. Taking half a
+ * tick of braking off the speed makes the stepped stop land at or before the point, and
+ * STOP_SHORT keeps rounding from carrying it over. A train on this curve stays on it under
+ * full braking. No floor.
+ */
+export function brakeLimit(d: number): number {
+  return Math.max(0, safeSpeed(d - STOP_SHORT) - (BRAKE * TICK) / 2);
+}
+
 /**
  * "Following". The position message to broadcast this tick, sent every positionEvery
  * seconds over long range, or null if none is due. Allows `slack` on the timer.
- *
- * Placeholder: sends nothing.
  */
 export function positionMessage(
-  _now: number,
-  _self: TrainState,
-  _lastSentAt: number | null,
-  _numbers: Pick<TrainNumbers, 'positionEvery' | 'slack'>,
+  now: number,
+  self: TrainState,
+  lastSentAt: number | null,
+  numbers: Pick<TrainNumbers, 'positionEvery' | 'slack'>,
 ): Outgoing | null {
-  return null;
+  if (lastSentAt !== null && !elapsed(lastSentAt, now, numbers.positionEvery, numbers.slack)) return null;
+  const msg: Message = { type: 'position', from: self.id, pos: { ...self.pos }, speed: self.speed, sentAt: now };
+  return { msg, range: 'long' };
 }
 
 /**
  * "Following". The report log updated with this tick's position messages, keeping the
  * newest report from every train, not only the leader. Then a train that gets a new
  * leader already has its last report.
- *
- * Placeholder: learns nothing new.
  */
-export function recordPositions(prev: ReportLog, _inbox: Message[]): ReportLog {
-  return prev;
+export function recordPositions(prev: ReportLog, inbox: Message[]): ReportLog {
+  let log = prev;
+  for (const msg of inbox) {
+    if (msg.type !== 'position') continue;
+    const held = log[msg.from];
+    if (held && held.sentAt >= msg.sentAt) continue;
+    if (log === prev) log = { ...prev };
+    log[msg.from] = { pos: msg.pos, speed: msg.speed, sentAt: msg.sentAt };
+  }
+  return log;
 }
 
 /**
  * "Following". The leader's newest report from the log, or null if the leader is 'none',
  * 'unknown' or never heard.
- *
- * Placeholder: no report.
  */
-export function leaderReport(_log: ReportLog, _leader: Leader): PositionReport | null {
-  return null;
+export function leaderReport(log: ReportLog, leader: Leader): PositionReport | null {
+  if (leader === 'none' || leader === 'unknown') return null;
+  return log[leader] ?? null;
 }
 
 /**
  * "Following". The speed limit from the leader's limit point: the leader's last reported
  * rear minus MARGIN, however old the report is. Floored at SIGHT_SPEED, capped at
- * MAX_SPEED. With an unknown leader, or a leader never heard, it is SIGHT_SPEED.
- *
- * Placeholder: 0, so the train stops.
+ * MAX_SPEED. With an unknown leader, or a leader never heard, it is SIGHT_SPEED. With no
+ * leader at all the line ahead is clear, so there is no limit point and no limit.
  */
 export function leaderLimit(
-  _self: Position,
-  _leader: Leader,
-  _report: PositionReport | null,
-  _numbers: Pick<TrainNumbers, 'xOf'>,
+  self: Position,
+  leader: Leader,
+  report: PositionReport | null,
+  numbers: Pick<TrainNumbers, 'xOf'>,
 ): number {
-  return 0;
+  if (leader === 'none') return Infinity;
+  if (leader === 'unknown' || report === null) return SIGHT_SPEED;
+  const limitPoint = numbers.xOf(report.pos) - TRAIN_LENGTH - MARGIN;
+  const distance = limitPoint - numbers.xOf(self);
+  return Math.min(MAX_SPEED, Math.max(brakeLimit(distance), SIGHT_SPEED));
 }
 
 /**
  * "Following". The speed limit from the train's own sensor: safeSpeed(sightAhead - MARGIN),
- * with no floor. sightAhead is the distance from this train's front to the rear of the
- * nearest obstacle on its path. Null means nothing within SENSOR_RANGE, which adds no limit.
- *
- * Placeholder: 0, so the train stops.
+ * braked one tick early, with no floor. sightAhead is the distance from this train's front
+ * to the rear of the nearest obstacle on its path. Null means nothing within SENSOR_RANGE,
+ * which adds no limit.
  */
-export function sightLimit(_sightAhead: number | null): number {
-  return 0;
+export function sightLimit(sightAhead: number | null): number {
+  if (sightAhead === null) return Infinity;
+  return brakeLimit(sightAhead - MARGIN);
 }
 
 /**
- * "Following". The speed limit from the next stop point: the end of an entry track for a
- * train with no platform, or offset platformStop in a platform. No floor. The train starts
- * braking one tick early so it stops at or before the point, never past it. nextTrack is
- * this tick's choice: once it is EXIT, the platform stop point no longer applies.
- *
- * Placeholder: 0, so the train stops.
+ * The distance to the train's next stop point, or Infinity if it has none: the end of an
+ * entry track for a train with no platform, or offset platformStop in a platform. A train
+ * with a platform, still on its entry track, measures through to the stop in the platform.
+ * `leaving` is true once the train holds the junction lock or has started in its clock
+ * slot. Then the platform stop point no longer applies.
+ */
+export function stopPointDistance(
+  pos: Position,
+  platform: PlatformId | null,
+  leaving: boolean,
+  numbers: Pick<TrainNumbers, 'entryLength' | 'platformStop'>,
+): number {
+  if (pos.track === 'EXIT') return Infinity;
+  if (pos.track === 'A' || pos.track === 'B') {
+    const toEnd = numbers.entryLength - pos.offset;
+    return platform === null ? toEnd : toEnd + numbers.platformStop;
+  }
+  return leaving ? Infinity : numbers.platformStop - pos.offset;
+}
+
+/**
+ * "Following". The speed limit from the next stop point. No floor. The train brakes one
+ * tick early so it stops at or before the point, never past it.
  */
 export function stopPointLimit(
-  _self: TrainState,
-  _platform: PlatformId | null,
-  _nextTrack: TrackId | null,
-  _numbers: Pick<TrainNumbers, 'entryLength' | 'platformStop'>,
+  self: TrainState,
+  platform: PlatformId | null,
+  leaving: boolean,
+  numbers: Pick<TrainNumbers, 'entryLength' | 'platformStop'>,
 ): number {
-  return 0;
+  const distance = stopPointDistance(self.pos, platform, leaving, numbers);
+  return distance === Infinity ? Infinity : brakeLimit(distance);
 }
 
 /**
- * "Following", the mode table. Central while the train holds a fresh permit, then full,
- * stale or blind from the age of the leader's report against FRESH, allowing `slack`.
- *
- * Placeholder: blind.
+ * "Following", the mode table. Central while the train holds a fresh permit. Otherwise
+ * full, stale or blind from the age of the leader's report against `fresh`, allowing
+ * `slack`. A train with no leader at all reports full: it knows the line ahead is clear.
  */
 export function modeFor(
-  _now: number,
-  _leader: Leader,
-  _report: PositionReport | null,
-  _permitFresh: boolean,
-  _numbers: Pick<TrainNumbers, 'slack'>,
+  now: number,
+  leader: Leader,
+  report: PositionReport | null,
+  permitFresh: boolean,
+  numbers: Pick<TrainNumbers, 'fresh' | 'slack'>,
 ): TrainOutput['mode'] {
-  return 'blind';
+  if (permitFresh) return 'central';
+  if (leader === 'none') return 'full';
+  if (leader === 'unknown' || report === null) return 'blind';
+  return elapsed(report.sentAt, now, numbers.fresh, numbers.slack) ? 'stale' : 'full';
 }

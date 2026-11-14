@@ -1,8 +1,5 @@
-// Each test under a "placeholders" describe pins a placeholder's value. Delete it in the
-// commit that writes its rule. Do not edit it to pass.
-
 import { describe, expect, it } from 'vitest';
-import { ACCEL, BRAKE } from '../../src/shared/constants';
+import { ACCEL, BRAKE, SIGHT_SPEED } from '../../src/shared/constants';
 import type { TimetableEntry, TrainInput } from '../../src/shared/types';
 import { createTrainAgent } from '../../src/train';
 
@@ -13,7 +10,7 @@ const timetable: TimetableEntry[] = [
 
 const firstTick: TrainInput = {
   now: 0,
-  self: { id: 1, pos: { track: 'A', offset: 0 }, speed: 0, brokenDown: false },
+  self: { id: 1, pos: { track: 'A', offset: 0 }, speed: SIGHT_SPEED, brokenDown: false },
   inbox: [],
   sightAhead: null,
 };
@@ -34,15 +31,25 @@ describe('createTrainAgent', () => {
   it('builds a separate agent for each train', () => {
     expect(createTrainAgent(1, timetable)).not.toBe(createTrainAgent(2, timetable));
   });
-});
 
-describe('createTrainAgent placeholders (delete when the rules are written)', () => {
-  it('holds its brakes on, sets nextTrack to null, sends nothing and reports blind', () => {
+  it('on its first tick a train with no leader speeds up, broadcasts its position and has no route yet', () => {
     expect(createTrainAgent(1, timetable).decide(firstTick)).toEqual({
-      accel: -BRAKE,
+      accel: ACCEL,
       nextTrack: null,
-      outbox: [],
-      mode: 'blind',
+      outbox: [
+        { msg: { type: 'position', from: 1, pos: { track: 'A', offset: 0 }, speed: SIGHT_SPEED, sentAt: 0 }, range: 'long' },
+      ],
+      mode: 'full',
     });
+  });
+
+  it('keeps each train to its own memory', () => {
+    const one = createTrainAgent(1, timetable);
+    const two = createTrainAgent(2, timetable);
+    const nearEnd: TrainInput = { ...firstTick, self: { ...firstTick.self, pos: { track: 'A', offset: 5000 } } };
+    one.decide({ ...nearEnd, inbox: [{ type: 'lockGrant', to: 1, resource: 'P1', follow: null }] });
+    const other = two.decide({ ...nearEnd, self: { ...nearEnd.self, id: 2, pos: { track: 'B', offset: 5000 } } });
+    expect(other.nextTrack).toBeNull();
+    expect(one.decide(nearEnd).nextTrack).toBe('P1');
   });
 });
