@@ -67,6 +67,8 @@ export function modeColor(mode: TrainOutput['mode']): number {
   switch (mode) {
     case 'central':
       return 0x4da3ff;
+    case 'radio':
+      return 0x9b7bff;
     case 'full':
       return 0x45c27a;
     case 'stale':
