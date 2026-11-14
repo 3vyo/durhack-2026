@@ -1,5 +1,5 @@
 import type { ControlCentre, TrainProgram } from '../engine/ports';
-import { ACCEL, BRAKE, FRESH } from '../shared/constants';
+import { ACCEL, BRAKE, FRESH, MARGIN, safeSpeed } from '../shared/constants';
 import type { PlatformId, TimetableEntry, TrackId } from '../shared/types';
 
 /** Where a stub train heads at the end of its current track. */
@@ -46,7 +46,8 @@ const permitEverything: ControlCentre = {
 /**
  * A stand-in for the baseline: today's rule in miniature. A train runs while a permit under
  * FRESH seconds old is held and brakes to a stop when it is not. It resumes as soon as a
- * permit arrives. The real baseline lives in src/baseline/.
+ * permit arrives. It also brakes for anything its own sensor sees, so trains queue behind
+ * stopped trains instead of driving into them. The real baseline lives in src/baseline/.
  */
 export const stubBaseline: TrainProgram = {
   name: 'baseline',
@@ -55,12 +56,13 @@ export const stubBaseline: TrainProgram = {
     let firstSeen: number | null = null;
     let lastPermit: number | null = null;
     return {
-      decide: ({ now, self, inbox }) => {
+      decide: ({ now, self, inbox, sightAhead }) => {
         if (firstSeen === null) firstSeen = now;
         for (const m of inbox) if (m.type === 'permit') lastPermit = now;
         const stale = now - (lastPermit ?? firstSeen) > FRESH;
+        const tooFast = sightAhead !== null && self.speed > safeSpeed(sightAhead - MARGIN);
         return {
-          accel: stale ? -BRAKE : ACCEL,
+          accel: stale || tooFast ? -BRAKE : ACCEL,
           nextTrack: nextFor(self.pos.track, entry.platform),
           outbox: [],
           mode: stale ? 'blind' : 'central',
