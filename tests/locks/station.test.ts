@@ -13,6 +13,9 @@ import {
   ownPair,
   recordGrant,
   recordHolderRequests,
+  recordWaiting,
+  trainAheadIsWaiting,
+  waitingSilence,
   resumeStation,
   stepStation,
   type PlatformLock,
@@ -685,5 +688,79 @@ describe('Scenarios', () => {
     station.idle(RESUME_SETTLE - TICK);
     expect(station.step([ask(3, 'P1')])).toEqual([refuse(3, 'P1', null)]);
     expect(station.step([ask(3, 'P1')])).toEqual([grant(3, 'P1')]);
+  });
+});
+
+describe('the queue on an entry track', () => {
+  // Trains 1, 3 and 5 enter track A in that order. Train 2 is on track B.
+  const queue: TimetableEntry[] = [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 10, platform: 'P3', leader: null, dwell: 30 },
+    { id: 3, entry: 'A', enterAt: 60, platform: 'P2', leader: 1, dwell: 30 },
+    { id: 5, entry: 'A', enterAt: 120, platform: 'P1', leader: 3, dwell: 30 },
+  ];
+  const free: SensorReadings = {
+    platformOccupied: { P1: false, P2: false, P3: false, P4: false },
+    junctionOccupied: false,
+    exitStartClear: true,
+  };
+  const asks = (train: number, resource: PlatformId): Message => ({ type: 'lockRequest', from: train, resource });
+  const repliesTo = (out: Outgoing[], train: number) => out.map((o) => o.msg).filter((m) => 'to' in m && m.to === train);
+  // The engine steps an actor every tick. A gap would look like the actor being switched
+  // back on, so these tests step through every tick, with an empty inbox in between.
+  const at = (tick: number) => tick * TICK;
+  function stepAt(memory: StationMemory, from: number, tick: number, inbox: Message[], sensors: SensorReadings) {
+    let m = memory;
+    for (let t = from; t < tick; t++) m = stepStation(m, queue, at(t), [], sensors).memory;
+    return stepStation(m, queue, at(tick), inbox, sensors);
+  }
+
+  it('says a train ahead is waiting only for an earlier train on the same entry track with no lock', () => {
+    const memory = recordWaiting(initialStationMemory(), [asks(3, 'P2')], 100);
+    expect(trainAheadIsWaiting(memory, queue, 5)).toBe(true);
+    expect(trainAheadIsWaiting(memory, queue, 1)).toBe(false); // train 1 is ahead of train 3
+    expect(trainAheadIsWaiting(memory, queue, 2)).toBe(false); // another entry track
+    expect(trainAheadIsWaiting(memory, queue, 3)).toBe(false); // not behind itself
+  });
+
+  it('refuses a train further back while the train in front of it has no platform', () => {
+    // P2 is taken, so train 3 at the front is refused. Train 5 behind it asks for the free P1.
+    const busy = { ...free, platformOccupied: { ...free.platformOccupied, P2: true } };
+    const first = stepAt(initialStationMemory(), 0, 5, [asks(3, 'P2'), asks(5, 'P1')], busy);
+    expect(repliesTo(first.out, 5)).toEqual([{ type: 'lockRefuse', to: 5, resource: 'P1', alternative: null }]);
+    expect(repliesTo(first.out, 3)).toEqual([{ type: 'lockRefuse', to: 3, resource: 'P2', alternative: 'P1' }]);
+    // The front train takes the alternative, and only then can the one behind be served.
+    const second = stepAt(first.memory, 6, 25, [asks(3, 'P1'), asks(5, 'P1')], busy);
+    expect(repliesTo(second.out, 3)).toEqual([{ type: 'lockGrant', to: 3, resource: 'P1', follow: null }]);
+    expect(heldBy(second.memory, 5)).toBeNull();
+  });
+
+  it('serves the train behind once the train in front holds a platform', () => {
+    const first = stepAt(initialStationMemory(), 0, 5, [asks(3, 'P2')], free);
+    expect(heldBy(first.memory, 3)).toBe('P2');
+    const second = stepAt(first.memory, 6, 6, [asks(5, 'P1')], free);
+    expect(repliesTo(second.out, 5)).toEqual([{ type: 'lockGrant', to: 5, resource: 'P1', follow: null }]);
+  });
+
+  it('does not hold up a train on the other entry track', () => {
+    const busy = { ...free, platformOccupied: { ...free.platformOccupied, P1: true, P2: true } };
+    const step = stepAt(initialStationMemory(), 0, 5, [asks(1, 'P1'), asks(2, 'P3')], busy);
+    expect(repliesTo(step.out, 2)).toEqual([{ type: 'lockGrant', to: 2, resource: 'P3', follow: null }]);
+  });
+
+  it('stops counting a train as waiting once it has been silent for two repeats', () => {
+    let memory = recordWaiting(initialStationMemory(), [asks(3, 'P2')], 100);
+    memory = recordWaiting(memory, [], 100 + waitingSilence());
+    expect(trainAheadIsWaiting(memory, queue, 5)).toBe(true);
+    memory = recordWaiting(memory, [], 100 + waitingSilence() + 2 * TICK);
+    expect(trainAheadIsWaiting(memory, queue, 5)).toBe(false);
+  });
+
+  it('keeps a lock holder its platform even when a train ahead starts waiting', () => {
+    const first = stepAt(initialStationMemory(), 0, 5, [asks(5, 'P1')], free);
+    expect(heldBy(first.memory, 5)).toBe('P1');
+    const busy = { ...free, platformOccupied: { ...free.platformOccupied, P2: true } };
+    const second = stepAt(first.memory, 6, 25, [asks(3, 'P2'), asks(5, 'P1')], busy);
+    expect(repliesTo(second.out, 5)).toEqual([{ type: 'lockGrant', to: 5, resource: 'P1', follow: null }]);
   });
 });

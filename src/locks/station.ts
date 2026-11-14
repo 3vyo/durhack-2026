@@ -47,6 +47,11 @@ export interface StationMemory {
    */
   unlockedOccupiedAt: Record<PlatformId, number | null>;
   /** The `now` of the last step, so the actor can spot a gap where it was switched off. */
+  /**
+   * When each train without a lock was last heard asking. Trains on one entry track cannot
+   * pass each other, so only the front one may be granted. See trainAheadIsWaiting.
+   */
+  waiting?: Record<TrainId, number>;
   lastStepAt: number | null;
   /** When the actor last came back on. Null if it has never been off. */
   resumedAt: number | null;
@@ -89,6 +94,43 @@ export function answerOrder(trains: TrainId[], timetable: TimetableEntry[]): Tra
 }
 
 /** The platform this train holds the lock on, or null. */
+/**
+ * How long a train without a lock may be silent before the station stops counting it as
+ * waiting. Two repeats, so one late request does not lose a train its place.
+ */
+export function waitingSilence(): number {
+  return 2 * REQUEST_REPEAT;
+}
+
+/** Note every train that asked this tick and holds no lock, and forget the ones gone quiet. */
+export function recordWaiting(memory: StationMemory, inbox: Message[], now: number): StationMemory {
+  const waiting: Record<TrainId, number> = {};
+  for (const [id, at] of Object.entries(memory.waiting ?? {})) {
+    const train = Number(id);
+    if (heldBy(memory, train) === null && !longerThan(now - at, waitingSilence())) waiting[train] = at;
+  }
+  for (const msg of inbox) {
+    if (msg.type !== 'lockRequest' || msg.resource === 'JUNCTION') continue;
+    if (heldBy(memory, msg.from) === null) waiting[msg.from] = now;
+  }
+  return { ...memory, waiting };
+}
+
+/**
+ * True if a train that entered the same entry track before this one is still asking for a
+ * platform and has none. Trains on one entry track stand in a queue, so a platform given to
+ * a train further back could never be reached, and the queue would never move.
+ */
+export function trainAheadIsWaiting(memory: StationMemory, timetable: TimetableEntry[], train: TrainId): boolean {
+  const mine = timetable.find((e) => e.id === train);
+  if (!mine) return false;
+  return Object.keys(memory.waiting ?? {}).some((id) => {
+    const other = timetable.find((e) => e.id === Number(id));
+    if (!other || other.id === train || other.entry !== mine.entry) return false;
+    return other.enterAt < mine.enterAt || (other.enterAt === mine.enterAt && other.id < mine.id);
+  });
+}
+
 export function heldBy(memory: StationMemory, train: TrainId): PlatformId | null {
   return PLATFORMS.find((p) => memory.locks[p]?.holder === train) ?? null;
 }
@@ -368,13 +410,19 @@ export function stepStation(
   memory = recordHolderRequests(memory, inbox, now);
   memory = updateLocks(memory, sensors, now);
   memory = noteUnlockedOccupied(memory, sensors, now);
+  memory = recordWaiting(memory, inbox, now);
 
   const out: Outgoing[] = [];
   for (const { train, platform } of platformRequests(inbox, timetable)) {
     const pair = ownPair(timetable, train);
-    const reply = answerPlatformRequest({ now, train, platform, pair, memory, sensors, settling });
+    // Only the front train on each entry track may be granted. A train with a lock keeps it.
+    const queuedBehind = heldBy(memory, train) === null && trainAheadIsWaiting(memory, timetable, train);
+    const reply: StationReply = queuedBehind
+      ? { kind: 'refuse', alternative: null }
+      : answerPlatformRequest({ now, train, platform, pair, memory, sensors, settling });
     if (reply.kind === 'grant' && memory.locks[reply.platform] === null) {
       memory = recordGrant(memory, train, reply.platform, now);
+      memory = recordWaiting(memory, [], now); // the train has its lock, so it is no longer waiting
     }
     out.push(toOutgoing(train, platform, reply));
   }
