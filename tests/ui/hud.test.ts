@@ -8,6 +8,7 @@ const stats = (meanDelay: number): Stats => ({
   meanDelay,
   spreadDelay: 0,
   meanTimeToNormal: 0,
+  neverRecovered: 0,
   collisions: 0,
   closeCalls: 0,
   overruns: 0,
@@ -16,8 +17,8 @@ const stats = (meanDelay: number): Stats => ({
 const avg: ScenarioSummary = {
   scenario: 'centre-outage',
   seeds: 50,
-  baseline: stats(624),
-  ours: stats(6),
+  baseline: { ...stats(624), meanTimeToNormal: 300, neverRecovered: 2, collisions: 4 },
+  ours: { ...stats(6), meanTimeToNormal: 0, collisions: 0 },
 };
 
 function rows(over: Partial<Parameters<typeof scoreboardRows>[number]> = {}) {
@@ -28,6 +29,8 @@ function rows(over: Partial<Parameters<typeof scoreboardRows>[number]> = {}) {
     collisions: pair(0, 0),
     closeCalls: pair(1, 2),
     avg: null,
+    timeToNormalCapped: pair(false, false),
+    stillOnLine: null,
     ...over,
   });
 }
@@ -67,5 +70,36 @@ describe('scoreboardRows', () => {
     expect(row.label).toBe('Average delay over 50 runs (min)');
     expect(row.baseline).toBe('10.4');
     expect(row.ours).toBe('0.1');
+  });
+
+  it('adds the average time to normal, counting stuck seeds, and the collisions over all runs', () => {
+    const r = rows({ avg });
+    const ttn = r.find((x) => x.label === 'Average time to normal over 50 runs (min)')!;
+    expect(ttn.baseline).toBe('5.0 (2 never recovered)');
+    expect(ttn.ours).toBe('0.0');
+    const collisions = r.find((x) => x.label === 'Collisions over 50 runs')!;
+    expect(collisions).toMatchObject({ baseline: '4', ours: '0' });
+  });
+
+  it('says the run ended and the time is counted at the run length when a train never got back on time', () => {
+    const r = rows({
+      timeToNormalSeconds: pair(300, 0),
+      timeToNormalCapped: pair(true, false),
+    });
+    const row = byLabel(r, 'Time to normal (min)')!;
+    expect(row.baseline).toBe('5.0 (run ended, counted at run length)');
+    expect(row.ours).toBe('0.0');
+  });
+
+  it('lists the trains still on the line at the end, which were counted at the run length', () => {
+    const r = rows({ stillOnLine: pair(2, 0) });
+    const row = r.find((x) => x.label === 'Not finished at run end (counted at run length)')!;
+    expect(row).toMatchObject({ baseline: '2', ours: '0' });
+  });
+
+  it('has no unfinished row when the run is still going or every train finished', () => {
+    const label = 'Not finished at run end (counted at run length)';
+    expect(rows().some((x) => x.label === label)).toBe(false);
+    expect(rows({ stillOnLine: pair(0, 0) }).some((x) => x.label === label)).toBe(false);
   });
 });

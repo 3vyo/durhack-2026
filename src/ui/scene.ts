@@ -156,7 +156,14 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     });
   }
 
+  // The page around the scene changes height as the scoreboard fills in, so the canvas has to
+  // follow its container and not just the window. Without this the bottom of each scene is
+  // clipped and the camera's target drifts off centre.
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => resize());
+  observer?.observe(container);
+
   function dispose(): void {
+    observer?.disconnect();
     renderer.dispose();
     renderer.domElement.remove();
   }

@@ -1,7 +1,8 @@
 import { delaySoFar, timeToNormalSoFar } from './engine/metrics';
 import { DEFAULT_TIMETABLE } from './engine/timetable';
 import { LiveSession } from './runner/live';
-import { runScenario, type ScenarioSummary } from './runner/run';
+import type { RunResult } from './engine/engine';
+import { healthyReference, type ScenarioSummary } from './runner/run';
 import { stubBaseline, stubOurs } from './runner/stubs';
 import { SCENARIOS } from './scenarios/scenarios';
 import { scoreboardRows } from './ui/hud';
@@ -24,13 +25,16 @@ const session = new LiveSession({
   timetable: DEFAULT_TIMETABLE,
 });
 
-// Delay is scored against one reference for both systems: the baseline's healthy run of this seed.
-const reference = runScenario({
-  seed: SEED,
-  scenario: SCENARIOS.healthy,
-  program: stubBaseline,
-  timetable: DEFAULT_TIMETABLE,
-});
+// Delay is scored against one reference for both systems: the baseline's healthy run of this
+// seed. It is the same checked run the batch uses. If it cannot finish, the page says so and
+// shows no delay numbers, because numbers measured against a short run would read too small.
+let reference: RunResult | null = null;
+let referenceError: string | null = null;
+try {
+  reference = healthyReference(SEED, stubBaseline, DEFAULT_TIMETABLE);
+} catch (error) {
+  referenceError = error instanceof Error ? error.message : String(error);
+}
 
 let restoredAt: number | null = null;
 let average: ScenarioSummary | null = null;
@@ -115,9 +119,26 @@ function draw(): void {
   const b = session.baseline.result();
   const o = session.ours.result();
   const sw = ours.switches;
+  if (referenceError !== null || reference === null) {
+    panel.setBanner(`${SCENARIO.title}: today's system against our fallback`, `Cannot score this run: ${referenceError}`);
+    panel.setRows([]);
+    return;
+  }
+  // The engine stops at the last whole tick, so compare with a little room for rounding.
+  const ended = ours.now >= o.runLength - 1e-6;
+  const ttn = (run: RunResult, now: number): { seconds: number | null; capped: boolean } => {
+    if (restoredAt === null) return { seconds: null, capped: false };
+    const value = timeToNormalSoFar(run, reference!, restoredAt, now);
+    // When the run is over, a train that never got back on time is shown at the run length.
+    if (value === null && ended) return { seconds: Math.max(0, run.runLength - restoredAt), capped: true };
+    return { seconds: value, capped: false };
+  };
+  const baseTtn = ttn(b, base.now);
+  const oursTtn = ttn(o, ours.now);
+  const stuck = (run: RunResult): number => reference!.exits.size - [...reference!.exits.keys()].filter((id) => run.exits.has(id)).length;
   panel.setBanner(
     `${SCENARIO.title}: today's system against our fallback`,
-    `Control centre ${sw.centre ? 'ON' : 'OFF'}  |  Radio loss ${Math.round(sw.radioDrop * 100)}%  |  Time ${clock(ours.now)}`,
+    `Control centre ${sw.centre ? 'ON' : 'OFF'}  |  Radio loss ${Math.round(sw.radioDrop * 100)}%  |  Time ${clock(ours.now)}${ended ? '  |  Run ended' : ''}`,
   );
   panel.setRows(
     scoreboardRows({
@@ -126,10 +147,9 @@ function draw(): void {
         baseline: delaySoFar(b, reference, base.now),
         ours: delaySoFar(o, reference, ours.now),
       },
-      timeToNormalSeconds: {
-        baseline: restoredAt === null ? null : timeToNormalSoFar(b, reference, restoredAt, base.now),
-        ours: restoredAt === null ? null : timeToNormalSoFar(o, reference, restoredAt, ours.now),
-      },
+      timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
+      timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },
+      stillOnLine: ended ? { baseline: stuck(b), ours: stuck(o) } : null,
       collisions: { baseline: b.collisions, ours: o.collisions },
       closeCalls: { baseline: b.closeCalls, ours: o.closeCalls },
       avg: average,
