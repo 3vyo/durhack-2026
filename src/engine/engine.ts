@@ -87,7 +87,6 @@ interface Sent {
 }
 
 const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
-const TICKS_PER_SECOND = Math.round(1 / TICK);
 
 /**
  * The optional display-only `reason` on a train's output. It is read as an unknown field so
@@ -98,13 +97,6 @@ function displayReason(out: TrainOutput): string | undefined {
   const reason = (out as { reason?: unknown }).reason;
   return typeof reason === 'string' ? reason : undefined;
 }
-
-/**
- * A new train waits until the first SENSOR_RANGE metres of its entry track are clear, and it
- * enters at SIGHT_SPEED, the one speed that can always stop within what its own sensor sees
- * (issue #33). Entering faster could put a train behind a stopped one it cannot see in time.
- */
-const ENTRY_CLEAR = SENSOR_RANGE + TRAIN_LENGTH;
 
 /**
  * The simulation. Deterministic and steppable: it never reads a clock or a random source
@@ -157,7 +149,7 @@ export class Engine {
     const now = this.now;
     const bodies: Body[] = this.active.map((rt) => ({ state: rt.state, prev: rt.prev }));
     const sensors = readSensors(bodies, this.switches);
-    const onSecond = this.tick % TICKS_PER_SECOND === 0;
+    const onSecond = this.tick % Math.round(1 / TICK) === 0;
 
     // What arrives this tick was sent last tick. Messages sent now go to a fresh queue.
     const trainInbox = this.trainInboxes;
@@ -340,7 +332,13 @@ export class Engine {
     this.pending.push(...stillPending);
   }
 
+  /**
+   * A new train waits until the first SENSOR_RANGE metres of its entry track are clear, and it
+   * enters at SIGHT_SPEED, the one speed that can always stop within what its own sensor sees
+   * (issue #33). Entering faster could put a train behind a stopped one it cannot see in time.
+   */
   private entryClear(track: TrackId): boolean {
-    return !this.active.some((rt) => rt.state.pos.track === track && rt.state.pos.offset < ENTRY_CLEAR);
+    const clear = SENSOR_RANGE + TRAIN_LENGTH;
+    return !this.active.some((rt) => rt.state.pos.track === track && rt.state.pos.offset < clear);
   }
 }
