@@ -30,6 +30,9 @@ interface Outcome {
   /** What the trains were doing on the tick a collision or overrun was first counted. */
   firstProblem: string[];
   maxSpeed: number;
+  /** The fastest each train went, and the fastest any train went on EXIT. */
+  maxSpeedOf: Map<number, number>;
+  maxSpeedOnExit: number;
   speeds: number[];
 }
 
@@ -75,9 +78,17 @@ function run(program: TrainProgram, seed: number, s: Scenario, until = LONG, wat
   let firstProblem: string[] = [];
   let problems = 0;
   let maxSpeed = 0;
+  let maxSpeedOnExit = 0;
+  const maxSpeedOf = new Map<number, number>();
   while (!engine.finished && engine.now < until) {
     engine.step();
-    if (watchSpeed) for (const t of engine.snapshot().trains) maxSpeed = Math.max(maxSpeed, t.speed);
+    if (watchSpeed) {
+      for (const t of engine.snapshot().trains) {
+        maxSpeed = Math.max(maxSpeed, t.speed);
+        maxSpeedOf.set(t.id, Math.max(maxSpeedOf.get(t.id) ?? 0, t.speed));
+        if (t.pos.track === 'EXIT') maxSpeedOnExit = Math.max(maxSpeedOnExit, t.speed);
+      }
+    }
     if (firstProblem.length === 0 && engine.now % 1 < 0.05) {
       const r = engine.result();
       if (r.collisions + r.overruns > problems) {
@@ -94,6 +105,8 @@ function run(program: TrainProgram, seed: number, s: Scenario, until = LONG, wat
     left: describeTrains(engine),
     firstProblem,
     maxSpeed,
+    maxSpeedOf,
+    maxSpeedOnExit,
     speeds: engine.snapshot().trains.map((t) => t.speed),
   };
 }
@@ -123,9 +136,14 @@ describe('our program, each failure the demo can inject', () => {
     });
   }
 
-  it('keeps every train at sight speed or below in the silent blackout', () => {
+  it('keeps every train that cannot hear its leader at sight speed or below in the silent blackout', () => {
     const o = run(ourProgram, 1, FAILURES.find((f) => f.name === 'blackout, trains silent')!, LONG, true);
-    expect(o.maxSpeed).toBeLessThanOrEqual(SIGHT_SPEED + 1e-6);
+    // Only the first train on each entry track has no train ahead, so only it may go faster.
+    for (const e of generateTimetable(1, TIMETABLE)) {
+      if (e.leader !== null) expect(o.maxSpeedOf.get(e.id)!).toBeLessThanOrEqual(SIGHT_SPEED + 1e-6);
+    }
+    // Nobody knows who is ahead on EXIT after a clock-slot start.
+    expect(o.maxSpeedOnExit).toBeLessThanOrEqual(SIGHT_SPEED + 1e-6);
   });
 
   it.each(SEEDS)('stops behind a broken-down train with no collision (seed %i)', (seed) => {
