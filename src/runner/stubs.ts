@@ -1,12 +1,18 @@
-import type { TrainProgram } from '../engine/ports';
-import { ACCEL } from '../shared/constants';
-import type { PlatformId, TrackId } from '../shared/types';
+import type { ControlCentre, TrainProgram } from '../engine/ports';
+import { ACCEL, BRAKE, FRESH } from '../shared/constants';
+import type { PlatformId, TimetableEntry, TrackId } from '../shared/types';
 
 /** Where a stub train heads at the end of its current track. */
 function nextFor(track: TrackId, platform: PlatformId): TrackId | null {
   if (track === 'A' || track === 'B') return platform;
   if (track === 'EXIT') return null;
   return 'EXIT';
+}
+
+function entryFor(id: number, timetable: TimetableEntry[]): TimetableEntry {
+  const entry = timetable.find((e) => e.id === id);
+  if (!entry) throw new Error(`no timetable entry for train ${id}`);
+  return entry;
 }
 
 /**
@@ -17,8 +23,7 @@ function nextFor(track: TrackId, platform: PlatformId): TrackId | null {
 export const stubOurs: TrainProgram = {
   name: 'ours',
   agentFactory: (id, timetable) => {
-    const entry = timetable.find((e) => e.id === id);
-    if (!entry) throw new Error(`no timetable entry for train ${id}`);
+    const entry = entryFor(id, timetable);
     return {
       decide: ({ self }) => ({
         accel: ACCEL,
@@ -30,4 +35,39 @@ export const stubOurs: TrainProgram = {
   },
   makeActors: () => [],
   makeCentre: () => null,
+};
+
+/** A stand-in centre that permits every train to the end of the line, every second. */
+const permitEverything: ControlCentre = {
+  step: (now, trains) =>
+    trains.map((t) => ({ type: 'permit', to: t.id, untilX: 12400, nextTrack: null, sentAt: now })),
+};
+
+/**
+ * A stand-in for the baseline: today's rule in miniature. A train runs while a permit under
+ * FRESH seconds old is held and brakes to a stop when it is not. It resumes as soon as a
+ * permit arrives. The real baseline lives in src/baseline/.
+ */
+export const stubBaseline: TrainProgram = {
+  name: 'baseline',
+  agentFactory: (id, timetable) => {
+    const entry = entryFor(id, timetable);
+    let firstSeen: number | null = null;
+    let lastPermit: number | null = null;
+    return {
+      decide: ({ now, self, inbox }) => {
+        if (firstSeen === null) firstSeen = now;
+        for (const m of inbox) if (m.type === 'permit') lastPermit = now;
+        const stale = now - (lastPermit ?? firstSeen) > FRESH;
+        return {
+          accel: stale ? -BRAKE : ACCEL,
+          nextTrack: nextFor(self.pos.track, entry.platform),
+          outbox: [],
+          mode: stale ? 'blind' : 'central',
+        };
+      },
+    };
+  },
+  makeActors: () => [],
+  makeCentre: () => permitEverything,
 };

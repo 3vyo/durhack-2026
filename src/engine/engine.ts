@@ -1,5 +1,9 @@
-import { SENSOR_RANGE, MAX_SPEED, TICK, TRAIN_LENGTH } from '../shared/constants';
+import { MAX_SPEED, SENSOR_RANGE, TICK, TRAIN_LENGTH } from '../shared/constants';
 import type {
+  LocalActor,
+  Message,
+  Outgoing,
+  PlatformId,
   Position,
   TimetableEntry,
   TrackId,
@@ -11,9 +15,11 @@ import type {
 import type { Body } from './footprint';
 import { xOf } from './map';
 import { advanceTrain } from './physics';
-import type { TrainProgram } from './ports';
-import { sightAhead } from './sensing';
+import type { ControlCentre, TrainProgram } from './ports';
+import { route, type Recipient, type Sender } from './radio';
+import { readSensors, sightAhead } from './sensing';
 import { ALL_ON, type Press, type Switches } from './switches';
+import { makeRng } from './timetable';
 
 export interface EngineConfig {
   timetable: TimetableEntry[];
@@ -60,6 +66,14 @@ interface Runtime {
   reason?: string;
 }
 
+interface Sent {
+  out: Outgoing;
+  from: Sender;
+}
+
+const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
+const TICKS_PER_SECOND = Math.round(1 / TICK);
+
 /**
  * The optional display-only `reason` on a train's output. It is read as an unknown field so
  * the engine compiles before and after `reason` is added to the shared types (Task 2). The
@@ -74,8 +88,11 @@ function displayReason(out: TrainOutput): string | undefined {
 const ENTRY_CLEAR = SENSOR_RANGE + TRAIN_LENGTH;
 
 /**
- * The simulation. Deterministic and steppable: it never reads a clock or a random source,
- * so the same config always gives the same run. Time advances by TICK per step().
+ * The simulation. Deterministic and steppable: it never reads a clock or a random source
+ * other than its seeded generator, so the same config always gives the same run. Time
+ * advances by TICK per step().
+ *
+ * Messages sent on tick t are delivered into inboxes on tick t + 1.
  */
 export class Engine {
   private tick = 0;
@@ -86,11 +103,19 @@ export class Engine {
   private overruns = 0;
   private readonly switches: Switches = { ...ALL_ON };
   private readonly scriptedPresses: Press[];
+  private readonly actors: LocalActor[];
+  private readonly centre: ControlCentre | null;
+  private readonly rng: () => number;
+  private trainInboxes = new Map<TrainId, Message[]>();
+  private actorInboxes = new Map<'station' | 'merge', Message[]>();
 
   constructor(private readonly cfg: EngineConfig) {
     this.runTicks = Math.ceil(cfg.runLength / TICK - 1e-9);
     this.pending = [...cfg.timetable].sort((a, b) => a.enterAt - b.enterAt || a.id - b.id);
     this.scriptedPresses = [...cfg.presses].sort((a, b) => a.at - b.at);
+    this.actors = cfg.program.makeActors(cfg.timetable);
+    this.centre = cfg.program.makeCentre(cfg.timetable);
+    this.rng = makeRng(cfg.seed);
   }
 
   /** A live press: the switches change now and show in the next snapshot. */
@@ -107,29 +132,79 @@ export class Engine {
     this.applyScriptedPresses();
     this.spawnDueTrains();
 
+    const now = this.now;
+    const bodies: Body[] = this.active.map((rt) => ({ state: rt.state, prev: rt.prev }));
+    const sensors = readSensors(bodies, this.switches);
+    const onSecond = this.tick % TICKS_PER_SECOND === 0;
+
+    // What arrives this tick was sent last tick. Messages sent now go to a fresh queue.
+    const trainInbox = this.trainInboxes;
+    const actorInbox = this.actorInboxes;
+    this.trainInboxes = new Map();
+    this.actorInboxes = new Map();
+    const sent: Sent[] = [];
+
+    // Platform sensors broadcast once a second while they are switched on.
+    if (this.switches.sensors && onSecond) {
+      for (const platform of PLATFORMS) {
+        sent.push({
+          out: {
+            msg: { type: 'platformStatus', platform, occupied: sensors.platformOccupied[platform], sentAt: now },
+            range: 'short',
+          },
+          from: { kind: 'sensors' },
+        });
+      }
+    }
+
+    // Local actors run only while their own switch is on.
+    for (const actor of this.actors) {
+      if (!this.switches[actor.id]) continue;
+      for (const out of actor.step(now, actorInbox.get(actor.id) ?? [], sensors)) {
+        sent.push({ out, from: { kind: 'actor', id: actor.id } });
+      }
+    }
+
+    // The control centre sees every train's true state, once a second, while it is on.
+    if (this.centre && this.switches.centre && onSecond) {
+      const alive = { station: this.switches.station, merge: this.switches.merge };
+      const states = this.active.map((rt) => rt.state);
+      for (const msg of this.centre.step(now, states, sensors, alive)) {
+        sent.push({ out: { msg, range: 'long' }, from: { kind: 'centre' } });
+      }
+    }
+
     // Every agent decides from the state at the start of the tick, then all move together,
     // so the result does not depend on the order trains are listed in.
-    const bodies: Body[] = this.active.map((rt) => ({ state: rt.state, prev: rt.prev }));
     const outputs = this.active.map((rt, i) =>
       rt.agent.decide({
-        now: this.now,
+        now,
         self: rt.state,
-        inbox: [],
+        inbox: trainInbox.get(rt.id) ?? [],
         sightAhead: sightAhead(bodies[i], rt.nextTrack, bodies),
       }),
     );
+    outputs.forEach((o, i) => {
+      for (const out of o.outbox) sent.push({ out, from: { kind: 'train', id: this.active[i].id } });
+    });
+
+    // One function decides who hears each message. Delivery is next tick.
+    const positions = this.active.map((rt) => ({ id: rt.id, x: xOf(rt.state.pos) }));
+    for (const { out, from } of sent) {
+      for (const to of route(out, from, positions, this.switches, this.rng)) this.deliver(to, out.msg);
+    }
 
     const exitTime = (this.tick + 1) * TICK;
     const stillActive: Runtime[] = [];
     this.active.forEach((rt, i) => {
-      const out = outputs[i];
-      const moved = advanceTrain(rt.state, out.accel, out.nextTrack);
+      const o = outputs[i];
+      const moved = advanceTrain(rt.state, o.accel, o.nextTrack);
       if (moved.state.pos.track !== rt.state.pos.track) rt.prev = rt.state.pos.track;
       if (moved.overrun) this.overruns += 1;
       rt.state = moved.state;
-      rt.nextTrack = out.nextTrack;
-      rt.mode = out.mode;
-      rt.reason = displayReason(out);
+      rt.nextTrack = o.nextTrack;
+      rt.mode = o.mode;
+      rt.reason = displayReason(o);
       if (moved.exited) this.exits.set(rt.id, exitTime);
       else stillActive.push(rt);
     });
@@ -161,6 +236,18 @@ export class Engine {
       closeCalls: 0,
       overruns: this.overruns,
     };
+  }
+
+  private deliver(to: Recipient, msg: Message): void {
+    if (to.kind === 'train') {
+      const queue = this.trainInboxes.get(to.id) ?? [];
+      queue.push(msg);
+      this.trainInboxes.set(to.id, queue);
+    } else {
+      const queue = this.actorInboxes.get(to.id) ?? [];
+      queue.push(msg);
+      this.actorInboxes.set(to.id, queue);
+    }
   }
 
   /** Applies scripted presses whose time has come, in time order. */

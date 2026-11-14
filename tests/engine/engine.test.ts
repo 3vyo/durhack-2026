@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest';
 import { Engine, type EngineConfig } from '../../src/engine/engine';
-import type { TrainProgram } from '../../src/engine/ports';
+import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, generateTimetable } from '../../src/engine/timetable';
-import { stubOurs } from '../../src/runner/stubs';
+import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { ACCEL, BRAKE, MAX_SPEED } from '../../src/shared/constants';
-import type { TimetableEntry } from '../../src/shared/types';
+import type { LocalActor, Message, Outgoing, TimetableEntry } from '../../src/shared/types';
 
 const one: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -162,6 +162,142 @@ describe('Engine sightAhead', () => {
     const closing = seen.filter((v): v is number => v !== null);
     expect(closing.length).toBeGreaterThan(0);
     for (const v of closing) expect(v).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('Engine messages', () => {
+  it('delivers a message sent on tick t on tick t + 1', () => {
+    const log: Array<{ now: number; n: number }> = [];
+    let sent = false;
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          if (id === 2) log.push({ now: input.now, n: input.inbox.length });
+          const outbox: Outgoing[] = [];
+          if (id === 1 && !sent) {
+            sent = true;
+            outbox.push({
+              msg: { type: 'position', from: 1, pos: input.self.pos, speed: input.self.speed, sentAt: input.now },
+              range: 'long',
+            });
+          }
+          return { accel: 0, nextTrack: 'P1', outbox, mode: 'blind' };
+        },
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const tt: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const engine = new Engine(config(tt, 60, program));
+    for (let i = 0; i < 4; i++) engine.step();
+    expect(log.map((l) => l.n)).toEqual([0, 1, 0, 0]);
+  });
+
+  it('delivers a short-range reply only to a train inside the actor range', () => {
+    const grants = new Map<number, number>();
+    const station: LocalActor = {
+      id: 'station',
+      step: (_now, inbox) =>
+        inbox.flatMap((m: Message): Outgoing[] =>
+          m.type === 'lockRequest'
+            ? [{ msg: { type: 'lockGrant', to: m.from, resource: m.resource, follow: null }, range: 'short' }]
+            : [],
+        ),
+    };
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          for (const m of input.inbox) {
+            if (m.type === 'lockGrant') grants.set(id, (grants.get(id) ?? 0) + 1);
+          }
+          return {
+            accel: 0,
+            nextTrack: 'P1',
+            outbox: [{ msg: { type: 'lockRequest', from: id, resource: 'P1' }, range: 'short' }],
+            mode: 'blind',
+          };
+        },
+      }),
+      makeActors: () => [station],
+      makeCentre: () => null,
+    };
+    const tt: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'B', enterAt: 30, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const engine = new Engine(config(tt, 300, program));
+    for (let i = 0; i < 1100; i++) engine.step();
+    expect(grants.get(1) ?? 0).toBeGreaterThan(0);
+    expect(grants.get(2) ?? 0).toBe(0);
+  });
+});
+
+describe('Engine control centre', () => {
+  function centreProgram(calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }>): TrainProgram {
+    const centre: ControlCentre = {
+      step: (now, _trains, _sensors, alive) => {
+        calls.push({ now, alive: { ...alive } });
+        return [];
+      },
+    };
+    return { ...stubOurs, makeCentre: () => centre };
+  }
+
+  it('steps the centre once per simulated second while it is on', () => {
+    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+    const engine = new Engine(config(one, 60, centreProgram(calls)));
+    for (let i = 0; i < 100; i++) engine.step();
+    expect(calls.length).toBe(10);
+    expect(calls[0].now).toBe(0);
+    expect(calls[1].now).toBeCloseTo(1, 10);
+  });
+
+  it('tells the centre which local actors are alive', () => {
+    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+    const engine = new Engine(config(one, 60, centreProgram(calls)));
+    engine.step();
+    engine.press({ station: false });
+    for (let i = 0; i < 10; i++) engine.step();
+    expect(calls[0].alive).toEqual({ station: true, merge: true });
+    expect(calls[calls.length - 1].alive).toEqual({ station: false, merge: true });
+  });
+
+  it('stops stepping the centre while it is switched off', () => {
+    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+    const engine = new Engine(config(one, 60, centreProgram(calls)));
+    engine.press({ centre: false });
+    for (let i = 0; i < 50; i++) engine.step();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('stubBaseline', () => {
+  it('runs a train to the end while permits keep arriving', () => {
+    const engine = new Engine(config(one, 600, stubBaseline));
+    runUntilDone(engine);
+    expect(engine.result().finished).toBe(true);
+  });
+
+  it('stops a train when the centre is cut, and lets it go again when permits return', () => {
+    const engine = new Engine({
+      ...config(one, 600, stubBaseline),
+      presses: [
+        { at: 30, set: { centre: false } },
+        { at: 120, set: { centre: true } },
+      ],
+    });
+    while (engine.now < 115) engine.step();
+    const stopped = engine.snapshot().trains[0];
+    expect(stopped.speed).toBe(0);
+    expect(engine.result().finished).toBe(false);
+
+    while (engine.now < 130) engine.step();
+    expect(engine.snapshot().trains[0].speed).toBeGreaterThan(0);
   });
 });
 
