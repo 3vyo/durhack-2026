@@ -174,6 +174,7 @@ async function main() {
 
     const pageErrors = [];
     const consoleErrors = [];
+    const consoleWarnings = [];
     const failedRequests = [];
     cdp.on((msg) => {
       if (msg.sessionId !== sessionId) return;
@@ -182,6 +183,8 @@ async function main() {
         pageErrors.push(d.exception?.description ?? d.text);
       } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
         consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
+      } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'warning') {
+        consoleWarnings.push(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
       } else if (msg.method === 'Network.responseReceived' && msg.params.response.status >= 400) {
         failedRequests.push(`${msg.params.response.status} ${msg.params.response.url}`);
       } else if (msg.method === 'Network.loadingFailed' && !msg.params.canceled) {
@@ -198,10 +201,10 @@ async function main() {
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
       return r.result.value;
     };
-    const screenshot = async (name) => {
+    const screenshot = async (name, clip) => {
       step += 1;
       const file = join(OUT, `${step}-${name}.png`);
-      const { data } = await send('Page.captureScreenshot', { format: 'png' });
+      const { data } = await send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip } : {}) });
       writeFileSync(file, Buffer.from(data, 'base64'));
       return file;
     };
@@ -277,6 +280,13 @@ async function main() {
     const tc = (await simTime()) ?? 0;
     await waitForSimTime(tc + (QUICK ? 60 : 120), 60000);
     await screenshot('during-outage');
+    // A close-up of the middle of our scene, three times bigger, to see the trains themselves.
+    const stage = await evaluate(`(() => {
+      const canvases = [...document.querySelectorAll('canvas')].filter((c) => c.getBoundingClientRect().height > 100);
+      const r = canvases[canvases.length - 1].getBoundingClientRect();
+      return { x: r.x + r.width * 0.3, y: r.y + r.height * 0.3, width: r.width * 0.45, height: r.height * 0.4 };
+    })()`);
+    await screenshot('closeup', { ...stage, scale: 2.5 });
 
     // 4. Restore it.
     await click('Control centre');
@@ -373,6 +383,7 @@ async function main() {
     else fail('no page errors', pageErrors.slice(0, 3).join(' | '));
     if (consoleErrors.length === 0) pass('no console errors');
     else fail('no console errors', consoleErrors.slice(0, 3).join(' | '));
+    if (consoleWarnings.length > 0) console.log(`  note  console warnings: ${consoleWarnings.slice(0, 3).join(' | ')}`);
     if (failedRequests.length === 0) pass('no failed downloads');
     else fail('no failed downloads', failedRequests.slice(0, 5).join(' | '));
   } finally {
