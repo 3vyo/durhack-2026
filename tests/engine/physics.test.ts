@@ -51,6 +51,18 @@ describe('advanceTrain', () => {
     expect(state.pos.offset).toBe(6000);
   });
 
+  it('flags an overrun when a moving train reaches a track end with no valid next track', () => {
+    expect(advanceTrain(train('A', 5999.9, MAX_SPEED), 0, null).overrun).toBe(true);
+    expect(advanceTrain(train('A', 5999.9, MAX_SPEED), 0, 'P3').overrun).toBe(true);
+  });
+
+  it('does not flag an overrun for a normal move, a valid crossing, an exit, or a stopped train', () => {
+    expect(advanceTrain(train('A', 100, 10), 0, null).overrun).toBe(false);
+    expect(advanceTrain(train('A', 5999.9, MAX_SPEED), 0, 'P1').overrun).toBe(false);
+    expect(advanceTrain(train('EXIT', 5999.9, MAX_SPEED), 0, null).overrun).toBe(false);
+    expect(advanceTrain(train('A', 6000, 0), 0, null).overrun).toBe(false);
+  });
+
   it('carries brokenDown through unchanged', () => {
     const broken: TrainState = { ...train('A', 100, 0), brokenDown: true };
     expect(advanceTrain(broken, ACCEL, null).state.brokenDown).toBe(true);

@@ -20,8 +20,19 @@ export interface TimetableOptions {
   dwell: number;
 }
 
-/** A starting point to tune so the baseline visibly stalls and healthy running looks normal. */
-export const DEFAULT_TIMETABLE: TimetableOptions = { trains: 20, minHeadway: 45, dwell: 30 };
+/**
+ * A starting point to tune so the baseline visibly stalls and healthy running looks normal.
+ * Trains enter at MAX_SPEED, so a healthy journey is about 400 s including the platform stop
+ * and dwell. 16 trains at gaps of 45 to 90 s enter over roughly 1000 s, and runLengthFor adds
+ * a 600 s margin so the last train can finish.
+ */
+export const DEFAULT_TIMETABLE: TimetableOptions = { trains: 16, minHeadway: 45, dwell: 30 };
+
+/** How long a run must last for every train to finish: the last entry plus a settle margin. */
+export function runLengthFor(timetable: TimetableEntry[], settle: number = 600): number {
+  if (timetable.length < 1) throw new Error('timetable needs at least one train');
+  return timetable[timetable.length - 1].enterAt + settle;
+}
 
 const PAIR: Record<'A' | 'B', [PlatformId, PlatformId]> = {
   A: ['P1', 'P2'],

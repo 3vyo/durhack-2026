@@ -3,6 +3,7 @@ import {
   DEFAULT_TIMETABLE,
   generateTimetable,
   makeRng,
+  runLengthFor,
 } from '../../src/engine/timetable';
 
 describe('makeRng', () => {
@@ -67,5 +68,27 @@ describe('generateTimetable', () => {
 
   it('throws for zero trains', () => {
     expect(() => generateTimetable(1, { ...opts, trains: 0 })).toThrow('at least one train');
+  });
+});
+
+describe('runLengthFor', () => {
+  it('is the last entry time plus a settle margin of 600 s by default', () => {
+    const tt = generateTimetable(9, DEFAULT_TIMETABLE);
+    expect(runLengthFor(tt)).toBe(tt[tt.length - 1].enterAt + 600);
+  });
+
+  it('takes a custom margin', () => {
+    const tt = generateTimetable(9, DEFAULT_TIMETABLE);
+    expect(runLengthFor(tt, 100)).toBe(tt[tt.length - 1].enterAt + 100);
+  });
+
+  it('throws for an empty timetable', () => {
+    expect(() => runLengthFor([])).toThrow('at least one train');
+  });
+
+  it('keeps the default run under 2000 s for every seed tried', () => {
+    for (let seed = 1; seed <= 50; seed++) {
+      expect(runLengthFor(generateTimetable(seed, DEFAULT_TIMETABLE))).toBeLessThanOrEqual(2000);
+    }
   });
 });
