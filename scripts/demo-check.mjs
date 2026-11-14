@@ -2,20 +2,24 @@
 // server up (`npm run dev`), then `npm run demo-check`. It needs Node 22 or newer (for the
 // built-in WebSocket) and Chrome or Chromium installed. No packages to install.
 //
-//   npm run demo-check              full flow, about 3 minutes: cut the centre, restore, camera
+//   npm run demo-check              full flow, about 1 to 2 minutes: cut the centre, restore, camera
 //   npm run demo-check -- --quick   just load the page, check for errors, take one screenshot
 //
 // Screenshots go to demo-check-out/ so you can look at them. The exit code is non-zero if a
 // check fails. Set CHROME_PATH if Chrome is somewhere unusual and DEMO_URL for another address.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const URL = process.env.DEMO_URL ?? 'http://localhost:5173/';
 const QUICK = process.argv.includes('--quick');
 const OUT = path.resolve('demo-check-out');
-const PORT = 9333;
+// A random debugging port and a fresh profile folder for every run, so a Chrome left over from
+// an earlier run can never be picked up by mistake.
+const PORT = Number(process.env.DEMO_CHECK_PORT) || 9300 + Math.floor(Math.random() * 90);
+const PROFILE = mkdtempSync(path.join(os.tmpdir(), 'demo-check-'));
 
 const CANDIDATES = [
   process.env.CHROME_PATH,
@@ -44,11 +48,18 @@ const chrome = spawn(
     '--enable-unsafe-swiftshader',
     '--ignore-gpu-blocklist',
     '--hide-scrollbars',
-    `--user-data-dir=${path.join(OUT, 'profile')}`,
+    `--user-data-dir=${PROFILE}`,
     'about:blank',
   ],
   { stdio: 'ignore' },
 );
+
+// If something hangs, stop instead of waiting forever.
+const watchdog = setTimeout(() => {
+  console.error('demo-check timed out after 10 minutes');
+  chrome.kill();
+  process.exit(1);
+}, 600000);
 
 const failures = [];
 const check = (ok, what) => {
@@ -87,9 +98,16 @@ async function main() {
     }
   };
   const send = (method, params = {}) =>
-    new Promise((r) => {
+    new Promise((resolve, reject) => {
       const id = ++nextId;
-      pending.set(id, r);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`Chrome did not answer ${method} within 30 s`));
+      }, 30000);
+      pending.set(id, (d) => {
+        clearTimeout(timer);
+        resolve(d);
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
   const run = async (expression) =>
@@ -169,7 +187,13 @@ try {
   console.error(error);
   failures.push(String(error));
 } finally {
+  clearTimeout(watchdog);
   chrome.kill();
+  try {
+    rmSync(PROFILE, { recursive: true, force: true });
+  } catch {
+    /* Chrome may still be shutting down; the system temp folder is cleaned up later */
+  }
 }
 console.log(failures.length ? `\n${failures.length} check(s) failed` : '\nAll checks passed');
 process.exit(failures.length ? 1 : 0);

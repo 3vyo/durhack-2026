@@ -84,7 +84,7 @@ To add a button, add it to `PanelHandlers` in `panel.ts` and call `session.press
 ## Check your work
 
 - `npm test` for the pure functions.
-- `npm run demo-check` for everything else. It drives a real Chrome, presses the buttons, saves screenshots to `demo-check-out/`, and fails if a check breaks. `npm run demo-check -- --quick` takes about 10 seconds. The full run takes about 3 minutes. Open the screenshots and look at them. A passing check does not mean it looks right.
+- `npm run demo-check` for everything else. It drives a real Chrome, presses the buttons, saves screenshots to `demo-check-out/`, and fails if a check breaks. `npm run demo-check -- --quick` takes about 10 seconds. The full run took 70 seconds here; allow a few minutes on a slower machine. Open the screenshots and look at them. A passing check does not mean it looks right.
 - Chrome or Chromium must be installed. Set `CHROME_PATH` if it is somewhere unusual.
 
 ## What works today
