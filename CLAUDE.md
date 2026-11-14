@@ -26,11 +26,11 @@ The design is the agreed contract. Read it before writing code.
 
 ## Team decisions
 
-A choice that affects all four people needs the whole team's agreement before it goes into the docs or the code. Examples are the stack, the map, the shared types and these working rules.
+A choice that affects all four people needs the team's agreement before it goes into the docs or the code. Examples are the stack, the map, the shared types and these working rules.
 
 1. Open an issue with the `decision` label. State the proposal, the alternatives and what it blocks.
 2. Comment on any issue the decision blocks.
-3. Wait until all four members have commented their agreement on the issue. The members are 3vyo, 5ome1n3, IsaB31224 and ndlyyyyy.
+3. Wait until the proposer and two other members have agreed on the issue. That is three of the four members, who are 3vyo, 5ome1n3, IsaB31224 and ndlyyyyy. The fourth member can reopen the issue if they disagree later.
 4. Close the issue, then update the docs or the repo through a pull request.
 
 Do not write an unagreed choice into `docs/design.md`, `CLAUDE.md` or `src/shared/` as if it were settled. Choices inside your own issue's folders are yours to make.
