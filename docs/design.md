@@ -283,6 +283,11 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 
 A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
 
+When its permits stop, a baseline train keeps two things from its last permit.
+
+- It keeps its last `nextTrack` while it waits. A train still braking can cross onto its platform, and a null `nextTrack` would end its path at the end of its entry track.
+- The `untilX` of its last permit still applies after the permit is stale. A baseline train never goes faster than `safeSpeed` of the distance to that `untilX`, so full braking always stops it at or before that x.
+
 The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats permits as hints.
 
 The baseline's centre uses no locks, so a local fault needs its own rule.
