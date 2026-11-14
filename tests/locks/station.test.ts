@@ -1,6 +1,11 @@
+// Placeholder tests: each test named "placeholder ..." or "sends nothing yet" checks a
+// placeholder's safe value. Delete it in the commit that fills its rule. Do not edit it
+// to pass. Turn each it.todo into a real test when you write its rule.
+
 import { describe, expect, it } from 'vitest';
 import {
   PLATFORM_PAIRS,
+  answerOrder,
   answerPlatformRequest,
   canGrantPlatform,
   canReleasePlatform,
@@ -27,6 +32,10 @@ const allEmpty: SensorReadings = {
   exitStartClear: true,
 };
 
+// Test values for the inputs that wait on constants from pull request #34.
+const settle = 1;
+const repeat = 1;
+
 const lock: PlatformLock = { holder: 1, grantedAt: 10, seenArrive: true, lastRequestAt: 10 };
 
 describe('station frame', () => {
@@ -41,10 +50,11 @@ describe('station frame', () => {
     expect(actor.step(0.1, inbox, allEmpty)).toEqual([]);
   });
 
-  it('starts with no locks and no step seen', () => {
+  it('starts with no locks, no step seen and no resume', () => {
     expect(initialStationMemory()).toEqual({
       locks: { P1: null, P2: null, P3: null, P4: null },
       lastStepAt: null,
+      resumedAt: null,
     });
   });
 
@@ -54,6 +64,10 @@ describe('station frame', () => {
 
   it('placeholder ownPair offers no platforms', () => {
     expect(ownPair(timetable, 1)).toEqual([]);
+  });
+
+  it('placeholder answerOrder answers nobody', () => {
+    expect(answerOrder([2, 1], timetable)).toEqual([]);
   });
 
   it('placeholder canGrantPlatform never grants', () => {
@@ -80,14 +94,9 @@ describe('station frame', () => {
         pair: ['P1', 'P2'],
         memory,
         sensors: allEmpty,
+        settling: false,
       }),
     ).toBeNull();
-  });
-
-  it('placeholder observePlatform records nothing', () => {
-    const fresh: PlatformLock = { ...lock, seenArrive: false };
-    const before = structuredClone(fresh);
-    expect(observePlatform(fresh, true, 20)).toEqual(before);
   });
 
   it('placeholder recordGrant records nothing', () => {
@@ -103,11 +112,19 @@ describe('station frame', () => {
     expect(recordHolderRequests(memory, inbox, 20)).toEqual(before);
   });
 
-  it('placeholder canReleasePlatform never releases, even after arrive then leave', () => {
-    expect(canReleasePlatform({ now: 100, lock, occupied: false })).toBe(false);
+  it('placeholder observePlatform records nothing', () => {
+    const fresh: PlatformLock = { ...lock, seenArrive: false };
+    const before = structuredClone(fresh);
+    expect(observePlatform(fresh, true, 20)).toEqual(before);
   });
 
-  it('placeholder resumeStation keeps every lock', () => {
+  it('placeholder canReleasePlatform never releases, even after arrive then leave', () => {
+    expect(
+      canReleasePlatform({ now: 100, lock, occupied: false, resumedAt: null, settle, repeat }),
+    ).toBe(false);
+  });
+
+  it('placeholder resumeStation changes nothing', () => {
     const memory = initialStationMemory();
     memory.locks.P1 = lock;
     memory.lastStepAt = 10;
@@ -131,7 +148,9 @@ describe('Entering the station: granting', () => {
   it.todo('grants the same platform again when its holder repeats the request');
   it.todo('never gives one train locks on two platforms at once');
   it.todo('keeps a holder on its current platform when it asks for the other platform of its pair');
-  it.todo('grants a free platform to only one of two trains that ask for it on the same tick');
+  it.todo('when two trains ask for the same free platform on one tick, grants it to the train with the earlier enterAt');
+  it.todo('answerOrder puts the trains asking on one tick in order of enterAt, earliest first');
+  it.todo('answerOrder puts the lowest ID first when two trains have the same enterAt');
   it.todo('records the holder and the grant time in the lock table on a grant');
   it.todo('sends lockGrant to the requesting train with resource set to the platform and follow null');
 });
@@ -147,7 +166,7 @@ describe('Entering the station: refusing', () => {
 
 describe('Entering the station: releasing', () => {
   it.todo('records the arrival once the sensor shows occupied after the grant');
-  it.todo('releases the lock after the sensor has shown the train arrive and then leave');
+  it.todo('releases the lock once the sensor has shown arrive then leave and the holder has not been heard for longer than one repeat');
   it.todo('does not release the lock while the sensor still shows the train in the platform');
   it.todo('does not release the lock when the sensor shows empty before the train has arrived');
   it.todo('grants the platform to another train once the lock is released');
@@ -158,8 +177,8 @@ describe('Platform sensors switched off', () => {
   it.todo('offers the other platform of the pair as alternative when one sensor is dead and the other platform is free');
   it.todo('refuses every request with alternative null when every sensor is dead');
   it.todo('never releases a lock while its train could still be on its way in');
+  it.todo('keeps the lock while it hears the holder repeat its request, which the train does after the grant until its front is in the platform');
   it.todo('does not release a lock when a sensor dies and comes back while the holder is still asking');
-  it.todo('keeps a lock while it still hears the holder repeating its request');
   it.todo('does not grant a platform that a creeping train may be heading into when the sensors come back');
 });
 
@@ -171,11 +190,17 @@ describe('Messages (The radio)', () => {
   it.todo('sends nothing on a tick with no requests');
 });
 
-describe('Switched back on (not in the design yet)', () => {
+describe('Switched back on (rule from the review on #31)', () => {
   it.todo('keeps its lock table across being switched off and on');
-  it.todo('notices from the gap since lastStepAt that it was switched off');
-  it.todo('handles a lock whose train arrived and left while the actor was off (rule not decided)');
-  it.todo('does not grant a platform that a train is about to enter by the fixed split, from a stop at the end of A or B');
   it.todo('sets lastStepAt to now on every step');
-  it.todo('never releases a lock on coming back while its train could still be on its way in');
+  it.todo('sets resumedAt to now when wasSwitchedOff says it was off');
+  it.todo('keeps every lock when it comes back, since the gap itself releases nothing');
+  it.todo('grants nothing until resumedAt + settle');
+  it.todo('refuses every platform request with alternative null until resumedAt + settle, so waiting trains stop falling back to the fixed split');
+  it.todo('does not grant a platform that a train set off for by the fixed split, since that train shows on the sensor inside the window');
+  it.todo('releases a lock with seenArrive true by the normal rule, inside or after the window');
+  it.todo('releases a lock with seenArrive false once the window is over, its sensor reads empty and the holder was not heard during the whole window');
+  it.todo('keeps a lock with seenArrive false whose holder was heard during the window');
+  it.todo('keeps a lock with seenArrive false whose sensor reads occupied, which includes a dead sensor');
+  it.todo('keeps a lock with seenArrive false until the window is over, even if its sensor reads empty');
 });
