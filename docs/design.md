@@ -212,7 +212,7 @@ When permits return, the train follows them again on the next tick. It keeps any
 
 1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
 2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for the platform its permit suggests, or for its default platform if it has no fresh permit.
-3. On a `lockGrant` it sets `nextTrack` to that platform and runs in.
+3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
 
@@ -251,7 +251,7 @@ A switched-off platform sensor does two things.
 
 With every sensor off and the station actor alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the station-off rule and creeps.
 
-The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. How it guards that is the station actor's own choice. One way is for a train to repeat its request until it is in the platform, and for the actor to keep the lock while it hears those requests.
+The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The station actor keeps a lock while it hears those requests.
 
 ### Leaving the station
 
