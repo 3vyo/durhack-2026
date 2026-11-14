@@ -86,15 +86,11 @@ export function ownPairOnly(reply: StationReply | null, pair: readonly PlatformI
 
 /**
  * "Entering the station". Which platform to ask for: the last refusal's alternative if
- * there is one, else the permit's suggestion, else the default platform.
+ * there is one, else the default platform.
  */
-export function platformToAsk(
-  defaultPlatform: PlatformId,
-  suggestion: PlatformId | null,
-  lastReply: HeardStationReply | null,
-): PlatformId {
+export function platformToAsk(defaultPlatform: PlatformId, lastReply: HeardStationReply | null): PlatformId {
   if (lastReply?.kind === 'refuse' && lastReply.alternative !== null) return lastReply.alternative;
-  return suggestion ?? defaultPlatform;
+  return defaultPlatform;
 }
 
 /**

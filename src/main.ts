@@ -1,4 +1,4 @@
-import { delaySoFar, timeToNormalSoFar } from './engine/metrics';
+import { averageDelaySoFar, timeToNormalSoFar } from './engine/metrics';
 import { DEFAULT_TIMETABLE } from './engine/timetable';
 import { LiveSession } from './runner/live';
 import type { RunResult } from './engine/engine';
@@ -144,8 +144,8 @@ function draw(): void {
     scoreboardRows({
       through: { baseline: b.exits.size, ours: o.exits.size },
       delaySeconds: {
-        baseline: delaySoFar(b, reference, base.now),
-        ours: delaySoFar(o, reference, ours.now),
+        baseline: averageDelaySoFar(b, reference, base.now),
+        ours: averageDelaySoFar(o, reference, ours.now),
       },
       timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
       timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },

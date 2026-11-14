@@ -15,26 +15,33 @@ function delayOf(run: RunResult, reference: RunResult, id: TrainId): number {
   return Math.max(0, (run.exits.get(id) ?? run.runLength) - referenceExit);
 }
 
-/** Total delay in seconds across every train in the reference run. */
-export function totalDelay(run: RunResult, reference: RunResult): number {
+/**
+ * Average delay per train in seconds, over every train in the reference run. It is what a
+ * passenger on a typical train would see, so it does not grow with the number of trains.
+ */
+export function averageDelay(run: RunResult, reference: RunResult): number {
+  const ids = [...reference.exits.keys()];
+  if (ids.length === 0) return 0;
   let total = 0;
-  for (const id of reference.exits.keys()) total += delayOf(run, reference, id);
-  return total;
+  for (const id of ids) total += delayOf(run, reference, id);
+  return total / ids.length;
 }
 
 /**
- * Delay so far, for a live scoreboard. A train that has exited counts as in totalDelay. A train
- * that has not exited yet counts as overdue from its reference exit time: max(0, now - refExit).
- * Without this, trains stopped by an outage add nothing until they finally leave, and the
- * baseline would read as nearly on time at the moment it looks worst.
+ * Average delay per train so far, for a live scoreboard. A train that has exited counts as in
+ * averageDelay. A train that has not exited yet counts as overdue from its reference exit
+ * time: max(0, now - refExit). Without this, trains stopped by an outage add nothing until
+ * they finally leave, and the baseline would read as nearly on time at the moment it looks
+ * worst.
  */
-export function delaySoFar(run: RunResult, reference: RunResult, now: number): number {
+export function averageDelaySoFar(run: RunResult, reference: RunResult, now: number): number {
+  if (reference.exits.size === 0) return 0;
   let total = 0;
   for (const [id, referenceExit] of reference.exits) {
     const exit = run.exits.get(id);
     total += Math.max(0, (exit ?? now) - referenceExit);
   }
-  return total;
+  return total / reference.exits.size;
 }
 
 /**

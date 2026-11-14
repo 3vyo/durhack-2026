@@ -1,19 +1,24 @@
+import { BRAKE, TICK } from '../shared/constants';
+import { successors } from '../shared/map';
 import type { Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
-import { brakeLimit, elapsed } from './follow';
-import type { TrainNumbers } from './numbers';
+import { brakeLimit, elapsed, type Leader } from './follow';
+import { STOP_SHORT, type TrainNumbers } from './numbers';
 
-// Rules from docs/design.md, "Train rules" > "Following permits". A permit is a hint. It
-// can add a limit and suggest a platform. It never replaces a lock or lifts another limit.
+// Rules from docs/design.md, "Train rules" > "The centre comes first". While a train holds
+// a fresh permit it obeys it, like today's trains. When its permit goes stale it carries
+// on with its own rules, starting from where the last permit left it.
 
 /** The last permit the control centre sent this train. */
 export interface HeldPermit {
   untilX: number;
   nextTrack: TrackId | null;
   sentAt: number;
+  /** The train directly ahead when the permit was sent, null if none, absent if not said. */
+  leader?: TrainId | null;
 }
 
 /**
- * "Following permits". The newest permit addressed to this train, given the permit it
+ * "The centre comes first". The newest permit addressed to this train, given the permit it
  * already had and this tick's inbox. Permits for other trains are ignored.
  */
 export function latestPermit(prev: HeldPermit | null, inbox: Message[], id: TrainId): HeldPermit | null {
@@ -22,13 +27,14 @@ export function latestPermit(prev: HeldPermit | null, inbox: Message[], id: Trai
     if (msg.type !== 'permit' || msg.to !== id) continue;
     if (held && held.sentAt > msg.sentAt) continue;
     held = { untilX: msg.untilX, nextTrack: msg.nextTrack, sentAt: msg.sentAt };
+    if (msg.leader !== undefined) held.leader = msg.leader;
   }
   return held;
 }
 
 /**
- * "Following permits". True while the permit is under permitFresh seconds old, allowing
- * `slack`.
+ * "The centre comes first". True while the permit is under permitFresh seconds old,
+ * allowing `slack`.
  */
 export function isPermitFresh(
   permit: HeldPermit | null,
@@ -39,8 +45,9 @@ export function isPermitFresh(
 }
 
 /**
- * "Following permits". The speed limit that keeps the train from passing untilX, braking
- * one tick early like a stop point. A permit that is not fresh, or no permit, adds no limit.
+ * "The centre comes first". The speed limit that keeps the train from passing untilX,
+ * braking one tick early like a stop point. A permit that is not fresh, or no permit, adds
+ * no limit.
  */
 export function permitLimit(
   self: TrainState,
@@ -53,15 +60,43 @@ export function permitLimit(
 }
 
 /**
- * "Following permits". The platform a fresh permit suggests asking for. Only a platform
- * from the train's own pair counts. A stale permit suggests nothing.
+ * "The centre comes first". The track to take while obeying a permit: the permit's
+ * nextTrack. A nextTrack that does not lead on from the current track is ignored, and the
+ * train keeps the one it set last tick if that one does.
  */
-export function suggestedPlatform(
+export function permitRoute(track: TrackId, permit: HeldPermit, previous: TrackId | null): TrackId | null {
+  const leadsOn = (to: TrackId | null) => to !== null && successors(track).includes(to);
+  if (permit.nextTrack === null) return null;
+  if (leadsOn(permit.nextTrack)) return permit.nextTrack;
+  return leadsOn(previous) ? previous : null;
+}
+
+/**
+ * "The centre comes first". The leader a train takes from its last permit when the centre
+ * fails: the train the permit named, 'none' if it named none, 'unknown' if it did not say.
+ */
+export function permitLeader(permit: HeldPermit | null): Leader {
+  if (permit === null || permit.leader === undefined) return 'unknown';
+  return permit.leader === null ? 'none' : permit.leader;
+}
+
+/**
+ * "The centre comes first". The platform a train on A or B keeps when the centre fails: the
+ * one its last permit sent it to, if it can no longer stop before the end of its entry
+ * track. Null if it can still stop, or the permit named no platform of its own pair.
+ */
+export function committedPlatform(
+  self: TrainState,
   permit: HeldPermit | null,
-  now: number,
   entry: 'A' | 'B',
-  numbers: Pick<TrainNumbers, 'permitFresh' | 'slack' | 'pairs'>,
+  numbers: Pick<TrainNumbers, 'pairs' | 'entryLength'>,
 ): PlatformId | null {
-  if (permit === null || !isPermitFresh(permit, now, numbers)) return null;
-  return numbers.pairs[entry].find((p) => p === permit.nextTrack) ?? null;
+  if (permit === null || (self.pos.track !== 'A' && self.pos.track !== 'B')) return null;
+  const platform = numbers.pairs[entry].find((p) => p === permit.nextTrack) ?? null;
+  if (platform === null) return null;
+  // Full braking in steps of TICK covers about half a tick less than the smooth formula.
+  const v = self.speed;
+  const stoppingDistance = (v * v) / (2 * BRAKE) - (v * TICK) / 2;
+  const canStop = stoppingDistance <= numbers.entryLength - self.pos.offset - STOP_SHORT;
+  return canStop ? null : platform;
 }

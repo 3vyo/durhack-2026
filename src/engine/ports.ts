@@ -3,7 +3,9 @@ import type {
   Message,
   SensorReadings,
   TimetableEntry,
+  TrackId,
   TrainAgentFactory,
+  TrainId,
   TrainState,
 } from '../shared/types';
 
@@ -18,16 +20,13 @@ import type {
  * engine calls step once per simulated second and delivers the returned messages
  * (permits) over long range.
  *
- * `alive` says whether the station and merge actors are switched on. A baseline centre
- * treats the track of a dead actor as unavailable, so it needs this.
+ * `sensors` is the true occupancy of the track, from the centre's own train detection. It
+ * does not depend on our platform sensors, which only our trains use. `routes` is the track
+ * each train has set to take next, as the signalling shows it. The centre is today's
+ * system, so it never depends on the station actor, the merge actor or our platform sensors.
  */
 export interface ControlCentre {
-  step(
-    now: number,
-    trains: TrainState[],
-    sensors: SensorReadings,
-    alive: { station: boolean; merge: boolean },
-  ): Message[];
+  step(now: number, trains: TrainState[], sensors: SensorReadings, routes: Map<TrainId, TrackId | null>): Message[];
 }
 
 /**

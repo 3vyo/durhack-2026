@@ -42,8 +42,8 @@ describe('scoreboardRows', () => {
     expect(byLabel(rows(), 'Trains through')).toEqual({ label: 'Trains through', baseline: '7', ours: '9' });
   });
 
-  it('shows delay in minutes to one decimal place', () => {
-    const delay = byLabel(rows(), 'Delay (min)')!;
+  it('shows the average delay per train in minutes to one decimal place', () => {
+    const delay = byLabel(rows(), 'Delay per train (min)')!;
     expect(delay.baseline).toBe('1.5');
     expect(delay.ours).toBe('0.0');
   });
@@ -67,7 +67,7 @@ describe('scoreboardRows', () => {
   it('adds an average row naming the number of runs once the averages arrive', () => {
     const r = rows({ avg });
     const row = r.find((x) => x.label.startsWith('Average'))!;
-    expect(row.label).toBe('Average delay over 50 runs (min)');
+    expect(row.label).toBe('Average delay per train over 50 runs (min)');
     expect(row.baseline).toBe('10.4');
     expect(row.ours).toBe('0.1');
   });

@@ -1,5 +1,5 @@
 import { Engine, type RunResult } from '../engine/engine';
-import { timeToNormal, totalDelay } from '../engine/metrics';
+import { averageDelay, timeToNormal } from '../engine/metrics';
 import type { TrainProgram } from '../engine/ports';
 import { generateTimetable, runLengthFor, type TimetableOptions } from '../engine/timetable';
 import { SCENARIOS, type Scenario, type ScenarioId } from '../scenarios/scenarios';
@@ -132,7 +132,7 @@ export function runBatch(
     for (const side of ['baseline', 'ours'] as const) {
       const run = runScenario({ seed, scenario, program: programs[side], timetable: tt, settle });
       runs[side].push(run);
-      delays[side].push(totalDelay(run, reference));
+      delays[side].push(averageDelay(run, reference));
       normals[side].push(timeToNormal(run, reference, failureEnd));
     }
   }

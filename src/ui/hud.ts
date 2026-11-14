@@ -48,7 +48,7 @@ export function scoreboardRows(i: ScoreboardInput): Row[] {
   const rows: Row[] = [
     { label: 'Trains through', baseline: String(i.through.baseline), ours: String(i.through.ours) },
     {
-      label: 'Delay (min)',
+      label: 'Delay per train (min)',
       baseline: minutes(i.delaySeconds.baseline),
       ours: minutes(i.delaySeconds.ours),
     },
@@ -71,7 +71,7 @@ export function scoreboardRows(i: ScoreboardInput): Row[] {
     const stuck = (n: number): string => (n > 0 ? ` (${n} never recovered)` : '');
     rows.push(
       {
-        label: `Average delay over ${i.avg.seeds} runs (min)`,
+        label: `Average delay per train over ${i.avg.seeds} runs (min)`,
         baseline: minutes(i.avg.baseline.meanDelay),
         ours: minutes(i.avg.ours.meanDelay),
       },

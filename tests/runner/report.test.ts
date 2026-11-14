@@ -19,8 +19,8 @@ describe('formatSummaries', () => {
     const text = formatSummaries([summary], 12.3);
     expect(text).toContain('centre-outage');
     expect(text).toContain('50 seeds');
-    expect(text).toMatch(/baseline\s+delay 10\.0 min/);
-    expect(text).toMatch(/ours\s+delay 0\.0 min/);
+    expect(text).toMatch(/baseline\s+avg delay per train 10\.0 min/);
+    expect(text).toMatch(/ours\s+avg delay per train 0\.0 min/);
     expect(text).toContain('time to normal 8.0 min');
   });
 

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { RunResult } from '../../src/engine/engine';
 import {
   ON_TIME_SLACK,
-  delaySoFar,
+  averageDelay,
+  averageDelaySoFar,
   timeToNormal,
   timeToNormalSoFar,
-  totalDelay,
 } from '../../src/engine/metrics';
 
 function run(exits: Record<number, number>, runLength = 1000): RunResult {
@@ -27,44 +27,53 @@ describe('ON_TIME_SLACK', () => {
   });
 });
 
-describe('totalDelay', () => {
-  it('adds up how late each train left EXIT against the reference', () => {
-    expect(totalDelay(run({ 1: 150, 2: 215, 3: 305 }), reference)).toBe(50 + 15 + 5);
+describe('averageDelay', () => {
+  it('averages how late each train left EXIT against the reference', () => {
+    expect(averageDelay(run({ 1: 150, 2: 215, 3: 305 }), reference)).toBe((50 + 15 + 5) / 3);
   });
 
   it('counts a train that never left at the run length', () => {
-    expect(totalDelay(run({ 1: 100, 2: 200 }, 1000), reference)).toBe(700);
+    expect(averageDelay(run({ 1: 100, 2: 200 }, 1000), reference)).toBe(700 / 3);
   });
 
   it('adds nothing for a train that arrives earlier than the reference', () => {
-    expect(totalDelay(run({ 1: 90, 2: 200, 3: 300 }), reference)).toBe(0);
+    expect(averageDelay(run({ 1: 90, 2: 200, 3: 300 }), reference)).toBe(0);
   });
 
   it('is zero for a run identical to its reference', () => {
-    expect(totalDelay(reference, reference)).toBe(0);
+    expect(averageDelay(reference, reference)).toBe(0);
+  });
+
+  it('does not grow with the number of trains: two trains 60 s late average 60 s', () => {
+    const two = run({ 1: 100, 2: 200 });
+    expect(averageDelay(run({ 1: 160, 2: 260 }), two)).toBe(60);
+  });
+
+  it('is zero for a reference with no trains', () => {
+    expect(averageDelay(run({}), run({}))).toBe(0);
   });
 });
 
-describe('delaySoFar', () => {
+describe('averageDelaySoFar', () => {
   it('counts a train that has not exited as overdue from its reference exit time', () => {
     // Train 1 exited 50 s late. Train 2 is 50 s overdue at t = 250. Train 3 is not due yet.
     const soFar = run({ 1: 150 }, 1000);
-    expect(delaySoFar(soFar, reference, 250)).toBe(50 + 50 + 0);
+    expect(averageDelaySoFar(soFar, reference, 250)).toBe((50 + 50 + 0) / 3);
   });
 
   it('keeps growing while trains are stuck, which a delay counted only at exit would miss', () => {
     const stuck = run({}, 1000);
-    expect(delaySoFar(stuck, reference, 250)).toBe(150 + 50);
-    expect(delaySoFar(stuck, reference, 400)).toBe(300 + 200 + 100);
+    expect(averageDelaySoFar(stuck, reference, 250)).toBe((150 + 50) / 3);
+    expect(averageDelaySoFar(stuck, reference, 400)).toBe((300 + 200 + 100) / 3);
   });
 
-  it('agrees with totalDelay once every train has left', () => {
+  it('agrees with averageDelay once every train has left', () => {
     const done = run({ 1: 150, 2: 215, 3: 305 });
-    expect(delaySoFar(done, reference, 500)).toBe(totalDelay(done, reference));
+    expect(averageDelaySoFar(done, reference, 500)).toBe(averageDelay(done, reference));
   });
 
   it('adds nothing for a train that exited early', () => {
-    expect(delaySoFar(run({ 1: 90, 2: 200, 3: 300 }), reference, 500)).toBe(0);
+    expect(averageDelaySoFar(run({ 1: 90, 2: 200, 3: 300 }), reference, 500)).toBe(0);
   });
 });
 
