@@ -1,4 +1,13 @@
-import { BRAKE } from '../shared/constants';
+import {
+  ACCEL,
+  BRAKE,
+  MARGIN,
+  MAX_SPEED,
+  PERMIT_FRESH,
+  TICK,
+  safeSpeed,
+} from '../shared/constants';
+import { successors, xOf } from '../shared/map';
 import type {
   Message,
   TrackId,
@@ -9,11 +18,11 @@ import type {
   TrainState,
 } from '../shared/types';
 import type { Permit } from './centre';
-import { xOf } from './map';
 
 // The baseline train agent. Its rules are in "Today's rule, for comparison" in
-// docs/design.md. It holds no locks and obeys its permits. With no permit for 5 seconds
-// it brakes to a stop and waits, and it carries on when permits return.
+// docs/design.md. It holds no locks and obeys its permits. With no permit for
+// PERMIT_FRESH seconds it brakes to a stop and waits, and it carries on when permits
+// return.
 //
 // What keeps baseline trains apart when permits stop: a train never goes faster than
 // safeSpeed of the distance to the untilX of its newest permit. That untilX still
@@ -22,13 +31,6 @@ import { xOf } from './map';
 // platform while braking stays on its path.
 //
 // Every decision lives in a pure function below so it can be tested without the engine.
-// Each one is a placeholder that returns the safest value.
-
-/**
- * A permit is fresh for this many seconds. Design: "Today's rule, for comparison" and
- * "Following permits". src/shared/constants.ts does not name it yet.
- */
-export const PERMIT_FRESH = 5;
 
 /** Everything a baseline train remembers between ticks. */
 export interface BaselineMemory {
@@ -47,89 +49,94 @@ export function initialTrainMemory(): BaselineMemory {
  * Returns the newest permit in the inbox addressed to this train, or the one it already
  * holds if the inbox has none newer. It keeps a stale permit, because its untilX still
  * applies. Design: "Today's rule, for comparison".
- *
- * Placeholder: null, so the train acts as if it holds no permit.
  */
-export function latestPermit(
-  _id: TrainId,
-  _inbox: Message[],
-  _held: Permit | null,
-): Permit | null {
-  return null;
+export function latestPermit(id: TrainId, inbox: Message[], held: Permit | null): Permit | null {
+  let newest = held;
+  for (const msg of inbox) {
+    if (msg.type !== 'permit' || msg.to !== id) continue;
+    if (newest === null || msg.sentAt >= newest.sentAt) newest = msg;
+  }
+  return newest;
 }
 
 /**
- * Says whether a permit is under PERMIT_FRESH seconds old.
+ * Says whether a permit is under PERMIT_FRESH seconds old. The clock is a float, so a
+ * permit within half a tick of PERMIT_FRESH counts as stale.
  * Design: "Today's rule, for comparison".
- *
- * Placeholder: false, so every permit counts as stale.
  */
-export function isPermitFresh(_permit: Permit | null, _now: number): boolean {
-  return false;
+export function isPermitFresh(permit: Permit | null, now: number): boolean {
+  return permit !== null && now - permit.sentAt < PERMIT_FRESH - TICK / 2;
 }
 
 /**
  * The x the train's front must not pass: the untilX of the newest permit it holds,
  * fresh or stale. With no permit ever, its current x.
  * Design: "Today's rule, for comparison".
- *
- * Placeholder: the train's current x, so it may not move.
  */
-export function stopX(self: TrainState, _permit: Permit | null): number {
-  return xOf(self.pos);
+export function stopX(self: TrainState, permit: Permit | null): number {
+  return permit === null ? xOf(self.pos) : permit.untilX;
 }
 
 /**
- * The fastest the train may go so that its front stops at or before stopX, braking one
- * tick early. With no fresh permit the limit is 0, which means full braking. Because
- * the train was already under safeSpeed of the distance to stopX, it still stops short.
- * Design: "Today's rule, for comparison" and "Following".
- *
- * Placeholder: 0, so the train may not move.
+ * The fastest the train may go so that its front stops at or before stopX. It allows
+ * for the ground it covers this tick, so it starts braking one tick early. It also
+ * obeys sightAhead, as a driver would. With no fresh permit the limit is 0, which means
+ * full braking. Because the train was already under safeSpeed of the distance to stopX,
+ * it still stops short. Design: "Today's rule, for comparison" and "Following".
  */
 export function speedLimit(
-  _self: TrainState,
-  _stopX: number,
-  _fresh: boolean,
-  _sightAhead: number | null,
+  self: TrainState,
+  stopX: number,
+  fresh: boolean,
+  sightAhead: number | null,
 ): number {
-  return 0;
+  if (!fresh) return 0;
+  const thisTick = (self.speed + ACCEL * TICK) * TICK;
+  let limit = Math.min(MAX_SPEED, safeSpeed(stopX - xOf(self.pos) - thisTick));
+  if (sightAhead !== null) {
+    limit = Math.min(limit, safeSpeed(sightAhead - MARGIN - thisTick));
+  }
+  return limit;
 }
 
 /**
- * The acceleration that holds the train at or under its speed limit, between -BRAKE
- * and ACCEL. Design: "Following".
- *
- * Placeholder: -BRAKE, so the brakes stay on.
+ * The acceleration that takes the train to its speed limit within one tick, or as near
+ * as -BRAKE and ACCEL allow. Design: "Following".
  */
-export function accelFor(_speed: number, _limit: number): number {
-  return -BRAKE;
+export function accelFor(speed: number, limit: number): number {
+  if (limit <= 0) return -BRAKE;
+  return Math.max(-BRAKE, Math.min(ACCEL, (limit - speed) / TICK));
+}
+
+function leadsOn(from: TrackId, to: TrackId | null): boolean {
+  return to !== null && successors(from).includes(to);
 }
 
 /**
  * The track to take at the end of the current track. It follows a fresh permit's
- * nextTrack, and keeps its previous nextTrack while the permit is stale.
+ * nextTrack, and keeps its previous nextTrack while the permit is stale. It ignores a
+ * track that does not lead on from the current one. It never reads the timetable.
  * Design: "Today's rule, for comparison".
- *
- * Placeholder: null, so the train's path ends at the end of its current track.
  */
 export function chooseNextTrack(
-  _self: TrainState,
-  _permit: Permit | null,
-  _now: number,
-  _previous: TrackId | null,
+  self: TrainState,
+  permit: Permit | null,
+  now: number,
+  previous: TrackId | null,
 ): TrackId | null {
-  return null;
+  const { track } = self.pos;
+  const kept = leadsOn(track, previous) ? previous : null;
+  if (permit === null || !isPermitFresh(permit, now)) return kept;
+  if (permit.nextTrack === null) return null;
+  return leadsOn(track, permit.nextTrack) ? permit.nextTrack : kept;
 }
 
 /**
- * The label the display shows. 'central' while the train holds a fresh permit.
- * Design: "Following", the mode table.
- *
- * Placeholder: 'blind'.
+ * The label the display shows: 'central' while the train holds a fresh permit, otherwise
+ * 'blind'. Design: "Following", the mode table.
  */
-export function modeFor(_permit: Permit | null, _now: number): TrainOutput['mode'] {
-  return 'blind';
+export function modeFor(permit: Permit | null, now: number): TrainOutput['mode'] {
+  return isPermitFresh(permit, now) ? 'central' : 'blind';
 }
 
 /**
