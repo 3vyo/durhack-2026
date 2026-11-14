@@ -114,6 +114,7 @@ describe('speedLimit', () => {
   it.todo('is 0 with no permit');
   it.todo('is 0 once the permit is 5 seconds old, so the train brakes to a stop');
   it.todo("is safeSpeed of the distance from the train's front to untilX");
+  it.todo('starts braking one tick early, so the train stops a few centimetres short of untilX');
   it.todo('is 0 when the front is at or past untilX');
   it.todo('never exceeds MAX_SPEED');
   it.todo('rises again as soon as a fresh permit arrives');
@@ -123,13 +124,13 @@ describe('speedLimit', () => {
 describe('accelFor', () => {
   it.todo('accelerates at ACCEL when well under the limit');
   it.todo('brakes when over the limit');
-  it.todo('starts braking one tick early, so the train stops a few centimetres short of untilX');
   it.todo('always returns a value between -BRAKE and ACCEL');
 });
 
 describe('chooseNextTrack', () => {
   it.todo('follows the nextTrack of a fresh permit');
-  it.todo('keeps its last nextTrack while it waits for permits to return');
+  it.todo('keeps its last nextTrack while it waits for permits to return (the design does not say)');
+  it.todo('ignores a nextTrack that does not lead on from the current track, such as P1 while on P1');
   it.todo('ignores the timetable default platform and follows only permits');
 });
 

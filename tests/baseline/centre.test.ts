@@ -73,7 +73,7 @@ describe('placeholders return the safest value', () => {
   const memory = initialMemory(timetable);
 
   it('updateMemory returns the memory unchanged', () => {
-    expect(updateMemory(memory, 1, [train(1, 'A', 100)], clear)).toBe(memory);
+    expect(updateMemory(memory, 1, [train(1, 'A', 100)], clear, allAlive)).toBe(memory);
   });
 
   it('isAvailable says no piece of track is available, even when all is clear', () => {
@@ -103,9 +103,9 @@ describe('placeholders return the safest value', () => {
   });
 
   it('untilXFor returns the train current x, so it may not move', () => {
-    expect(untilXFor(train(1, 'A', 1234), [], memory)).toBe(1234);
-    expect(untilXFor(train(1, 'P2', 150), [], memory)).toBe(6150);
-    expect(untilXFor(train(1, 'EXIT', 10), [], memory)).toBe(6410);
+    expect(untilXFor(train(1, 'A', 1234), [], memory, clear, allAlive)).toBe(1234);
+    expect(untilXFor(train(1, 'P2', 150), [], memory, clear, allAlive)).toBe(6150);
+    expect(untilXFor(train(1, 'EXIT', 10), [], memory, clear, allAlive)).toBe(6410);
   });
 });
 
@@ -125,7 +125,6 @@ describe('makeCentre', () => {
 
 describe('step', () => {
   it.todo('sends exactly one permit to each train in trains on every call');
-  it.todo('sends no permit to a train that is not in trains');
   it.todo('addresses each permit to its train and sets sentAt to now');
   it.todo('sends only permit messages');
   it.todo('keeps its memory from one call to the next');
@@ -139,6 +138,8 @@ describe('updateMemory', () => {
   it.todo('adds a train to junctionOrder once its dwell is over');
   it.todo('clears junctionHolder once the junction zone is empty again');
   it.todo('forgets a train that has left the right-hand end of EXIT');
+  it.todo('catches up after a gap of more than a second, since the engine skips step while the centre is off');
+  it.todo('frees the junction for a train that cleared the zone while the centre was off');
 });
 
 describe('isAvailable', () => {
@@ -149,7 +150,7 @@ describe('isAvailable', () => {
   it.todo('says a platform another train is sent to is unavailable');
   it.todo('says every platform is unavailable while alive.station is false');
   it.todo('says the junction is unavailable while junctionOccupied is true');
-  it.todo('says the junction is unavailable while exitStartClear is false');
+  it.todo('says the junction is unavailable while exitStartClear is false (borrowed from the merge actor in "Leaving the station")');
   it.todo('says the junction is unavailable while another train holds it');
   it.todo('says the junction is unavailable while alive.merge is false');
   it.todo('says the junction is available again once alive.merge is true and the zone is clear');
@@ -157,32 +158,33 @@ describe('isAvailable', () => {
 
 describe('choosePlatform', () => {
   it.todo('picks a platform the entry track feeds: P1 or P2 from A, P3 or P4 from B');
-  it.todo('picks the default platform from the timetable when it is available');
-  it.todo('picks the other platform of the pair when the default is unavailable');
+  it.todo('picks the default platform from the timetable when it is available (the design leaves the choice to the centre)');
+  it.todo('picks the other platform of the pair when the default is unavailable (the design leaves the choice to the centre)');
   it.todo('returns null when neither platform of the pair is available');
   it.todo('never picks a platform whose sensor reads occupied, so a dead sensor rules it out');
   it.todo('returns null while alive.station is false');
-  it.todo('keeps the platform it already chose for a train instead of switching it');
+  it.todo('keeps the platform it already chose for a train instead of switching it (borrowed from "Following permits")');
   it.todo('never sends two trains to the same platform at once');
   it.todo("with serves: 'ours', suggests only platforms from the train's own pair");
+  it.todo("with serves: 'ours', applies or skips the dead actor rules, once the team decides which");
 });
 
 describe('isReadyToLeave', () => {
   it.todo('is false until the train has stopped in its platform');
   it.todo('is false until dwell seconds have passed since stoppedAt');
   it.todo('is true once dwell seconds have passed since stoppedAt');
-  it.todo('is false while the train is broken down');
+  it.todo('is false while the train is broken down (the design does not say)');
 });
 
 describe('nextThroughJunction', () => {
   it.todo('lets only one train into the junction zone at a time');
   it.todo('returns null while another train holds the junction');
   it.todo('returns null while junctionOccupied is true');
-  it.todo('returns null while exitStartClear is false');
+  it.todo('returns null while exitStartClear is false (borrowed from the merge actor in "Leaving the station")');
   it.todo('returns null while alive.merge is false');
   it.todo('picks only trains that are ready to leave');
   it.todo('picks the train first in junctionOrder');
-  it.todo('breaks a tie in junctionOrder by lowest ID');
+  it.todo('puts the lowest ID first in junctionOrder when two trains become ready in the same step (borrowed from the merge actor in "Leaving the station")');
   it.todo('returns null when no train is waiting');
 });
 
@@ -206,4 +208,5 @@ describe('untilXFor', () => {
   it.todo('keeps two trains from being in the junction zone at the same time');
   it.todo('lets a train on EXIT run to the end of EXIT, x 12400, when nothing is ahead');
   it.todo('holds a broken-down train where it is');
+  it.todo('never moves untilX closer than a running train can stop, when a platform or the junction becomes unavailable (the design does not say)');
 });

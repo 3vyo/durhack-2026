@@ -30,7 +30,7 @@ export interface BaselineMemory {
   nextTrack: TrackId | null;
 }
 
-/** A baseline train's memory before its first tick. */
+/** A baseline train's memory before its first tick. Design: "Today's rule, for comparison". */
 export function initialTrainMemory(): BaselineMemory {
   return { permit: null, nextTrack: null };
 }
@@ -61,8 +61,8 @@ export function isPermitFresh(_permit: Permit | null, _now: number): boolean {
 
 /**
  * The fastest the train may go so that its front stops at or before the permit's
- * untilX. With no fresh permit the limit is 0. Design: "Today's rule, for comparison"
- * and "Following".
+ * untilX, braking one tick early. With no fresh permit the limit is 0.
+ * Design: "Today's rule, for comparison" and "Following".
  *
  * Placeholder: 0, so the train may not move.
  */
@@ -77,7 +77,7 @@ export function speedLimit(
 
 /**
  * The acceleration that holds the train at or under its speed limit, between -BRAKE
- * and ACCEL. It starts braking one tick early. Design: "Following".
+ * and ACCEL. Design: "Following".
  *
  * Placeholder: -BRAKE, so the brakes stay on.
  */
@@ -110,7 +110,10 @@ export function modeFor(_permit: Permit | null, _now: number): TrainOutput['mode
   return 'blind';
 }
 
-/** Builds the agent for a baseline train, which obeys its permits and holds no locks. */
+/**
+ * Builds the agent for a baseline train, which obeys its permits and holds no locks.
+ * Design: "Today's rule, for comparison" and "Shared types".
+ */
 export const createBaselineAgent: TrainAgentFactory = (id, _timetable) => {
   let memory = initialTrainMemory();
   return {

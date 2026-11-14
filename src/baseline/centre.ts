@@ -27,10 +27,16 @@ export interface Alive {
 
 /**
  * Who reads the permits. The team has not decided whether ours uses this centre too.
+ * Design: "Following permits" and "Today's rule, for comparison".
  *
  * - 'baseline': baseline trains obey every permit. This is the default.
- * - 'ours': our trains treat permits as hints. The centre then only suggests platforms
- *   from the train's own pair. Design: "Following permits".
+ * - 'ours': our trains treat permits as hints. The centre only suggests platforms from
+ *   the train's own pair, which the map forces anyway.
+ *
+ * The open question for 'ours' is whether the local fault rules still apply. In the
+ * baseline a dead station or merge actor makes the centre hold trains short of that
+ * track. If it did the same to our trains, a dead station actor would stop them at
+ * x 6000, which is the failure our trains are meant to survive.
  */
 export interface CentreOptions {
   serves: 'baseline' | 'ours';
@@ -62,7 +68,7 @@ export interface CentreMemory {
   junctionHolder: TrainId | null;
 }
 
-/** The centre's memory before its first step. */
+/** The centre's memory before its first step. Design: "Today's rule, for comparison". */
 export function initialMemory(timetable: TimetableEntry[]): CentreMemory {
   return {
     timetable,
@@ -85,7 +91,9 @@ export function makePermit(
 
 /**
  * Records what changed since the last step: trains that entered, stopped in a platform,
- * left a platform or cleared the junction zone. Design: "Today's rule, for comparison".
+ * left a platform or cleared the junction zone. The gap since the last step can be longer
+ * than a second, because the engine does not call step while the centre is switched off.
+ * Design: "Today's rule, for comparison".
  *
  * Placeholder: returns the memory unchanged.
  */
@@ -94,6 +102,7 @@ export function updateMemory(
   _now: number,
   _trains: TrainState[],
   _sensors: SensorReadings,
+  _alive: Alive,
 ): CentreMemory {
   return memory;
 }
@@ -151,7 +160,7 @@ export function isReadyToLeave(
 /**
  * Picks the next train the centre lets into the junction zone, or null. Only one train
  * may be in the zone, and none may enter while the start of EXIT is not clear.
- * Design: "Today's rule, for comparison" and "The map".
+ * Design: "Today's rule, for comparison", "The map" and "Leaving the station".
  *
  * Placeholder: null, so no train goes through.
  */
@@ -189,6 +198,8 @@ export function untilXFor(
   train: TrainState,
   _trains: TrainState[],
   _memory: CentreMemory,
+  _sensors: SensorReadings,
+  _alive: Alive,
 ): number {
   return xOf(train.pos);
 }
@@ -196,6 +207,7 @@ export function untilXFor(
 /**
  * Builds the control centre. The engine calls step once per simulated second while the
  * centre is switched on, and sends the permits it returns over long range.
+ * Design: "Today's rule, for comparison".
  *
  * Placeholder: step sends no permits, so every baseline train stops.
  */
@@ -205,8 +217,8 @@ export function makeCentre(
 ): ControlCentre {
   let memory = initialMemory(timetable);
   return {
-    step(now, trains, sensors, _alive): Message[] {
-      memory = updateMemory(memory, now, trains, sensors);
+    step(now, trains, sensors, alive): Message[] {
+      memory = updateMemory(memory, now, trains, sensors, alive);
       // Planned: one permit per train in `trains`, built from choosePlatform,
       // nextThroughJunction, nextTrackFor and untilXFor.
       return [];
