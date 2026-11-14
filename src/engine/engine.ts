@@ -1,4 +1,4 @@
-import { MAX_SPEED, SENSOR_RANGE, TICK, TRAIN_LENGTH } from '../shared/constants';
+import { SENSOR_RANGE, SIGHT_SPEED, TICK, TRAIN_LENGTH } from '../shared/constants';
 import type {
   LocalActor,
   Message,
@@ -99,7 +99,11 @@ function displayReason(out: TrainOutput): string | undefined {
   return typeof reason === 'string' ? reason : undefined;
 }
 
-/** A new train waits until the first SENSOR_RANGE metres of its entry track are clear. */
+/**
+ * A new train waits until the first SENSOR_RANGE metres of its entry track are clear, and it
+ * enters at SIGHT_SPEED, the one speed that can always stop within what its own sensor sees
+ * (issue #33). Entering faster could put a train behind a stopped one it cannot see in time.
+ */
 const ENTRY_CLEAR = SENSOR_RANGE + TRAIN_LENGTH;
 
 /**
@@ -315,7 +319,7 @@ export class Engine {
       this.active.push({
         id: entry.id,
         agent: this.cfg.program.agentFactory(entry.id, this.cfg.timetable),
-        state: { id: entry.id, pos: { track: entry.entry, offset: 0 }, speed: MAX_SPEED, brokenDown: false },
+        state: { id: entry.id, pos: { track: entry.entry, offset: 0 }, speed: SIGHT_SPEED, brokenDown: false },
         prev: null,
         nextTrack: null,
         mode: 'blind',

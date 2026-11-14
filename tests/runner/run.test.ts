@@ -10,7 +10,7 @@ import {
 } from '../../src/runner/run';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { SCENARIOS } from '../../src/scenarios/scenarios';
-import { BRAKE } from '../../src/shared/constants';
+import { ACCEL, BRAKE } from '../../src/shared/constants';
 
 const programs = { baseline: stubBaseline, ours: stubOurs };
 const seeds = [1, 2, 3];
@@ -70,13 +70,20 @@ describe('runBatch', { timeout: 30_000 }, () => {
   });
 
   it('reports collisions from a program that drives trains into each other', () => {
-    // Every train brakes from the moment it enters, so consecutive trains on one entry track
-    // stop on top of each other.
+    // Every train drives for 20 s and then brakes hard, so consecutive trains on one entry
+    // track end up stopped on top of each other. Trains enter at SIGHT_SPEED, so a train that
+    // braked from the start would stop inside 245 m and the next one could never enter.
     const stopper: TrainProgram = {
       ...stubOurs,
-      agentFactory: () => ({
-        decide: () => ({ accel: -BRAKE, nextTrack: 'P1', outbox: [], mode: 'blind' }),
-      }),
+      agentFactory: () => {
+        let enteredAt: number | null = null;
+        return {
+          decide: ({ now }) => {
+            enteredAt ??= now;
+            return { accel: now - enteredAt < 20 ? ACCEL : -BRAKE, nextTrack: 'P1', outbox: [], mode: 'blind' };
+          },
+        };
+      },
     };
     const s = runBatch(SCENARIOS.healthy, [1, 2], { baseline: stubBaseline, ours: stopper }, DEFAULT_TIMETABLE);
     expect(s.ours.collisions).toBeGreaterThan(0);

@@ -4,7 +4,7 @@ import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
-import { ACCEL, BRAKE, MAX_SPEED } from '../../src/shared/constants';
+import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK } from '../../src/shared/constants';
 import type { LocalActor, Message, Outgoing, TimetableEntry } from '../../src/shared/types';
 
 const one: TimetableEntry[] = [
@@ -28,9 +28,16 @@ describe('Engine', () => {
     expect(result.exits.get(1)).toBeGreaterThanOrEqual(12400 / MAX_SPEED);
   });
 
-  it('spawns a train at MAX_SPEED', () => {
+  it('spawns a train at SIGHT_SPEED, the one speed that can always stop within what it can see', () => {
     const engine = new Engine(config(one));
     engine.step();
+    // It spawns at SIGHT_SPEED, and the stub then accelerates for the one tick it has run.
+    expect(engine.snapshot().trains[0].speed).toBeCloseTo(SIGHT_SPEED + ACCEL * TICK, 9);
+  });
+
+  it('lets a train that enters at SIGHT_SPEED accelerate to MAX_SPEED on a clear line', () => {
+    const engine = new Engine(config(one));
+    for (let i = 0; i < 600; i++) engine.step();
     expect(engine.snapshot().trains[0].speed).toBe(MAX_SPEED);
   });
 
@@ -45,8 +52,8 @@ describe('Engine', () => {
       engine.step();
       if (engine.snapshot().trains.some((t) => t.id === 2)) appearedAt = engine.now;
     }
-    expect(appearedAt).toBeGreaterThanOrEqual(8.8);
-    expect(appearedAt).toBeLessThanOrEqual(9.5);
+    expect(appearedAt).toBeGreaterThanOrEqual(15.9);
+    expect(appearedAt).toBeLessThanOrEqual(16.5);
 
     runUntilDone(engine);
     const alone = new Engine(config([{ ...two[1], leader: null }]));
@@ -144,7 +151,7 @@ describe('Engine sightAhead', () => {
       agentFactory: (id) => ({
         decide: (input) => {
           if (id === 2) seen.push(input.sightAhead);
-          return { accel: id === 1 ? -BRAKE : 0, nextTrack: 'P1', outbox: [], mode: 'blind' };
+          return { accel: id === 1 ? 0 : ACCEL, nextTrack: 'P1', outbox: [], mode: 'blind' };
         },
       }),
       makeActors: () => [],
@@ -216,7 +223,7 @@ describe('Engine messages', () => {
             if (m.type === 'lockGrant') grants.set(id, (grants.get(id) ?? 0) + 1);
           }
           return {
-            accel: 0,
+            accel: ACCEL,
             nextTrack: 'P1',
             outbox: [{ msg: { type: 'lockRequest', from: id, resource: 'P1' }, range: 'short' }],
             mode: 'blind',
@@ -231,7 +238,7 @@ describe('Engine messages', () => {
       { id: 2, entry: 'B', enterAt: 30, platform: 'P3', leader: null, dwell: 30 },
     ];
     const engine = new Engine(config(tt, 300, program));
-    for (let i = 0; i < 1100; i++) engine.step();
+    for (let i = 0; i < 1300; i++) engine.step();
     expect(grants.get(1) ?? 0).toBeGreaterThan(0);
     expect(grants.get(2) ?? 0).toBe(0);
   });
@@ -383,7 +390,7 @@ describe('Engine overlay facts', () => {
       name: 'ours',
       agentFactory: (id) => ({
         decide: () => ({
-          accel: 0,
+          accel: ACCEL,
           nextTrack: 'P1',
           outbox: [
             { msg: { type: 'lockRequest', from: id, resource: 'P2' }, range: 'short' },
@@ -396,9 +403,9 @@ describe('Engine overlay facts', () => {
       makeCentre: () => null,
     };
     const engine = new Engine(config(one, 300, program));
-    while (engine.now < 110) engine.step();
+    while (engine.now < 130) engine.step();
     expect(engine.snapshot().trains[0].lastGrants).toEqual({ platform: 'P2', junction: false });
-    while (engine.now < 140) engine.step();
+    while (engine.now < 150) engine.step();
     expect(engine.snapshot().trains[0].lastGrants).toEqual({ platform: 'P2', junction: true });
   });
 
