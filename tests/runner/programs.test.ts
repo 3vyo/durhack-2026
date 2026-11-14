@@ -242,3 +242,20 @@ describe('radio working against ours', () => {
     expect(base.through).toBeLessThan(TRAINS);
   });
 });
+
+describe('the radio mode', () => {
+  it('shows on baseline trains moving under radio working, and never on ours', () => {
+    const presses = [{ at: OFF_AT, set: { centre: false } }];
+    const seen = { baseline: new Set<string>(), ours: new Set<string>() };
+    for (const [side, program] of [['baseline', baselineProgram], ['ours', ourProgram]] as const) {
+      const timetable = generateTimetable(1, TIMETABLE);
+      const engine = new Engine({ timetable, program, seed: 1, runLength: OFF_AT + RADIO_WORKING_DELAY + 300, presses });
+      while (engine.now < OFF_AT + RADIO_WORKING_DELAY + 300) {
+        engine.step();
+        for (const t of engine.snapshot().trains) seen[side].add(t.mode);
+      }
+    }
+    expect(seen.baseline.has('radio')).toBe(true);
+    expect(seen.ours.has('radio')).toBe(false);
+  });
+});

@@ -141,11 +141,12 @@ export function chooseNextTrack(
 }
 
 /**
- * The label the display shows: 'central' while the train holds a fresh permit, otherwise
- * 'blind'. Design: "Following", the mode table.
+ * The label the display shows: 'central' while the train holds a fresh permit, 'radio' if
+ * that permit is a radio working one, otherwise 'blind'. Design: "Following", the mode table.
  */
 export function modeFor(permit: Permit | null, now: number): TrainOutput['mode'] {
-  return isPermitFresh(permit, now) ? 'central' : 'blind';
+  if (!isPermitFresh(permit, now)) return 'blind';
+  return permit?.caution ? 'radio' : 'central';
 }
 
 /**

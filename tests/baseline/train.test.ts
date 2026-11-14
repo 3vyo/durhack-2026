@@ -272,6 +272,11 @@ describe('chooseNextTrack', () => {
 });
 
 describe('modeFor', () => {
+  it('shows radio for a fresh radio working permit, and blind once it is stale', () => {
+    expect(modeFor({ ...permit, caution: true }, 10.1)).toBe('radio');
+    expect(modeFor({ ...permit, caution: true }, 15)).toBe('blind');
+  });
+
   it('reports central while the permit is under 5 seconds old', () => {
     expect(modeFor(permit, 10.1)).toBe('central');
     expect(modeFor(permit, 14.8)).toBe('central');
