@@ -24,6 +24,19 @@ The design is the agreed contract. Read it before writing code.
 
 `docs/design.md` and everything in `src/shared/` are shared by all four people. Change them in a pull request that touches nothing else, and tell the team before merging.
 
+## Team decisions
+
+A choice that affects all four people needs the whole team's agreement before it goes into the docs or the code. Examples are the stack, the map, the shared types and these working rules.
+
+1. Open an issue with the `decision` label. State the proposal, the alternatives and what it blocks.
+2. Comment on any issue the decision blocks.
+3. Wait until all four members have commented their agreement on the issue. The members are 3vyo, 5ome1n3, IsaB31224 and ndlyyyyy.
+4. Close the issue, then update the docs or the repo through a pull request.
+
+Do not write an unagreed choice into `docs/design.md`, `CLAUDE.md` or `src/shared/` as if it were settled. Choices inside your own issue's folders are yours to make.
+
+Run `gh issue list --label decision` to see what is waiting on the team.
+
 ## Finishing a task
 
 1. Push the branch and open a pull request with `gh pr create`.
