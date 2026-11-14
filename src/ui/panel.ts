@@ -49,7 +49,12 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const banner = el('div', 'padding:10px 16px;border-bottom:1px solid #26303c;');
   const title = el('div', 'font-size:20px;font-weight:600;');
   const status = el('div', 'font-size:14px;color:#9fb0c3;margin-top:2px;');
-  banner.append(title, status);
+  const legend = el(
+    'div',
+    'font-size:12px;color:#7d8da1;margin-top:2px;',
+    'Boxes above the track, left to right: station actor, control centre (back), platform sensors, merge actor. Green is on, dull red is off. Click a train to see how it is deciding.',
+  );
+  banner.append(title, status, legend);
 
   const columns = el('div', 'display:flex;gap:12px;padding:12px 16px;flex:1;min-height:0;');
   function column(heading: string): { wrap: HTMLElement; stage: HTMLElement; minimap: HTMLCanvasElement } {

@@ -58,3 +58,28 @@ export function timeToNormal(
   }
   return Math.max(0, lastLateExit - failureEnd);
 }
+
+/**
+ * Time to normal for a live scoreboard, before the run is over. A train that has not exited
+ * is late only if it is overdue by more than ON_TIME_SLACK at `now`. While any such train is
+ * still on the line the answer is null ("not yet"). Once none is overdue, it is the exit of
+ * the last late train that did leave minus the failure end, clamped at 0. Measuring a train
+ * that simply has not been due yet as late would keep this at "not yet" until the run ended.
+ */
+export function timeToNormalSoFar(
+  run: RunResult,
+  reference: RunResult,
+  failureEnd: number,
+  now: number,
+): number | null {
+  let lastLateExit = -Infinity;
+  for (const [id, referenceExit] of reference.exits) {
+    const exit = run.exits.get(id);
+    if (exit === undefined) {
+      if (now - referenceExit > ON_TIME_SLACK) return null;
+    } else if (exit - referenceExit > ON_TIME_SLACK) {
+      lastLateExit = Math.max(lastLateExit, exit);
+    }
+  }
+  return Math.max(0, lastLateExit - failureEnd);
+}

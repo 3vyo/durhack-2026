@@ -24,21 +24,22 @@ export interface SceneView {
   dispose(): void;
 }
 
-const TRAIN_HEIGHT = 8;
-const TRAIN_DEPTH = 10;
-const TRACK_DEPTH = 12;
+const TRAIN_HEIGHT = 10;
+const TRAIN_DEPTH = 14;
+const TRACK_DEPTH = 22;
+const TRACK_HEIGHT = 4;
 const STOPPED_DIM = 0.4;
 const DEVICE_ON = 0x7be07b;
-const DEVICE_OFF = 0x1c1f24;
+const DEVICE_OFF = 0x7a2f2f; // dull red: clearly off, and still visible against the background
 
 const TRACK_COLOR: Record<TrackId, number> = {
-  A: 0x3a4658,
-  B: 0x3a4658,
-  P1: 0x55657d,
-  P2: 0x55657d,
-  P3: 0x55657d,
-  P4: 0x55657d,
-  EXIT: 0x3a4658,
+  A: 0x4a5a70,
+  B: 0x4a5a70,
+  P1: 0x7088a6,
+  P2: 0x7088a6,
+  P3: 0x7088a6,
+  P4: 0x7088a6,
+  EXIT: 0x4a5a70,
 };
 
 type DeviceKey = 'centre' | 'station' | 'merge' | 'sensors';
@@ -73,10 +74,14 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
   for (const track of Object.keys(TRACK_START) as TrackId[]) {
     const length = TRACK_LENGTH[track] * scale;
     const strip = new THREE.Mesh(
-      new THREE.BoxGeometry(length, 2, TRACK_DEPTH),
+      new THREE.BoxGeometry(length, TRACK_HEIGHT, TRACK_DEPTH),
       new THREE.MeshStandardMaterial({ color: TRACK_COLOR[track] }),
     );
-    strip.position.set(toScreenX(TRACK_START[track], frame) + length / 2, 1, laneOf(track) * LANE_SPACING);
+    strip.position.set(
+      toScreenX(TRACK_START[track], frame) + length / 2,
+      TRACK_HEIGHT / 2,
+      laneOf(track) * LANE_SPACING,
+    );
     scene.add(strip);
   }
 
@@ -125,7 +130,7 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
       if (isStopped(m.speed)) colour.multiplyScalar(STOPPED_DIM);
       (mesh.material as THREE.MeshStandardMaterial).color.copy(colour);
       mesh.scale.x = m.lengthPx;
-      mesh.position.set(m.px - m.lengthPx / 2, 2 + TRAIN_HEIGHT / 2, m.lane * LANE_SPACING);
+      mesh.position.set(m.px - m.lengthPx / 2, TRACK_HEIGHT + TRAIN_HEIGHT / 2, m.lane * LANE_SPACING);
     }
     for (const [id, mesh] of trains) {
       if (!seen.has(id)) {

@@ -1,4 +1,4 @@
-import { delaySoFar, timeToNormal } from './engine/metrics';
+import { delaySoFar, timeToNormalSoFar } from './engine/metrics';
 import { DEFAULT_TIMETABLE } from './engine/timetable';
 import { LiveSession } from './runner/live';
 import { runScenario, type ScenarioSummary } from './runner/run';
@@ -127,8 +127,8 @@ function draw(): void {
         ours: delaySoFar(o, reference, ours.now),
       },
       timeToNormalSeconds: {
-        baseline: restoredAt === null ? null : timeToNormal(b, reference, restoredAt),
-        ours: restoredAt === null ? null : timeToNormal(o, reference, restoredAt),
+        baseline: restoredAt === null ? null : timeToNormalSoFar(b, reference, restoredAt, base.now),
+        ours: restoredAt === null ? null : timeToNormalSoFar(o, reference, restoredAt, ours.now),
       },
       collisions: { baseline: b.collisions, ours: o.collisions },
       closeCalls: { baseline: b.closeCalls, ours: o.closeCalls },

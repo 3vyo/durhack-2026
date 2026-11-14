@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { RunResult } from '../../src/engine/engine';
-import { ON_TIME_SLACK, delaySoFar, timeToNormal, totalDelay } from '../../src/engine/metrics';
+import {
+  ON_TIME_SLACK,
+  delaySoFar,
+  timeToNormal,
+  timeToNormalSoFar,
+  totalDelay,
+} from '../../src/engine/metrics';
 
 function run(exits: Record<number, number>, runLength = 1000): RunResult {
   return {
@@ -87,5 +93,29 @@ describe('timeToNormal', () => {
 
   it('is null when a late train never leaves', () => {
     expect(timeToNormal(run({ 1: 150, 2: 215 }), reference, 120)).toBeNull();
+  });
+});
+
+describe('timeToNormalSoFar', () => {
+  it('does not count a train that has not exited yet but is not overdue as late', () => {
+    // Train 1 left late at 150. Train 2 is due at 200 and it is 205 now, within the slack.
+    expect(timeToNormalSoFar(run({ 1: 150 }, 1000), reference, 120, 205)).toBe(150 - 120);
+  });
+
+  it('is null while a train is overdue and still has not exited', () => {
+    expect(timeToNormalSoFar(run({ 1: 150 }, 1000), reference, 120, 250)).toBeNull();
+  });
+
+  it('is 0 right after the failure ends when nothing has been late, even before the run is over', () => {
+    expect(timeToNormalSoFar(run({ 1: 100 }, 1000), reference, 120, 150)).toBe(0);
+  });
+
+  it('is 0 when the last late train left before the failure ended', () => {
+    expect(timeToNormalSoFar(run({ 1: 150, 2: 200 }, 1000), reference, 400, 250)).toBe(0);
+  });
+
+  it('agrees with timeToNormal once every train has left', () => {
+    const done = run({ 1: 150, 2: 215, 3: 305 });
+    expect(timeToNormalSoFar(done, reference, 120, 500)).toBe(timeToNormal(done, reference, 120));
   });
 });

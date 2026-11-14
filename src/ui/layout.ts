@@ -94,6 +94,6 @@ export function cameraPreset(
   const cx = f.width / 2;
   const cz = 2.5 * LANE_SPACING;
   const lookAt: [number, number, number] = [cx, 0, cz];
-  if (mode === 'overhead') return { position: [cx, f.width * 0.9, cz], lookAt };
-  return { position: [cx, f.width * 0.55, cz + f.width * 0.75], lookAt };
+  if (mode === 'overhead') return { position: [cx, f.width * 0.8, cz], lookAt };
+  return { position: [cx, f.width * 0.42, cz + f.width * 0.55], lookAt };
 }
