@@ -6,6 +6,7 @@ import {
   JUNCTION_EXIT_LENGTH,
   JUNCTION_PLATFORM_LENGTH,
   JUNCTION_START_X,
+  PLATFORMS,
   PLATFORM_PAIRS,
   PLATFORM_STOP,
   RANGE,
@@ -18,16 +19,20 @@ import {
   successors,
   xOf,
 } from '../../src/shared/map';
-import type { PlatformId, TrackId } from '../../src/shared/types';
+import type { TrackId } from '../../src/shared/types';
 
 // Each value is checked against docs/design.md. The map table gives the starts and
 // lengths. "Two fixed places matter" gives the ask point and the junction zone.
-// "The radio" gives the ranges.
+// "The radio" gives the ranges. The design does not say which edges count as inside, so
+// the edge tests for inRange and inJunctionZone follow "Task 3: Map geometry" in #26.
 
-const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
 const TRACKS: TrackId[] = ['A', 'B', 'P1', 'P2', 'P3', 'P4', 'EXIT'];
 
 describe('the map table', () => {
+  it('has the four platforms P1 to P4, lowest first', () => {
+    expect(PLATFORMS).toEqual(['P1', 'P2', 'P3', 'P4']);
+  });
+
   it('starts A and B at 0, each 6000 m long', () => {
     for (const t of ['A', 'B'] as const) {
       expect(TRACK_START[t]).toBe(0);
