@@ -12,7 +12,7 @@ const one: TimetableEntry[] = [
 ];
 
 function config(timetable: TimetableEntry[], runLength = 600, program: TrainProgram = stubOurs): EngineConfig {
-  return { timetable, program, seed: 1, runLength };
+  return { timetable, program, seed: 1, runLength, presses: [] };
 }
 
 function runUntilDone(engine: Engine): void {
@@ -94,6 +94,45 @@ describe('Engine', () => {
     const engine = new Engine(config(one, 200, overrunning));
     runUntilDone(engine);
     expect(engine.result().overruns).toBeGreaterThan(0);
+  });
+});
+
+describe('Engine switches', () => {
+  it('starts with every switch on', () => {
+    const engine = new Engine(config(one));
+    expect(engine.snapshot().switches).toEqual({
+      centre: true,
+      station: true,
+      merge: true,
+      sensors: true,
+      radioDrop: 0,
+    });
+  });
+
+  it('applies scripted presses at their time', () => {
+    const engine = new Engine({
+      ...config(one),
+      presses: [{ at: 5, set: { centre: false } }],
+    });
+    for (let i = 0; i < 49; i++) engine.step();
+    expect(engine.snapshot().switches.centre).toBe(true);
+    for (let i = 0; i < 3; i++) engine.step();
+    expect(engine.snapshot().switches.centre).toBe(false);
+  });
+
+  it('applies a live press on the next snapshot', () => {
+    const engine = new Engine(config(one));
+    engine.press({ centre: false, radioDrop: 1 });
+    const s = engine.snapshot().switches;
+    expect(s.centre).toBe(false);
+    expect(s.radioDrop).toBe(1);
+  });
+
+  it('lets a later scripted press override a live press', () => {
+    const engine = new Engine({ ...config(one), presses: [{ at: 1, set: { centre: true } }] });
+    engine.press({ centre: false });
+    for (let i = 0; i < 12; i++) engine.step();
+    expect(engine.snapshot().switches.centre).toBe(true);
   });
 });
 

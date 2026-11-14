@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
+import { ALL_ON } from '../../src/engine/switches';
 import { cameraPreset, laneOf, markersFor, toScreenX, type Frame } from '../../src/ui/layout';
 import { TRAIN_LENGTH } from '../../src/shared/constants';
 import type { TrackId } from '../../src/shared/types';
@@ -9,6 +10,7 @@ const frame: Frame = { xMin: 4000, xMax: 7000, width: 1500 };
 function snapshotWith(x: number): Snapshot {
   return {
     now: 0,
+    switches: ALL_ON,
     trains: [{ id: 1, pos: { track: 'A', offset: x }, x, speed: 45, mode: 'blind' }],
   };
 }

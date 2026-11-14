@@ -11,12 +11,15 @@ import type {
 import { xOf } from './map';
 import { advanceTrain } from './physics';
 import type { TrainProgram } from './ports';
+import { ALL_ON, type Press, type Switches } from './switches';
 
 export interface EngineConfig {
   timetable: TimetableEntry[];
   program: TrainProgram;
   seed: number;
   runLength: number;
+  /** Scripted switch changes. Live presses are made with Engine.press. */
+  presses: Press[];
 }
 
 export interface TrainView {
@@ -30,6 +33,7 @@ export interface TrainView {
 
 export interface Snapshot {
   now: number;
+  switches: Switches;
   trains: TrainView[];
 }
 
@@ -78,10 +82,18 @@ export class Engine {
   private active: Runtime[] = [];
   private readonly exits = new Map<TrainId, number>();
   private overruns = 0;
+  private readonly switches: Switches = { ...ALL_ON };
+  private readonly scriptedPresses: Press[];
 
   constructor(private readonly cfg: EngineConfig) {
     this.runTicks = Math.ceil(cfg.runLength / TICK - 1e-9);
     this.pending = [...cfg.timetable].sort((a, b) => a.enterAt - b.enterAt || a.id - b.id);
+    this.scriptedPresses = [...cfg.presses].sort((a, b) => a.at - b.at);
+  }
+
+  /** A live press: the switches change now and show in the next snapshot. */
+  press(set: Partial<Switches>): void {
+    Object.assign(this.switches, set);
   }
 
   get now(): number {
@@ -90,6 +102,7 @@ export class Engine {
 
   step(): void {
     if (this.tick >= this.runTicks) return;
+    this.applyScriptedPresses();
     this.spawnDueTrains();
 
     // Every agent decides from the state at the start of the tick, then all move together,
@@ -119,6 +132,7 @@ export class Engine {
   snapshot(): Snapshot {
     return {
       now: this.now,
+      switches: { ...this.switches },
       trains: this.active.map((rt) => ({
         id: rt.id,
         pos: { ...rt.state.pos },
@@ -139,6 +153,13 @@ export class Engine {
       closeCalls: 0,
       overruns: this.overruns,
     };
+  }
+
+  /** Applies scripted presses whose time has come, in time order. */
+  private applyScriptedPresses(): void {
+    while (this.scriptedPresses.length > 0 && this.scriptedPresses[0].at <= this.now + 1e-9) {
+      Object.assign(this.switches, this.scriptedPresses.shift()!.set);
+    }
   }
 
   /** Spawns due trains in timetable order, keeping each entry track first in, first out. */

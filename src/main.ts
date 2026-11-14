@@ -22,6 +22,7 @@ const engine = new Engine({
   program: stubOurs,
   seed: 1,
   runLength: runLengthFor(timetable),
+  presses: [],
 });
 const view = createScene(stage, STATION_FRAME);
 
