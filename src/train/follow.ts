@@ -8,6 +8,7 @@ import type {
   TrainOutput,
   TrainState,
 } from '../shared/types';
+import type { TrainNumbers } from './numbers';
 
 // Rules from docs/design.md, "Train rules" > "Following".
 // Every function here is a placeholder that returns the safest value.
@@ -19,16 +20,19 @@ import type {
  */
 export type Leader = TrainId | 'none' | 'unknown';
 
-/** The last position a train heard from its leader. */
-export interface LeaderReport {
-  pos: Position; // the leader's front
+/** The last position a train heard from another train. */
+export interface PositionReport {
+  pos: Position; // the other train's front
   speed: number;
   sentAt: number;
 }
 
+/** The newest position report heard from each train, by train ID. */
+export type ReportLog = Record<TrainId, PositionReport>;
+
 /**
- * "Following". The position message to broadcast this tick, sent once every second over
- * long range, or null if none is due.
+ * "Following". The position message to broadcast this tick, sent every positionEvery
+ * seconds over long range, or null if none is due. Allows `slack` on the timer.
  *
  * Placeholder: sends nothing.
  */
@@ -36,21 +40,29 @@ export function positionMessage(
   _now: number,
   _self: TrainState,
   _lastSentAt: number | null,
+  _numbers: Pick<TrainNumbers, 'positionEvery' | 'slack'>,
 ): Outgoing | null {
   return null;
 }
 
 /**
- * "Following". The newest position report from this train's leader, given the report
- * it already had and this tick's inbox. Reports from other trains are ignored.
+ * "Following". The report log updated with this tick's position messages, keeping the
+ * newest report from every train, not only the leader. Then a train that gets a new
+ * leader already has its last report.
  *
- * Placeholder: knows nothing about the leader.
+ * Placeholder: learns nothing new.
  */
-export function latestLeaderReport(
-  _prev: LeaderReport | null,
-  _inbox: Message[],
-  _leader: Leader,
-): LeaderReport | null {
+export function recordPositions(prev: ReportLog, _inbox: Message[]): ReportLog {
+  return prev;
+}
+
+/**
+ * "Following". The leader's newest report from the log, or null if the leader is 'none',
+ * 'unknown' or never heard.
+ *
+ * Placeholder: no report.
+ */
+export function leaderReport(_log: ReportLog, _leader: Leader): PositionReport | null {
   return null;
 }
 
@@ -64,7 +76,8 @@ export function latestLeaderReport(
 export function leaderLimit(
   _self: Position,
   _leader: Leader,
-  _report: LeaderReport | null,
+  _report: PositionReport | null,
+  _numbers: Pick<TrainNumbers, 'xOf'>,
 ): number {
   return 0;
 }
@@ -82,9 +95,9 @@ export function sightLimit(_sightAhead: number | null): number {
 
 /**
  * "Following". The speed limit from the next stop point: the end of an entry track for a
- * train with no platform, or offset 300 in a platform. No floor. The train starts braking
- * one tick early so it stops at or before the point, never past it. nextTrack is this
- * tick's choice: once it is EXIT, the platform stop point no longer applies.
+ * train with no platform, or offset platformStop in a platform. No floor. The train starts
+ * braking one tick early so it stops at or before the point, never past it. nextTrack is
+ * this tick's choice: once it is EXIT, the platform stop point no longer applies.
  *
  * Placeholder: 0, so the train stops.
  */
@@ -92,21 +105,23 @@ export function stopPointLimit(
   _self: TrainState,
   _platform: PlatformId | null,
   _nextTrack: TrackId | null,
+  _numbers: Pick<TrainNumbers, 'entryLength' | 'platformStop'>,
 ): number {
   return 0;
 }
 
 /**
- * "Following", the mode table. Central while the train holds a permit under 5 seconds old,
- * then full, stale or blind from the age of the leader's report.
+ * "Following", the mode table. Central while the train holds a fresh permit, then full,
+ * stale or blind from the age of the leader's report against FRESH, allowing `slack`.
  *
  * Placeholder: blind.
  */
 export function modeFor(
   _now: number,
   _leader: Leader,
-  _report: LeaderReport | null,
+  _report: PositionReport | null,
   _permitFresh: boolean,
+  _numbers: Pick<TrainNumbers, 'slack'>,
 ): TrainOutput['mode'] {
   return 'blind';
 }

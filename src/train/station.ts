@@ -1,4 +1,5 @@
 import type { Message, Outgoing, PlatformId, Position, TrackId, TrainId, TrainState } from '../shared/types';
+import type { TrainNumbers } from './numbers';
 
 // Rules from docs/design.md, "Train rules" > "Entering the station",
 // "Station switched off" and "Platform sensors switched off".
@@ -8,6 +9,9 @@ import type { Message, Outgoing, PlatformId, Position, TrackId, TrainId, TrainSt
 export type StationReply =
   | { kind: 'grant'; platform: PlatformId }
   | { kind: 'refuse'; platform: PlatformId; alternative: PlatformId | null };
+
+/** The last station reply the train heard, with the time it arrived. */
+export type HeardStationReply = StationReply & { at: number };
 
 /** The newest platformStatus heard from each platform. */
 export type PlatformStatusLog = Partial<Record<PlatformId, { occupied: boolean; sentAt: number }>>;
@@ -22,14 +26,14 @@ export interface PlatformRequestInput {
   now: number;
   id: TrainId;
   pos: Position;
-  asking: PlatformId | null; // the platform to ask for
+  asking: PlatformId | null; // the platform to ask for, or the platform already granted
   lastSentAt: number | null;
 }
 
 export interface FallbackInput {
   self: TrainState;
   now: number;
-  lastReplyAt: number | null; // when the station last replied to this train
+  lastReply: HeardStationReply | null; // the last station reply, however old
   refusalIsSilence: boolean; // from refusalMeansSilence, this tick
   usingFallback: boolean; // whether the train was using the fallback last tick
 }
@@ -41,7 +45,7 @@ export interface CreepInput {
 }
 
 export interface RefusalInput {
-  reply: StationReply | null;
+  lastReply: HeardStationReply | null; // the last station reply, however old
   statuses: PlatformStatusLog;
   entry: 'A' | 'B';
   pos: Position;
@@ -59,26 +63,31 @@ export function stationReply(_inbox: Message[], _id: TrainId): StationReply | nu
 }
 
 /**
- * "Entering the station". Which platform to ask for: the refusal's alternative if there is
- * one, else the permit's suggestion, else the default platform.
+ * "Entering the station". Which platform to ask for: the last refusal's alternative if
+ * there is one, else the permit's suggestion, else the default platform.
  *
  * Placeholder: the default platform. Asking does not move the train.
  */
 export function platformToAsk(
   defaultPlatform: PlatformId,
   _suggestion: PlatformId | null,
-  _alternative: PlatformId | null,
+  _lastReply: HeardStationReply | null,
 ): PlatformId {
   return defaultPlatform;
 }
 
 /**
  * "Entering the station". The lockRequest to send this tick over short range: first at the
- * ask point, then every 2 seconds. Null if none is due.
+ * ask point, then every requestRepeat seconds, allowing `slack`. The train keeps repeating
+ * after the grant until its front is in the platform, so the station keeps the lock while
+ * it is on its way in. Null if none is due.
  *
  * Placeholder: asks for nothing.
  */
-export function platformRequest(_input: PlatformRequestInput): Outgoing | null {
+export function platformRequest(
+  _input: PlatformRequestInput,
+  _numbers: Pick<TrainNumbers, 'askPoint' | 'requestRepeat' | 'slack'>,
+): Outgoing | null {
   return null;
 }
 
@@ -100,13 +109,16 @@ export function dwellStart(_prev: number | null, _self: TrainState, _now: number
  *
  * Placeholder: false, so the train keeps waiting.
  */
-export function shouldUseFallback(_input: FallbackInput): boolean {
+export function shouldUseFallback(
+  _input: FallbackInput,
+  _numbers: Pick<TrainNumbers, 'entryLength'>,
+): boolean {
   return false;
 }
 
 /**
- * "Station switched off". The fixed split: the lowest-numbered platform of the train's own
- * pair whose sensor says empty, or null to wait. Track A owns P1 and P2. B owns P3 and P4.
+ * "Station switched off". The fixed split: the first platform of the train's own pair
+ * whose sensor says empty, from a fresh status, or null to wait.
  *
  * Placeholder: waits.
  */
@@ -114,6 +126,7 @@ export function fixedSplitPlatform(
   _entry: 'A' | 'B',
   _statuses: PlatformStatusLog,
   _now: number,
+  _numbers: Pick<TrainNumbers, 'pairs' | 'slack'>,
 ): PlatformId | null {
   return null;
 }
@@ -125,7 +138,7 @@ export function fixedSplitPlatform(
  *
  * Placeholder: looks at nothing and takes nothing.
  */
-export function creepStep(_input: CreepInput): CreepStep {
+export function creepStep(_input: CreepInput, _numbers: Pick<TrainNumbers, 'pairs'>): CreepStep {
   return { probe: null, take: null };
 }
 
@@ -160,7 +173,8 @@ export function recordPlatformStatus(prev: PlatformStatusLog, _inbox: Message[])
 }
 
 /**
- * "Platform sensors switched off". True if the platform has a status newer than FRESH.
+ * "Platform sensors switched off". True if the platform has a status under FRESH seconds
+ * old, allowing `slack`.
  *
  * Placeholder: false, so the train trusts no sensor.
  */
@@ -168,17 +182,22 @@ export function hasFreshStatus(
   _statuses: PlatformStatusLog,
   _platform: PlatformId,
   _now: number,
+  _numbers: Pick<TrainNumbers, 'slack'>,
 ): boolean {
   return false;
 }
 
 /**
- * "Platform sensors switched off". True when a refusal with no alternative should count as
- * silence: the train is where it should hear the sensors (x 5500 to 6400) and has no fresh
- * platformStatus from either platform of its pair.
+ * "Platform sensors switched off". True when the last station reply is a refusal with no
+ * alternative and it should count as silence: the train is where it should hear the
+ * sensors (hearSensorsFrom to hearSensorsTo) and has no fresh platformStatus from either
+ * platform of its pair. Reads the stored reply, so it holds on the ticks after the refusal.
  *
  * Placeholder: false, so the train keeps waiting.
  */
-export function refusalMeansSilence(_input: RefusalInput): boolean {
+export function refusalMeansSilence(
+  _input: RefusalInput,
+  _numbers: Pick<TrainNumbers, 'hearSensorsFrom' | 'hearSensorsTo' | 'pairs' | 'xOf' | 'slack'>,
+): boolean {
   return false;
 }

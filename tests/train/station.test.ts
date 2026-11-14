@@ -1,5 +1,10 @@
+// Each test under a "placeholders" describe pins a placeholder's value. Delete it in the
+// commit that writes its rule. Do not edit it to pass. Each it.todo becomes a real test
+// when its rule is written.
+
 import { describe, expect, it } from 'vitest';
 import type { Message, TrainState } from '../../src/shared/types';
+import { PENDING_NUMBERS as N } from '../../src/train/numbers';
 import {
   creepStep,
   dwellStart,
@@ -13,6 +18,7 @@ import {
   refusalMeansSilence,
   shouldUseFallback,
   stationReply,
+  type HeardStationReply,
   type PlatformStatusLog,
 } from '../../src/train/station';
 
@@ -22,19 +28,20 @@ const grant: Message = { type: 'lockGrant', to: 1, resource: 'P1', follow: null 
 const refuse: Message = { type: 'lockRefuse', to: 1, resource: 'P1', alternative: null };
 const status: Message = { type: 'platformStatus', platform: 'P1', occupied: false, sentAt: 9 };
 const log: PlatformStatusLog = { P1: { occupied: false, sentAt: 9 } };
+const refused: HeardStationReply = { kind: 'refuse', platform: 'P1', alternative: null, at: 90 };
 
-describe('station.ts placeholders', () => {
+describe('station.ts placeholders (delete each when its rule is written)', () => {
   it('stationReply hears nothing', () => {
     expect(stationReply([grant, refuse], 1)).toBeNull();
   });
 
   it('platformToAsk asks for the default platform', () => {
-    expect(platformToAsk('P2', 'P1', 'P1')).toBe('P2');
+    expect(platformToAsk('P2', 'P1', { kind: 'refuse', platform: 'P2', alternative: 'P1', at: 0 })).toBe('P2');
   });
 
   it('platformRequest asks for nothing', () => {
     expect(
-      platformRequest({ now: 100, id: 1, pos: { track: 'A', offset: 4800 }, asking: 'P1', lastSentAt: null }),
+      platformRequest({ now: 100, id: 1, pos: { track: 'A', offset: 4800 }, asking: 'P1', lastSentAt: null }, N),
     ).toBeNull();
   });
 
@@ -44,16 +51,19 @@ describe('station.ts placeholders', () => {
 
   it('shouldUseFallback is false', () => {
     expect(
-      shouldUseFallback({ self: stopped, now: 100, lastReplyAt: null, refusalIsSilence: true, usingFallback: true }),
+      shouldUseFallback(
+        { self: stopped, now: 100, lastReply: refused, refusalIsSilence: true, usingFallback: true },
+        N,
+      ),
     ).toBe(false);
   });
 
   it('fixedSplitPlatform waits', () => {
-    expect(fixedSplitPlatform('A', log, 10)).toBeNull();
+    expect(fixedSplitPlatform('A', log, 10, N)).toBeNull();
   });
 
   it('creepStep looks at nothing and takes nothing', () => {
-    expect(creepStep({ entry: 'A', probing: 'P1', sightAhead: null })).toEqual({ probe: null, take: null });
+    expect(creepStep({ entry: 'A', probing: 'P1', sightAhead: null }, N)).toEqual({ probe: null, take: null });
   });
 
   it('fallbackLimit is 0 whether or not the fallback is in use', () => {
@@ -72,18 +82,15 @@ describe('station.ts placeholders', () => {
   });
 
   it('hasFreshStatus is false', () => {
-    expect(hasFreshStatus(log, 'P1', 10)).toBe(false);
+    expect(hasFreshStatus(log, 'P1', 10, N)).toBe(false);
   });
 
   it('refusalMeansSilence is false, so the train keeps waiting', () => {
     expect(
-      refusalMeansSilence({
-        reply: { kind: 'refuse', platform: 'P1', alternative: null },
-        statuses: {},
-        entry: 'A',
-        pos: { track: 'A', offset: 5900 },
-        now: 100,
-      }),
+      refusalMeansSilence(
+        { lastReply: refused, statuses: {}, entry: 'A', pos: { track: 'A', offset: 5900 }, now: 100 },
+        N,
+      ),
     ).toBe(false);
   });
 });
@@ -98,10 +105,12 @@ describe('Entering the station: asking', () => {
   it.todo('sends a lockRequest for a platform over short range at the ask point');
   it.todo('repeats the request every 2 seconds');
   it.todo('does not repeat the request sooner than 2 seconds');
+  it.todo('repeats on the tick 2 seconds have passed even when now - lastSentAt is a rounding error short (half a tick of slack)');
   it.todo('asks for the platform a fresh permit suggests');
   it.todo('asks for its default platform when it has no fresh permit');
   it.todo('asks for its default platform when the permit suggests a platform from the other pair');
-  it.todo('if the team picks the repeat-until-in-platform guard, keeps requesting its platform until its front is in it');
+  it.todo('keeps repeating its request for the granted platform after the grant, until its front is in the platform');
+  it.todo('stops repeating the platform request once its front is in the platform');
 });
 
 describe('Entering the station: replies', () => {
@@ -112,7 +121,7 @@ describe('Entering the station: replies', () => {
   it.todo('when one inbox holds a grant and a refusal for this train, the grant wins');
   it.todo('on a lockGrant, sets nextTrack to the granted platform and runs in');
   it.todo('on a lockRefuse with an alternative, requests the alternative');
-  it.todo('the refusal alternative wins over the permit suggestion');
+  it.todo('the last refusal alternative wins over the permit suggestion');
   it.todo('on a lockRefuse with no alternative, keeps braking and keeps asking');
   it.todo('with no reply at all, stops before the end of its entry track (silence means no)');
   it.todo('may change nextTrack on any tick until its front crosses the end of the track, and not after');
@@ -128,9 +137,9 @@ describe('Entering the station: dwell', () => {
 describe('Station switched off: when to use the fallback', () => {
   it.todo('uses the fallback when stopped at the end of its entry track with no reply');
   it.todo('does not use the fallback while still moving');
-  it.todo('does not use the fallback after any station reply, unless a refusal counts as silence');
-  it.todo('uses the fallback after a refusal that counts as silence');
-  it.todo('counts as no reply when the station has not replied for a while, even after an earlier reply');
+  it.todo('does not use the fallback after a station reply, unless the stored refusal counts as silence');
+  it.todo('uses the fallback after a refusal that counts as silence, on the ticks after the refusal too');
+  it.todo('waiting on docs/design.md and a constant: counts as no reply when the station has not replied for a while, even after an earlier reply');
   it.todo('keeps using the fallback while it moves into the platform it picked');
 });
 
@@ -162,11 +171,13 @@ describe('Platform sensors switched off', () => {
   it.todo('ignores a platformStatus older than the one it holds');
   it.todo('a platformStatus under FRESH seconds old is fresh');
   it.todo('a platformStatus FRESH seconds old or older is not fresh');
+  it.todo('judges FRESH for a platformStatus with half a tick of slack');
   it.todo('between x 5500 and 6400, a platform with no fresh status counts as having no sensor');
   it.todo('before x 5500, hearing no status is normal and does not count as a dead sensor');
-  it.todo('a refusal with no alternative and no fresh platformStatus from its pair counts as silence');
-  it.todo('a refusal with no alternative and a fresh platformStatus from its pair does not count as silence');
+  it.todo('a stored refusal with no alternative and no fresh platformStatus from its pair counts as silence');
+  it.todo('a stored refusal with no alternative and a fresh platformStatus from its pair does not count as silence');
   it.todo('a refusal with an alternative never counts as silence');
+  it.todo('a last reply that is a grant never counts as silence');
   it.todo('a fresh platformStatus from the other pair does not stop a refusal counting as silence');
   it.todo('after a refusal that counts as silence, uses the station-off rule and creeps');
 });

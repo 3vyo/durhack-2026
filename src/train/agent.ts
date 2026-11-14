@@ -2,6 +2,7 @@ import { ACCEL, BRAKE, MAX_SPEED } from '../shared/constants';
 import type {
   Outgoing,
   PlatformId,
+  Position,
   ResourceId,
   TimetableEntry,
   TrackId,
@@ -10,17 +11,19 @@ import type {
   TrainInput,
   TrainOutput,
 } from '../shared/types';
-import { dwellDone, junctionRequest, mergeGrant, type MergeGrant } from './depart';
+import { dwellDone, junctionRequest, mergeReply, type MergeReply } from './depart';
 import {
-  latestLeaderReport,
   leaderLimit,
+  leaderReport,
   modeFor,
   positionMessage,
+  recordPositions,
   sightLimit,
   stopPointLimit,
   type Leader,
-  type LeaderReport,
+  type ReportLog,
 } from './follow';
+import { PENDING_NUMBERS, type TrainNumbers } from './numbers';
 import { isPermitFresh, latestPermit, permitLimit, suggestedPlatform, type HeldPermit } from './permits';
 import {
   dwellStart,
@@ -32,6 +35,7 @@ import {
   refusalMeansSilence,
   shouldUseFallback,
   stationReply,
+  type HeardStationReply,
   type PlatformStatusLog,
   type StationReply,
 } from './station';
@@ -45,7 +49,7 @@ export interface TrainMemory {
   id: TrainId;
   entry: TimetableEntry | null; // this train's own timetable entry, null if the timetable lacks it
   leader: Leader; // from the timetable on A and B, from the junction grant on EXIT
-  leaderReport: LeaderReport | null; // the leader's last position report
+  reports: ReportLog; // the newest position report from every train, the leader's included
   permit: HeldPermit | null; // the last permit from the control centre
   locks: ResourceId[]; // locks the station and merge actors have granted this train
   platform: PlatformId | null; // the platform this train has chosen
@@ -54,13 +58,12 @@ export interface TrainMemory {
   // Timers and fallback state.
   lastPositionSentAt: number | null;
   asking: PlatformId | null; // the platform the train is asking the station for
-  alternative: PlatformId | null; // the alternative from the last refusal
   lastPlatformRequestAt: number | null;
-  lastStationReplyAt: number | null;
+  lastStationReply: HeardStationReply | null; // what the station last said, and when
   usingFallback: boolean; // using the station-off rule, from shouldUseFallback
   firstJunctionRequestAt: number | null;
   lastJunctionRequestAt: number | null;
-  heardMergeReply: boolean;
+  lastMergeReplyAt: number | null; // when the merge actor last granted or refused
   platformStatus: PlatformStatusLog;
   lastNextTrack: TrackId | null; // the nextTrack returned last tick, which sightAhead follows now
 }
@@ -77,20 +80,19 @@ export function initialMemory(id: TrainId, timetable: TimetableEntry[]): TrainMe
     id,
     entry,
     leader: entry ? (entry.leader ?? 'none') : 'unknown',
-    leaderReport: null,
+    reports: {},
     permit: null,
     locks: [],
     platform: null,
     dwellStartedAt: null,
     lastPositionSentAt: null,
     asking: null,
-    alternative: null,
     lastPlatformRequestAt: null,
-    lastStationReplyAt: null,
+    lastStationReply: null,
     usingFallback: false,
     firstJunctionRequestAt: null,
     lastJunctionRequestAt: null,
-    heardMergeReply: false,
+    lastMergeReplyAt: null,
     platformStatus: {},
     lastNextTrack: null,
   };
@@ -131,47 +133,54 @@ export interface RouteChoice {
  * creepStep is probing. In a platform it is EXIT once the train holds the junction lock or
  * mayStartInSlot says go. Null otherwise. Under the fallback, platform comes from
  * fixedSplitPlatform or creepStep. On a slot start the agent sets the leader to 'unknown'.
+ * nextTrack must not change once the front has crossed the end of the current track.
  *
  * Placeholder: nextTrack null, the platform unchanged, no slot start.
  */
-export function chooseRoute(memory: TrainMemory, _input: TrainInput): RouteChoice {
+export function chooseRoute(
+  memory: TrainMemory,
+  _input: TrainInput,
+  _numbers: TrainNumbers,
+): RouteChoice {
   return { nextTrack: null, platform: memory.platform, slotStart: false };
 }
 
 /**
- * Stores what this tick's replies say: a granted lock, the granted platform, a refusal's
- * alternative, and the new leader from a junction grant. A new leader drops the old
- * leader's report. Bookkeeping only. The decisions live in the rule files.
- *
- * A grant with follow null is read as "no train ahead on EXIT". The design does not say
- * whether it could also mean "unknown".
+ * The leader on EXIT named by a junction grant. This is the one place that reads
+ * follow null. It reads it as "no train ahead", which holds while the merge actor stays
+ * up. Review of #31 notes it is wrong after the actor has been off, because trains joined
+ * EXIT on clock slots. Change this line when the team settles it.
+ */
+export function exitLeader(follow: TrainId | null): Leader {
+  return follow ?? 'none';
+}
+
+/**
+ * Stores what this tick's replies say: the station's last reply and its time, a granted
+ * lock, the granted platform, the merge actor's last reply time, and the new leader from
+ * a junction grant. A platform grant is ignored once the front has left the entry track,
+ * so a late grant cannot move a train that is already in a platform. Bookkeeping only.
+ * The decisions live in the rule files.
  */
 export function remember(
   memory: TrainMemory,
   now: number,
+  pos: Position,
   station: StationReply | null,
-  merge: MergeGrant | null,
+  merge: MergeReply | null,
 ): void {
-  if (station) memory.lastStationReplyAt = now;
-  if (station?.kind === 'grant') {
+  if (station) memory.lastStationReply = { ...station, at: now };
+  const onEntryTrack = pos.track === 'A' || pos.track === 'B';
+  if (station?.kind === 'grant' && onEntryTrack) {
     memory.platform = station.platform;
-    memory.alternative = null;
     addLock(memory, station.platform);
   }
-  if (station?.kind === 'refuse') memory.alternative = station.alternative;
 
-  if (merge) {
-    memory.heardMergeReply = true;
+  if (merge) memory.lastMergeReplyAt = now;
+  if (merge?.kind === 'grant') {
     addLock(memory, 'JUNCTION');
-    setLeader(memory, merge.follow ?? 'none');
+    memory.leader = exitLeader(merge.follow);
   }
-}
-
-/** Changes the leader, dropping the old leader's report if the leader is new. */
-export function setLeader(memory: TrainMemory, leader: Leader): void {
-  if (memory.leader === leader) return;
-  memory.leader = leader;
-  memory.leaderReport = null;
 }
 
 /** Records when each request and position message went out, for the repeat timers. */
@@ -191,8 +200,15 @@ function addLock(memory: TrainMemory, resource: ResourceId): void {
   if (!memory.locks.includes(resource)) memory.locks.push(resource);
 }
 
-/** Builds the agent for train `id`. Uses only its ID, the timetable and each decide input. */
-export function createAgent(id: TrainId, timetable: TimetableEntry[]): TrainAgent {
+/**
+ * Builds the agent for train `id`. Uses only its ID, the timetable, the map and timing
+ * numbers, and each decide input. `numbers` defaults to PENDING_NUMBERS until #34 merges.
+ */
+export function createAgent(
+  id: TrainId,
+  timetable: TimetableEntry[],
+  numbers: TrainNumbers = PENDING_NUMBERS,
+): TrainAgent {
   const memory = initialMemory(id, timetable);
 
   return {
@@ -202,43 +218,49 @@ export function createAgent(id: TrainId, timetable: TimetableEntry[]): TrainAgen
       const { now, self, inbox, sightAhead } = input;
 
       // Read this tick's inbox. A message sent on tick t arrives here on tick t + 1.
-      const station = stationReply(inbox, id);
-      remember(memory, now, station, mergeGrant(inbox, id));
-      memory.leaderReport = latestLeaderReport(memory.leaderReport, inbox, memory.leader);
+      remember(memory, now, self.pos, stationReply(inbox, id), mergeReply(inbox, id));
+      memory.reports = recordPositions(memory.reports, inbox);
       memory.permit = latestPermit(memory.permit, inbox, id);
       memory.platformStatus = recordPlatformStatus(memory.platformStatus, inbox);
       memory.dwellStartedAt = dwellStart(memory.dwellStartedAt, self, now);
       memory.asking = platformToAsk(
         entry.platform,
-        suggestedPlatform(memory.permit, now, entry.entry),
-        memory.alternative,
+        suggestedPlatform(memory.permit, now, entry.entry, numbers),
+        memory.lastStationReply,
       );
 
-      const refusalIsSilence = refusalMeansSilence({
-        reply: station,
-        statuses: memory.platformStatus,
-        entry: entry.entry,
-        pos: self.pos,
-        now,
-      });
-      memory.usingFallback = shouldUseFallback({
-        self,
-        now,
-        lastReplyAt: memory.lastStationReplyAt,
-        refusalIsSilence,
-        usingFallback: memory.usingFallback,
-      });
+      const refusalIsSilence = refusalMeansSilence(
+        {
+          lastReply: memory.lastStationReply,
+          statuses: memory.platformStatus,
+          entry: entry.entry,
+          pos: self.pos,
+          now,
+        },
+        numbers,
+      );
+      memory.usingFallback = shouldUseFallback(
+        {
+          self,
+          now,
+          lastReply: memory.lastStationReply,
+          refusalIsSilence,
+          usingFallback: memory.usingFallback,
+        },
+        numbers,
+      );
 
-      const route = chooseRoute(memory, input);
+      const route = chooseRoute(memory, input, numbers);
       memory.platform = route.platform;
-      if (route.slotStart) setLeader(memory, 'unknown');
+      if (route.slotStart) memory.leader = 'unknown';
       const nextTrack = route.nextTrack;
+      const report = leaderReport(memory.reports, memory.leader);
 
       const limit = lowestLimit([
-        leaderLimit(self.pos, memory.leader, memory.leaderReport),
+        leaderLimit(self.pos, memory.leader, report, numbers),
         sightLimit(sightAhead),
-        stopPointLimit(self, memory.platform, nextTrack),
-        permitLimit(self, memory.permit, now),
+        stopPointLimit(self, memory.platform, nextTrack, numbers),
+        permitLimit(self, memory.permit, now, numbers),
         fallbackLimit(memory.usingFallback),
       ]);
 
@@ -247,21 +269,27 @@ export function createAgent(id: TrainId, timetable: TimetableEntry[]): TrainAgen
       accel = clampAccel(accel);
 
       const outbox = [
-        positionMessage(now, self, memory.lastPositionSentAt),
-        platformRequest({
-          now,
-          id,
-          pos: self.pos,
-          asking: memory.platform ?? memory.asking,
-          lastSentAt: memory.lastPlatformRequestAt,
-        }),
-        junctionRequest({
-          now,
-          id,
-          dwellDone: dwellDone(memory.dwellStartedAt, entry.dwell, now),
-          holdsJunction: memory.locks.includes('JUNCTION'),
-          lastSentAt: memory.lastJunctionRequestAt,
-        }),
+        positionMessage(now, self, memory.lastPositionSentAt, numbers),
+        platformRequest(
+          {
+            now,
+            id,
+            pos: self.pos,
+            asking: memory.platform ?? memory.asking,
+            lastSentAt: memory.lastPlatformRequestAt,
+          },
+          numbers,
+        ),
+        junctionRequest(
+          {
+            now,
+            id,
+            dwellDone: dwellDone(memory.dwellStartedAt, entry.dwell, now, numbers),
+            holdsJunction: memory.locks.includes('JUNCTION'),
+            lastSentAt: memory.lastJunctionRequestAt,
+          },
+          numbers,
+        ),
       ].filter((o): o is Outgoing => o !== null);
       noteSent(memory, outbox, now);
 
@@ -270,7 +298,7 @@ export function createAgent(id: TrainId, timetable: TimetableEntry[]): TrainAgen
         accel,
         nextTrack,
         outbox,
-        mode: modeFor(now, memory.leader, memory.leaderReport, isPermitFresh(memory.permit, now)),
+        mode: modeFor(now, memory.leader, report, isPermitFresh(memory.permit, now, numbers), numbers),
       };
     },
   };

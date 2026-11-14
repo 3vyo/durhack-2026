@@ -1,48 +1,56 @@
+// Each test under a "placeholders" describe pins a placeholder's value. Delete it in the
+// commit that writes its rule. Do not edit it to pass. Each it.todo becomes a real test
+// when its rule is written.
+
 import { describe, expect, it } from 'vitest';
 import type { Message } from '../../src/shared/types';
 import {
   dwellDone,
   junctionRequest,
   mayStartInSlot,
-  mergeGrant,
+  mergeReply,
   slotOpen,
   useClockSlots,
 } from '../../src/train/depart';
+import { PENDING_NUMBERS as N } from '../../src/train/numbers';
 
 const grant: Message = { type: 'lockGrant', to: 1, resource: 'JUNCTION', follow: 7 };
+const refuse: Message = { type: 'lockRefuse', to: 1, resource: 'JUNCTION', alternative: null };
 
-describe('depart.ts placeholders', () => {
+describe('depart.ts placeholders (delete each when its rule is written)', () => {
   it('dwellDone is never true', () => {
-    expect(dwellDone(0, 30, 1000)).toBe(false);
-    expect(dwellDone(null, 30, 1000)).toBe(false);
+    expect(dwellDone(0, 30, 1000, N)).toBe(false);
+    expect(dwellDone(null, 30, 1000, N)).toBe(false);
   });
 
   it('junctionRequest asks for nothing', () => {
     expect(
-      junctionRequest({ now: 100, id: 1, dwellDone: true, holdsJunction: false, lastSentAt: null }),
+      junctionRequest({ now: 100, id: 1, dwellDone: true, holdsJunction: false, lastSentAt: null }, N),
     ).toBeNull();
   });
 
-  it('mergeGrant hears nothing', () => {
-    expect(mergeGrant([grant], 1)).toBeNull();
+  it('mergeReply hears neither grants nor refusals', () => {
+    expect(mergeReply([grant], 1)).toBeNull();
+    expect(mergeReply([refuse], 1)).toBeNull();
   });
 
   it('useClockSlots is false', () => {
-    expect(useClockSlots(0, false, 1000)).toBe(false);
+    expect(useClockSlots(0, null, 1000, N)).toBe(false);
   });
 
   it('slotOpen is false for every platform', () => {
-    for (const p of ['P1', 'P2', 'P3', 'P4'] as const) expect(slotOpen(p, 0)).toBe(false);
+    for (const p of ['P1', 'P2', 'P3', 'P4'] as const) expect(slotOpen(p, 0, N)).toBe(false);
   });
 
   it('mayStartInSlot is false', () => {
-    expect(mayStartInSlot('P1', 0, null)).toBe(false);
+    expect(mayStartInSlot('P1', 0, null, N)).toBe(false);
   });
 });
 
 describe('Leaving the station: dwell', () => {
   it.todo('the dwell is done once dwell seconds have passed since the train stopped');
   it.todo('the dwell is not done before dwell seconds have passed');
+  it.todo('judges the dwell with half a tick of slack');
   it.todo('the dwell is not done when the dwell timer has not started');
 });
 
@@ -51,25 +59,36 @@ describe('Leaving the station: asking for the junction', () => {
   it.todo('sends a lockRequest for JUNCTION over short range once the dwell is done');
   it.todo('repeats the junction request every 2 seconds');
   it.todo('does not repeat the junction request sooner than 2 seconds');
+  it.todo('repeats on the tick 2 seconds have passed even when now - lastSentAt is a rounding error short (half a tick of slack)');
   it.todo('stops asking once it holds the junction lock');
+  it.todo('team question: what a broken-down train does when its dwell ends. If it asks, it gets the junction and never moves, and the merge actor never sees the zone fill and empty (the design gives no brokenDown rule)');
+});
+
+describe('Leaving the station: merge replies', () => {
+  it.todo('reads a lockGrant for JUNCTION addressed to itself');
+  it.todo('reads a lockRefuse for JUNCTION addressed to itself');
+  it.todo('ignores junction replies addressed to other trains');
+  it.todo('ignores platform grants and refusals when reading the merge reply');
+  it.todo('when one inbox holds a junction grant and a refusal for this train, the grant wins');
+  it.todo('a JUNCTION refusal counts as a reply from the merge actor');
+  it.todo('keeps waiting in the platform while refusals keep coming');
 });
 
 describe('Leaving the station: the grant', () => {
-  it.todo('reads a lockGrant for JUNCTION addressed to itself');
-  it.todo('ignores junction grants addressed to other trains');
-  it.todo('ignores platform grants when reading the merge reply');
   it.todo('on a junction grant, sets nextTrack to EXIT and departs');
   it.todo('does not leave the platform without a junction grant or an open slot');
   it.todo('treats the follow train in the grant as its leader on EXIT');
-  it.todo('drops the old leader report when the grant names a new leader');
-  it.todo('with follow null in the grant, has leader none on EXIT (check with the team that null means no train ahead)');
+  it.todo('uses the newest report it has heard from the new leader');
+  it.todo('with follow null in the grant, has leader none on EXIT (read in exitLeader only; #31 notes it is wrong after the merge actor was off)');
 });
 
 describe('Merge switched off: when to use clock slots', () => {
   it.todo('switches to clock slots after 10 seconds of asking with no reply');
   it.todo('keeps waiting for the merge actor before 10 seconds');
-  it.todo('counts the 10 seconds from its first junction request');
-  it.todo('does not use clock slots after any reply from the merge actor');
+  it.todo('counts the 10 seconds from the later of its first junction request and the last merge reply');
+  it.todo('does not use clock slots after a reply in the last 10 seconds');
+  it.todo('after one refusal and then silence, switches to clock slots 10 seconds after that refusal');
+  it.todo('judges the 10 seconds with half a tick of slack');
 });
 
 describe('Merge switched off: the slots', () => {
@@ -80,6 +99,7 @@ describe('Merge switched off: the slots', () => {
   it.todo('P4 may start during the first 15 seconds of slot 3');
   it.todo('the slot is closed from 15 seconds into it until the next one');
   it.todo('the slots repeat every 240 seconds');
+  it.todo('a now a rounding error short of a slot edge lands in the right slot (half a tick of slack)');
 });
 
 describe('Merge switched off: starting', () => {
@@ -87,6 +107,6 @@ describe('Merge switched off: starting', () => {
   it.todo('does not start in its slot when sightAhead shows an obstacle in the junction zone');
   it.todo('does not start outside its slot even when the junction zone is empty');
   it.todo('on a slot start, sets nextTrack to EXIT');
-  it.todo('a slot start sets the leader to unknown and drops the old leader report');
+  it.todo('a slot start sets the leader to unknown');
   it.todo('after a slot start, stays at SIGHT_SPEED or below on EXIT until it learns its leader');
 });

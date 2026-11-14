@@ -1,33 +1,44 @@
+// Each test under a "placeholders" describe pins a placeholder's value. Delete it in the
+// commit that writes its rule. Do not edit it to pass. Each it.todo becomes a real test
+// when its rule is written.
+
 import { describe, expect, it } from 'vitest';
 import type { Message, TrainState } from '../../src/shared/types';
 import {
-  latestLeaderReport,
   leaderLimit,
+  leaderReport,
   modeFor,
   positionMessage,
+  recordPositions,
   sightLimit,
   stopPointLimit,
-  type LeaderReport,
+  type PositionReport,
+  type ReportLog,
 } from '../../src/train/follow';
+import { PENDING_NUMBERS as N } from '../../src/train/numbers';
 
 const self: TrainState = { id: 2, pos: { track: 'A', offset: 1000 }, speed: 30, brokenDown: false };
-const report: LeaderReport = { pos: { track: 'A', offset: 2000 }, speed: 30, sentAt: 9 };
+const report: PositionReport = { pos: { track: 'A', offset: 2000 }, speed: 30, sentAt: 9 };
 const fromLeader: Message = { type: 'position', from: 1, pos: { track: 'A', offset: 2000 }, speed: 30, sentAt: 9 };
 
-describe('follow.ts placeholders', () => {
+describe('follow.ts placeholders (delete each when its rule is written)', () => {
   it('positionMessage sends nothing', () => {
-    expect(positionMessage(10, self, null)).toBeNull();
+    expect(positionMessage(10, self, null, N)).toBeNull();
   });
 
-  it('latestLeaderReport knows nothing about the leader', () => {
-    expect(latestLeaderReport(null, [fromLeader], 1)).toBeNull();
-    expect(latestLeaderReport(report, [fromLeader], 1)).toBeNull();
+  it('recordPositions learns nothing new', () => {
+    const prev: ReportLog = {};
+    expect(recordPositions(prev, [fromLeader])).toBe(prev);
+  });
+
+  it('leaderReport finds no report', () => {
+    expect(leaderReport({ 1: report }, 1)).toBeNull();
   });
 
   it('leaderLimit is 0 for a known, absent or unknown leader', () => {
-    expect(leaderLimit(self.pos, 1, report)).toBe(0);
-    expect(leaderLimit(self.pos, 'none', null)).toBe(0);
-    expect(leaderLimit(self.pos, 'unknown', null)).toBe(0);
+    expect(leaderLimit(self.pos, 1, report, N)).toBe(0);
+    expect(leaderLimit(self.pos, 'none', null, N)).toBe(0);
+    expect(leaderLimit(self.pos, 'unknown', null, N)).toBe(0);
   });
 
   it('sightLimit is 0 with or without an obstacle', () => {
@@ -36,13 +47,13 @@ describe('follow.ts placeholders', () => {
   });
 
   it('stopPointLimit is 0 with or without a platform, even with nextTrack EXIT', () => {
-    expect(stopPointLimit(self, null, null)).toBe(0);
-    expect(stopPointLimit({ ...self, pos: { track: 'P1', offset: 100 } }, 'P1', 'EXIT')).toBe(0);
+    expect(stopPointLimit(self, null, null, N)).toBe(0);
+    expect(stopPointLimit({ ...self, pos: { track: 'P1', offset: 100 } }, 'P1', 'EXIT', N)).toBe(0);
   });
 
   it('modeFor reports blind', () => {
-    expect(modeFor(10, 1, report, true)).toBe('blind');
-    expect(modeFor(10, 'unknown', null, false)).toBe('blind');
+    expect(modeFor(10, 1, report, true, N)).toBe('blind');
+    expect(modeFor(10, 'unknown', null, false, N)).toBe('blind');
   });
 });
 
@@ -51,17 +62,19 @@ describe('Following: position broadcast', () => {
   it.todo('the position message carries its own id, front position, speed and sentAt equal to now');
   it.todo('sends its first position message on its first tick');
   it.todo('does not send a second position message within the same second');
+  it.todo('sends on the tick a second has passed even when now - lastSentAt is a rounding error short (half a tick of slack)');
   it.todo('keeps broadcasting while stopped, in a platform and on EXIT');
 });
 
-describe('Following: leader reports', () => {
+describe('Following: position reports', () => {
   it.todo('on A or B, starts with the leader the timetable names');
   it.todo('on A or B, a timetable leader of null means no train ahead (leader none)');
-  it.todo('keeps the newest position report from its leader');
-  it.todo('ignores position reports from trains other than its leader');
-  it.todo('ignores a report with an older sentAt than the one it holds');
-  it.todo('keeps its last report when the inbox has nothing from the leader');
-  it.todo('holds no report when the leader is unknown');
+  it.todo('keeps the newest position report from every train it hears, not only its leader');
+  it.todo('ignores a report with an older sentAt than the one it holds for that train');
+  it.todo('keeps its reports when the inbox has nothing new');
+  it.todo('looks up its leader in the report log');
+  it.todo('finds no report when the leader is none or unknown');
+  it.todo('uses the newest report it has heard from a new leader, from before the leader changed');
 });
 
 describe('Following: leader limit point', () => {
@@ -105,6 +118,7 @@ describe('Following: mode', () => {
   it.todo('central takes priority over full, stale and blind');
   it.todo('reports full when the leader report is under FRESH seconds old');
   it.todo('reports stale when the leader report is FRESH seconds old or older');
+  it.todo('judges FRESH with half a tick of slack');
   it.todo('reports blind when it has never heard its leader');
   it.todo('reports blind when its leader is unknown');
   it.todo('picks a mode for a train with leader none (the design does not say which; ask the team)');

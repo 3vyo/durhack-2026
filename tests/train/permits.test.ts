@@ -1,5 +1,10 @@
+// Each test under a "placeholders" describe pins a placeholder's value. Delete it in the
+// commit that writes its rule. Do not edit it to pass. Each it.todo becomes a real test
+// when its rule is written.
+
 import { describe, expect, it } from 'vitest';
 import type { Message, TrainState } from '../../src/shared/types';
+import { PENDING_NUMBERS as N } from '../../src/train/numbers';
 import {
   isPermitFresh,
   latestPermit,
@@ -12,24 +17,24 @@ const permit: HeldPermit = { untilX: 6000, nextTrack: 'P1', sentAt: 9 };
 const self: TrainState = { id: 1, pos: { track: 'A', offset: 1000 }, speed: 30, brokenDown: false };
 const forMe: Message = { type: 'permit', to: 1, untilX: 6000, nextTrack: 'P1', sentAt: 9 };
 
-describe('permits.ts placeholders', () => {
+describe('permits.ts placeholders (delete each when its rule is written)', () => {
   it('latestPermit ignores every permit', () => {
     expect(latestPermit(null, [forMe], 1)).toBeNull();
     expect(latestPermit(permit, [forMe], 1)).toBeNull();
   });
 
   it('isPermitFresh is always false', () => {
-    expect(isPermitFresh(permit, 10)).toBe(false);
-    expect(isPermitFresh(null, 10)).toBe(false);
+    expect(isPermitFresh(permit, 10, N)).toBe(false);
+    expect(isPermitFresh(null, 10, N)).toBe(false);
   });
 
   it('permitLimit is 0 with or without a permit', () => {
-    expect(permitLimit(self, permit, 10)).toBe(0);
-    expect(permitLimit(self, null, 10)).toBe(0);
+    expect(permitLimit(self, permit, 10, N)).toBe(0);
+    expect(permitLimit(self, null, 10, N)).toBe(0);
   });
 
   it('suggestedPlatform suggests nothing', () => {
-    expect(suggestedPlatform(permit, 10, 'A')).toBeNull();
+    expect(suggestedPlatform(permit, 10, 'A', N)).toBeNull();
   });
 });
 
@@ -43,6 +48,7 @@ describe('Following permits: reading permits', () => {
 describe('Following permits: freshness', () => {
   it.todo('a permit is fresh while it is under 5 seconds old');
   it.todo('a permit 5 seconds old or older is not fresh');
+  it.todo('judges the 5 seconds with half a tick of slack, so rounding in now does not shift it by a tick');
   it.todo('no permit is not fresh');
   it.todo('when permits return after an outage, the train follows them on the next tick');
 });

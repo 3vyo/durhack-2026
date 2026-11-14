@@ -8,4 +8,4 @@ import { createAgent } from './agent';
  * Placeholder: every rule returns its safest value, so the agent holds its brakes on,
  * sets nextTrack to null, sends nothing and reports mode blind.
  */
-export const createTrainAgent: TrainAgentFactory = createAgent;
+export const createTrainAgent: TrainAgentFactory = (id, timetable) => createAgent(id, timetable);

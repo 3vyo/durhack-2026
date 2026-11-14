@@ -1,4 +1,5 @@
 import type { Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
+import type { TrainNumbers } from './numbers';
 
 // Rules from docs/design.md, "Train rules" > "Following permits".
 // Every function here is a placeholder that returns the safest value.
@@ -25,11 +26,16 @@ export function latestPermit(
 }
 
 /**
- * "Following permits". True while the permit is under 5 seconds old.
+ * "Following permits". True while the permit is under permitFresh seconds old, allowing
+ * `slack`.
  *
  * Placeholder: never fresh.
  */
-export function isPermitFresh(_permit: HeldPermit | null, _now: number): boolean {
+export function isPermitFresh(
+  _permit: HeldPermit | null,
+  _now: number,
+  _numbers: Pick<TrainNumbers, 'permitFresh' | 'slack'>,
+): boolean {
   return false;
 }
 
@@ -39,7 +45,12 @@ export function isPermitFresh(_permit: HeldPermit | null, _now: number): boolean
  *
  * Placeholder: 0, so the train stops.
  */
-export function permitLimit(_self: TrainState, _permit: HeldPermit | null, _now: number): number {
+export function permitLimit(
+  _self: TrainState,
+  _permit: HeldPermit | null,
+  _now: number,
+  _numbers: Pick<TrainNumbers, 'permitFresh' | 'slack' | 'xOf'>,
+): number {
   return 0;
 }
 
@@ -53,6 +64,7 @@ export function suggestedPlatform(
   _permit: HeldPermit | null,
   _now: number,
   _entry: 'A' | 'B',
+  _numbers: Pick<TrainNumbers, 'permitFresh' | 'slack' | 'pairs'>,
 ): PlatformId | null {
   return null;
 }
