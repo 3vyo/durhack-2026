@@ -256,13 +256,14 @@ The station actor cannot tell a dead sensor from a train arriving, or the sensor
 ### Leaving the station
 
 1. After its dwell time a train sends a `lockRequest` for `JUNCTION` and repeats it every 2 seconds.
-2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side. A train that has to wait gets a `lockRefuse` for `JUNCTION`, so it knows the merge actor is alive.
-3. On a grant the train sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
-4. The merge actor releases the lock when its sensor shows the junction zone is empty again.
+2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
+3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted.
+4. On a grant the train sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
+5. The merge actor releases the lock when its sensor shows the junction zone is empty again.
 
 ### Merge switched off
 
-After 10 seconds without a reply, a train uses clock slots. Every train has an accurate clock, so no messages are needed.
+After 10 seconds without a reply, a train uses clock slots. The 10 seconds count from the later of its first `JUNCTION` request and the last reply it heard from the merge actor. Every train has an accurate clock, so no messages are needed.
 
 ```
 slot = floor(now / 60) mod 4
