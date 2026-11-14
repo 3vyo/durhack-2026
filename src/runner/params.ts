@@ -11,8 +11,8 @@ import type { TimetableEntry } from '../shared/types';
 
 /** The timetable a parameter file asks for. The same seed always gives the same one. */
 export function timetableFor(params: SimParams): TimetableEntry[] {
-  const { seed, trains, headway, dwell } = params.timetable;
-  return generateTimetable(seed, { trains, minHeadway: headway, dwell });
+  const { seed, trains, minHeadway, dwell } = params.timetable;
+  return generateTimetable(seed, { trains, minHeadway, dwell });
 }
 
 /** The file's starting switches and failures as engine presses, in time order. */

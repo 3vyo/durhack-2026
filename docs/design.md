@@ -74,6 +74,7 @@ The timers the rules use are constants too.
 | `SLOT_LENGTH`, `SLOT_WINDOW`, `SLOT_COUNT` | 60, 15, 4 | The clock slots |
 | `RADIO_WORKING_DELAY` | 1200 | How long the centre is down before staff move the first train by radio |
 | `RADIO_RELEASE_GAP` | 60 | How often staff release one stopped train by radio. Our assumption |
+| `RESTART_GAP` | 0 | Seconds between releases in the slow restart. 0 turns it off |
 
 ### The parameter file
 
@@ -84,16 +85,18 @@ These values are the defaults. A parameter file can change them for one run. It 
   "name": "centre outage",
   "physics": { "maxSpeed": 45, "brake": 0.9, "sensorRange": 300 },
   "timers": { "junctionKeeperTimeout": 10 },
-  "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
   "start": { "centre": true, "radioDrop": 0 },
   "failures": [
-    { "at": 300, "centre": false },
-    { "at": 480, "centre": true },
-    { "at": 600, "breakDown": 3 }
+    { "at": 480, "centre": false },
+    { "at": 600, "centre": true },
+    { "at": 900, "breakDown": 3 }
   ],
-  "runLength": 3600
+  "runLength": 7200
 }
 ```
+
+`minHeadway` is the shortest gap between two trains entering. Each gap is drawn from the seed, between `minHeadway` and twice it. Each train picks track A or B at random from the seed.
 
 - `src/shared/params.ts` reads and checks the file, and lists every problem at once.
 - `applyParams` replaces the constants before a run starts. The constants are declared with `let`, so every file that imports one sees the new value. Read a constant where you use it, inside a function. A copy made when a file loads keeps the old value.
@@ -275,7 +278,7 @@ The display labels each train with a mode.
 
 | Mode | Meaning |
 |---|---|
-| central | The train holds a permit under 5 seconds old and obeys it. This label takes priority over the other three |
+| central | The train holds a permit under `PERMIT_FRESH` seconds old and obeys it. This label takes priority over the other three |
 | full | Leader's report is under `FRESH` seconds old |
 | stale | Leader's report is older |
 | blind | No report from the leader, or leader unknown |
@@ -364,6 +367,29 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 - Switches for the platform keeper, the junction keeper and the platform sensors.
 - A button to break down a chosen train, which stops it where it is.
 
+## Scenarios and timings
+
+The demo's scripted runs, the batch and the example parameter files all use the same numbers, so their results can be compared.
+
+- One timetable: 16 trains, `minHeadway` 45 seconds, a 30-second stop in the platform.
+- Every run lasts up to 7200 seconds, and stops early once every train has left. A train that never leaves counts as leaving at 7200 seconds, so delays from runs of different lengths are never compared.
+- A failure starts once the 8th train has entered, when the station is busy, plus up to 60 seconds drawn from the seed. A parameter file names a time, not a train, so the example files start their failures at 480 seconds, about when the 8th train enters.
+- A failure lasts 2 minutes, close to the 90-second Manchester power cut. The long outage lasts 30 minutes, to show radio working.
+
+| Scenario | What fails |
+|---|---|
+| Healthy control | Nothing |
+| Centre outage | The control centre |
+| Radio off | The train-to-train radio, with the centre still working |
+| Platform keeper fault | The platform keeper |
+| Local fault | The junction keeper |
+| Sensors off | The platform sensors |
+| Blackout, trains talking | The centre and both keepers |
+| Blackout, trains silent | The centre, both keepers and the radio |
+| Long outage | The control centre, for 30 minutes |
+
+`npm run batch` runs every scenario over 50 seeds and fails if any run in either program has a collision.
+
 ## Today's rule, for comparison
 
 A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
@@ -375,9 +401,15 @@ When the centre has been down for `RADIO_WORKING_DELAY` seconds, staff start mov
 - Staff release one stopped train every `RADIO_RELEASE_GAP` seconds, the one furthest along first. The time per train is our assumption. No source gives one.
 - Staff know where every train is and make the same decisions as the centre. Their permits carry `caution: true`, and a train holding one stays at `SIGHT_SPEED` or below.
 - The permits go over the radio, so the radio slider drops them. With the radio fully down, no train moves until the centre is back.
-- When the centre comes back it takes over at once.
+- When the centre comes back it takes over at once, unless the slow restart is on.
 
 In the engine, `ControlCentre.radioStep` is called once a second while the centre is switched off. Our trains ignore a permit with `caution: true`. By then they are already running on their own rules, which are faster.
+
+### Slow restart
+
+In the Manchester incident, trains stayed stopped long after the power came back, because staff restarted them one at a time. With `RESTART_GAP` above 0, a centre that comes back after an outage releases the stopped trains one every `RESTART_GAP` seconds, the one furthest along first. The time per train is our assumption, so the slow restart is off by default and shown only as a labelled extra. A parameter file turns it on with `"timers": { "restartGap": 60 }`.
+
+### When permits stop
 
 When its permits stop, a baseline train keeps two things from its last permit.
 
@@ -394,6 +426,7 @@ The baseline train also brakes for `sightAhead`, as a driver would. The centre i
 
 - Trains per hour leaving the right-hand end of EXIT.
 - Average delay per train against the baseline with nothing failed. This is what a passenger on a typical train sees, and it does not grow with the number of trains. A train that never leaves counts at the run length.
+- Time to normal. A train is on time if it leaves EXIT no more than 10 seconds after it did in the baseline with nothing failed. Time to normal runs from the end of the last failure to the exit of the first train from which every later train is on time. If that never happens before the run ends, it is "never".
 - Collisions, meaning two trains overlapping on one track or two trains in the junction zone. This must stay at zero.
 - Close calls, meaning a gap under `MARGIN`.
 
@@ -415,7 +448,7 @@ Stack: TypeScript, Vite, three.js for the view, and Vitest for tests. No server.
 
 ## Stretch goals
 
-Build these only after the five issues are done.
+Build these only once everything above works.
 
 - Early booking. A train asks the platform keeper for a platform over long range before the ask point and adjusts its speed to arrive as the platform frees.
 - Borrowing. When the platform keeper is off and nearby trains can hear each other, the lowest ID picks first and may take a free platform from the other pair.

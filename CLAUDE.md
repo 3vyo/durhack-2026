@@ -36,4 +36,4 @@ Never push to `main` directly. The repo is private on a free plan, so GitHub doe
 
 ## Stack
 
-TypeScript, Vite, a canvas, and Vitest. No server. The engine work adds the scaffold and the npm scripts.
+TypeScript, Vite, three.js for the view, and Vitest. No server.

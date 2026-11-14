@@ -1,5 +1,5 @@
 {
   "name": "healthy",
-  "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
+  "timetable": { "seed": 1, "trains": 12, "minHeadway": 45, "dwell": 30 },
   "runLength": 3600
 }

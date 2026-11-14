@@ -1,7 +1,7 @@
 {
   "name": "slower, longer trains with a short-sighted sensor",
   "physics": { "maxSpeed": 30, "accel": 0.3, "brake": 0.6, "trainLength": 200, "sensorRange": 250 },
-  "timetable": { "seed": 7, "trains": 8, "headway": 90, "dwell": 45 },
+  "timetable": { "seed": 7, "trains": 8, "minHeadway": 90, "dwell": 45 },
   "failures": [
     { "at": 400, "centre": false },
     { "at": 700, "centre": true }
