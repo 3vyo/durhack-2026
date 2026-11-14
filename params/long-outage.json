@@ -1,0 +1,9 @@
+{
+  "name": "long outage: centre off for 30 minutes",
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 480, "centre": false },
+    { "at": 2280, "centre": true }
+  ],
+  "runLength": 7200
+}

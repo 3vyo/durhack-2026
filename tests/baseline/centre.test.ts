@@ -24,7 +24,7 @@ import {
   type Routes,
   type TrainPlan,
 } from '../../src/baseline/centre';
-import { BRAKE, DEFAULT_CONSTANTS, MARGIN, MAX_SPEED, TRAIN_LENGTH } from '../../src/shared/constants';
+import { BRAKE, DEFAULT_CONSTANTS, MARGIN, MAX_SPEED, TRAIN_LENGTH, resetConstants, setConstants } from '../../src/shared/constants';
 import { JUNCTION_END_X, JUNCTION_START_X, PLATFORM_STOP, TRACK_LENGTH, TRACK_START, xOf } from '../../src/shared/map';
 import type {
   Message,
@@ -282,6 +282,26 @@ describe('slow restart', () => {
     expect(held(seen(waiting, 11.0000001, first))).toEqual([]);
     expect(held(seen(waiting, 11.5, first))).toEqual([]);
     expect(held(seen(waiting, 12, first))).toEqual([1, 2, 3]);
+  });
+
+  it('reads the gap from RESTART_GAP when no option is given, so a parameter file can turn it on', () => {
+    setConstants({ RESTART_GAP: 30 });
+    try {
+      const centre = makeCentre(timetable);
+      centre.step(0, waiting, clear, none);
+      const back = centre.step(100, waiting, clear, none);
+      const released = waiting.filter((t) => permitFor(back, t.id).untilX > xOf(t.pos));
+      expect(released.map((t) => t.id)).toEqual([1]);
+    } finally {
+      resetConstants();
+    }
+  });
+
+  it('is off by default: every train is released at once', () => {
+    const centre = makeCentre(timetable);
+    centre.step(0, waiting, clear, none);
+    const back = centre.step(100, waiting, clear, none);
+    expect(waiting.every((t) => permitFor(back, t.id).untilX > xOf(t.pos))).toBe(true);
   });
 
   it('does not treat the first step as a restart', () => {

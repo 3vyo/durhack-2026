@@ -1,7 +1,7 @@
 import { Engine } from '../engine/engine';
 import type { TrainProgram } from '../engine/ports';
 import type { Switches } from '../engine/switches';
-import { generateTimetable, runLengthFor, type TimetableOptions } from '../engine/timetable';
+import { RUN_LENGTH, generateTimetable, type TimetableOptions } from '../engine/timetable';
 import type { Scenario } from '../scenarios/scenarios';
 import { TICK } from '../shared/constants';
 import { pressesFor } from './failure';
@@ -76,7 +76,7 @@ export class LiveSession {
     const timetable = generateTimetable(seed, tt);
     const presses = scripted ? pressesFor(scenario, timetable, seed) : [];
     const make = (program: TrainProgram): Engine =>
-      new Engine({ timetable, program, seed, runLength: runLengthFor(timetable), presses });
+      new Engine({ timetable, program, seed, runLength: RUN_LENGTH, presses });
     this.baselineEngine = make(programs.baseline);
     this.oursEngine = make(programs.ours);
   }

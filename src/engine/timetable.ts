@@ -21,18 +21,19 @@ export interface TimetableOptions {
 }
 
 /**
- * A starting point to tune so the baseline visibly stalls and healthy running looks normal.
- * Trains enter at MAX_SPEED, so a healthy journey is about 400 s including the platform stop
- * and dwell. 16 trains at gaps of 45 to 90 s enter over roughly 1000 s, and runLengthFor adds
- * a 600 s margin so the last train can finish.
+ * The one timetable the demo, the batch and the example parameter files use. Design:
+ * "Scenarios and timings". Trains enter at SIGHT_SPEED, and a healthy journey takes about
+ * 600 s including the platform stop. 16 trains at gaps of 45 to 90 s enter over roughly
+ * 1000 s.
  */
 export const DEFAULT_TIMETABLE: TimetableOptions = { trains: 16, minHeadway: 45, dwell: 30 };
 
-/** How long a run must last for every train to finish: the last entry plus a settle margin. */
-export function runLengthFor(timetable: TimetableEntry[], settle: number = 600): number {
-  if (timetable.length < 1) throw new Error('timetable needs at least one train');
-  return timetable[timetable.length - 1].enterAt + settle;
-}
+/**
+ * Every run lasts up to this many seconds, and stops early once every train has left. A
+ * train that never leaves counts as leaving now, so every delay is measured against the same
+ * end. Design: "Scenarios and timings".
+ */
+export const RUN_LENGTH = 7200;
 
 const PAIR: Record<'A' | 'B', [PlatformId, PlatformId]> = {
   A: ['P1', 'P2'],
@@ -41,7 +42,8 @@ const PAIR: Record<'A' | 'B', [PlatformId, PlatformId]> = {
 
 /**
  * Builds a timetable from a seed. Each gap is minHeadway + rng() * minHeadway, so the
- * timetable stays under full capacity. Default platforms alternate within each entry track.
+ * timetable stays under full capacity. Each train picks A or B at random from the seed.
+ * Default platforms alternate within each entry track.
  */
 export function generateTimetable(seed: number, opts: TimetableOptions): TimetableEntry[] {
   if (opts.trains < 1) throw new Error('timetable needs at least one train');

@@ -3,7 +3,7 @@ import {
   DEFAULT_TIMETABLE,
   generateTimetable,
   makeRng,
-  runLengthFor,
+  RUN_LENGTH,
 } from '../../src/engine/timetable';
 
 describe('makeRng', () => {
@@ -71,24 +71,16 @@ describe('generateTimetable', () => {
   });
 });
 
-describe('runLengthFor', () => {
-  it('is the last entry time plus a settle margin of 600 s by default', () => {
-    const tt = generateTimetable(9, DEFAULT_TIMETABLE);
-    expect(runLengthFor(tt)).toBe(tt[tt.length - 1].enterAt + 600);
+describe('RUN_LENGTH', () => {
+  it('is 2 hours, the one run length for the demo, the batch and the example files', () => {
+    expect(RUN_LENGTH).toBe(7200);
   });
 
-  it('takes a custom margin', () => {
-    const tt = generateTimetable(9, DEFAULT_TIMETABLE);
-    expect(runLengthFor(tt, 100)).toBe(tt[tt.length - 1].enterAt + 100);
-  });
-
-  it('throws for an empty timetable', () => {
-    expect(() => runLengthFor([])).toThrow('at least one train');
-  });
-
-  it('keeps the default run under 2000 s for every seed tried', () => {
+  it('leaves plenty of time after the last train enters, for every seed tried', () => {
     for (let seed = 1; seed <= 50; seed++) {
-      expect(runLengthFor(generateTimetable(seed, DEFAULT_TIMETABLE))).toBeLessThanOrEqual(2000);
+      const tt = generateTimetable(seed, DEFAULT_TIMETABLE);
+      expect(tt[tt.length - 1].enterAt).toBeLessThan(RUN_LENGTH / 4);
     }
   });
 });
+

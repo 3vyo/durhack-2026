@@ -1,9 +1,9 @@
 {
   "name": "centre outage",
-  "timetable": { "seed": 1, "trains": 12, "minHeadway": 45, "dwell": 30 },
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
   "failures": [
-    { "at": 300, "centre": false },
-    { "at": 480, "centre": true }
+    { "at": 480, "centre": false },
+    { "at": 600, "centre": true }
   ],
-  "runLength": 3600
+  "runLength": 7200
 }
