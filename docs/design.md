@@ -256,7 +256,7 @@ The station actor cannot tell a dead sensor from a train arriving, or the sensor
 ### Leaving the station
 
 1. After its dwell time a train sends a `lockRequest` for `JUNCTION` and repeats it every 2 seconds.
-2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
+2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side. A train that has to wait gets a `lockRefuse` for `JUNCTION`, so it knows the merge actor is alive.
 3. On a grant the train sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
 4. The merge actor releases the lock when its sensor shows the junction zone is empty again.
 
