@@ -1,6 +1,6 @@
 import { ACCEL, BRAKE, MAX_SPEED, TICK } from '../shared/constants';
 import type { TrackId, TrainState } from '../shared/types';
-import { TRACK_LENGTH, successors } from './map';
+import { TRACK_LENGTH, successors } from '../shared/map';
 
 /**
  * Moves one train for one step. Speed is updated first, then distance is speed * dt.

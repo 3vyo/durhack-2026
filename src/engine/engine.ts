@@ -13,7 +13,7 @@ import type {
   TrainState,
 } from '../shared/types';
 import type { Body } from './footprint';
-import { xOf } from './map';
+import { xOf } from '../shared/map';
 import { advanceTrain } from './physics';
 import type { ControlCentre, TrainProgram } from './ports';
 import { route, type Recipient, type Sender } from './radio';

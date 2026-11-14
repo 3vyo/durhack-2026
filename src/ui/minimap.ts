@@ -1,5 +1,5 @@
 import type { Snapshot } from '../engine/engine';
-import { TRACK_LENGTH, TRACK_START } from '../engine/map';
+import { TRACK_LENGTH, TRACK_START } from '../shared/map';
 import { isStopped, markersFor, modeColor, toScreenX, type Frame } from './layout';
 
 export interface Minimap {

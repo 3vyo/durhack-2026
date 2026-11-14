@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Snapshot } from '../engine/engine';
-import { TRACK_LENGTH, TRACK_START } from '../engine/map';
+import { TRACK_LENGTH, TRACK_START } from '../shared/map';
 import type { TrackId } from '../shared/types';
 import {
   LANE_SPACING,

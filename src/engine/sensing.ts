@@ -1,7 +1,7 @@
 import { SENSOR_RANGE } from '../shared/constants';
 import type { PlatformId, SensorReadings, TrackId } from '../shared/types';
 import { footprint, touchesZone, type Body } from './footprint';
-import { PLATFORM_STOP, TRACK_LENGTH } from './map';
+import { PLATFORM_STOP, TRACK_LENGTH } from '../shared/map';
 import type { Switches } from './switches';
 
 const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
@@ -39,14 +39,17 @@ export function sightAhead(self: Body, nextTrack: TrackId | null, others: Body[]
   return nearest <= SENSOR_RANGE ? nearest : null;
 }
 
-/** Distance along the path to where the junction zone starts, or null if self is already in it. */
+/**
+ * Distance along the path to where the junction zone starts, or null if self is already past it.
+ * A train exactly at the edge gets 0, so it stops there and does not slip in unwarned.
+ */
 function zoneEdgeDistance(track: TrackId, offset: number, nextTrack: TrackId | null): number | null {
   if (track === 'A' || track === 'B') {
     const toPlatform = nextTrack !== null && nextTrack !== 'EXIT' ? nextTrack : null;
     return toPlatform ? TRACK_LENGTH[track] - offset + PLATFORM_STOP : null;
   }
   if (track === 'EXIT') return null;
-  return offset < PLATFORM_STOP ? PLATFORM_STOP - offset : null;
+  return offset <= PLATFORM_STOP ? PLATFORM_STOP - offset : null;
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { Outgoing, TrainId } from '../shared/types';
-import { RANGE, inRange } from './map';
+import { RANGE, inRange } from '../shared/map';
 import type { Switches } from './switches';
 
 /** Who sent a message. The engine fills this in, since a message does not carry its sender's kind. */

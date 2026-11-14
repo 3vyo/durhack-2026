@@ -52,6 +52,16 @@ describe('sightAhead', () => {
     expect(sightAhead(body(1, 'A', 5980), 'P1', [onPlatform])).toBe(20 + 250);
   });
 
+  it('reports the zone edge as 0 for a train standing exactly at it, so it does not slip in unwarned', () => {
+    const inZone = body(2, 'EXIT', 50, 'P2');
+    expect(sightAhead(body(1, 'P1', 300, 'A'), 'EXIT', [inZone])).toBe(0);
+  });
+
+  it('warns a train a centimetre short of the edge', () => {
+    const inZone = body(2, 'EXIT', 50, 'P2');
+    expect(sightAhead(body(1, 'P1', 299.99, 'A'), 'EXIT', [inZone])).toBeCloseTo(0.01, 6);
+  });
+
   it('takes the nearest obstacle when there are several', () => {
     const near = body(2, 'A', 1250);
     const far = body(3, 'A', 1400);

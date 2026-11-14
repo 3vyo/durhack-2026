@@ -36,8 +36,12 @@ describe('touchesZone', () => {
     expect(touchesZone(footprint(body('P1', 301)))).toBe(true);
   });
 
-  it('is false for a train whose front is exactly at the edge', () => {
-    expect(touchesZone(footprint(body('P1', 300)))).toBe(false);
+  it('is true for a train whose front is exactly at offset 300, as the shared map says', () => {
+    expect(touchesZone(footprint(body('P1', 300)))).toBe(true);
+  });
+
+  it('is false for a train a centimetre short of the edge', () => {
+    expect(touchesZone(footprint(body('P1', 299.99)))).toBe(false);
   });
 
   it('is true for a train on the first 200 m of EXIT', () => {

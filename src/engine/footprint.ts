@@ -1,6 +1,6 @@
 import { TRAIN_LENGTH } from '../shared/constants';
 import type { TrackId, TrainState } from '../shared/types';
-import { PLATFORM_STOP, TRACK_LENGTH } from './map';
+import { PLATFORM_STOP, TRACK_LENGTH } from '../shared/map';
 
 /** A stretch of one track, in offsets from that track's start. */
 export interface Segment {
@@ -31,14 +31,15 @@ export function footprint(b: Body): Segment[] {
 }
 
 /**
- * True if any part of the train is in the junction zone: past offset 300 on a platform, or
- * in the first 200 m of EXIT. A train whose front is exactly at offset 300 is at the edge and
- * not yet in, because trains stop at or just short of it.
+ * True if any part of the train is in the junction zone: offset 300 or more on a platform, or
+ * in the first 200 m of EXIT. This is the same edge as `inJunctionZone` in `src/shared/map.ts`,
+ * which the actors and the train are written against, so offset 300 is in. Trains stop at or a
+ * few centimetres short of 300, so a waiting train does not count as being in the zone.
  */
 export function touchesZone(segments: Segment[]): boolean {
   return segments.some((s) => {
     if (s.track === 'EXIT') return s.from < 200;
     if (s.track === 'A' || s.track === 'B') return false;
-    return s.to > PLATFORM_STOP;
+    return s.to >= PLATFORM_STOP;
   });
 }
