@@ -27,7 +27,8 @@ export function runScenario(o: RunOptions): RunResult {
     runLength: runLengthFor(timetable, o.settle),
     presses: pressesFor(o.scenario, timetable, o.seed),
   });
-  while (!engine.result().finished && engine.now < engine.result().runLength) engine.step();
+  const runLength = runLengthFor(timetable, o.settle);
+  while (!engine.finished && engine.now < runLength) engine.step();
   return engine.result();
 }
 

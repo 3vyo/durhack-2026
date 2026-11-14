@@ -34,7 +34,9 @@ import type {
   TrackId,
   TrainState,
 } from '../../src/shared/types';
-import { makeSim } from './sim';
+import { Engine } from '../../src/engine/engine';
+import type { Press } from '../../src/engine/switches';
+import { baselineProgram } from '../../src/baseline';
 
 // Rules: "Today's rule, for comparison" and "Following permits" in docs/design.md, plus
 // "The map" and "Platform sensors switched off".
@@ -341,27 +343,30 @@ describe('entry (the engine lets a train in at SIGHT_SPEED only when the first 4
     { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
     { id: 2, entry: 'A', enterAt: 0, platform: 'P2', leader: 1, dwell: 30 },
   ];
+  const engineFor = (presses: Press[]) =>
+    new Engine({ timetable: pair, program: baselineProgram, seed: 1, runLength: 400, presses });
+  const frontX = (engine: Engine, id: number) => engine.snapshot().trains.find((t) => t.id === id)!.x;
 
   it('two trains that enter on one entry track during an outage do not collide', () => {
     // The centre goes off before train 2 enters, so train 2 never gets a permit.
-    const sim = makeSim(pair, makeCentre(pair), createBaselineAgent, { centreOn: (now) => now < 15 });
-    sim.runUntil(120);
-    expect(sim.trains.map((t) => t.state.id)).toEqual([1, 2]);
-    expect(sim.trains.every((t) => t.state.speed === 0)).toBe(true);
-    expect(sim.overlaps).toBe(0);
-    const gap = xOf(sim.train(1)!.pos) - TRAIN_LENGTH - xOf(sim.train(2)!.pos);
-    expect(gap).toBeGreaterThanOrEqual(MARGIN);
+    const engine = engineFor([{ at: 15, set: { centre: false } }]);
+    while (engine.now < 120) engine.step();
+    const trains = engine.snapshot().trains;
+    expect(trains.map((t) => t.id)).toEqual([1, 2]);
+    expect(trains.every((t) => t.speed === 0)).toBe(true);
+    expect(engine.result().collisions).toBe(0);
+    expect(frontX(engine, 1) - TRAIN_LENGTH - frontX(engine, 2)).toBeGreaterThanOrEqual(MARGIN);
   });
 
   it('a train that enters behind a train stopped near x 1000 does not hit it', () => {
-    const sim = makeSim(pair, makeCentre(pair), createBaselineAgent);
-    while (xOf(sim.train(1)?.pos ?? { track: 'A', offset: 0 }) < 1000) sim.tick();
-    sim.breakDown(1);
-    sim.runUntil(300);
-    const gap = xOf(sim.train(1)!.pos) - TRAIN_LENGTH - xOf(sim.train(2)!.pos);
-    expect(sim.train(2)!.speed).toBe(0);
-    expect(gap).toBeGreaterThanOrEqual(MARGIN);
-    expect(sim.overlaps).toBe(0);
+    const engine = engineFor([]);
+    while (engine.snapshot().trains.length === 0 || frontX(engine, 1) < 1000) engine.step();
+    engine.breakDown(1);
+    while (engine.now < 300) engine.step();
+    const two = engine.snapshot().trains.find((t) => t.id === 2)!;
+    expect(two.speed).toBe(0);
+    expect(engine.result().collisions).toBe(0);
+    expect(frontX(engine, 1) - TRAIN_LENGTH - frontX(engine, 2)).toBeGreaterThanOrEqual(MARGIN);
   });
 });
 

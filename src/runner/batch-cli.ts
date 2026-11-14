@@ -2,7 +2,7 @@ import { DEFAULT_TIMETABLE } from '../engine/timetable';
 import { SCENARIOS } from '../scenarios/scenarios';
 import { formatSummaries } from './report';
 import { hasCollisions, runBatch } from './run';
-import { stubBaseline, stubOurs } from './stubs';
+import { baselineProgram, ourProgram } from './programs';
 
 // Run with `npm run batch`. It runs the must-have scenarios over many seeds with no screen,
 // prints one block per scenario, and exits non-zero if any run collided, in either program.
@@ -16,7 +16,7 @@ const started = Date.now();
 const summaries = Object.values(SCENARIOS)
   .filter((s) => s.tier === 'must')
   .map((s) =>
-    runBatch(s, SEEDS, { baseline: stubBaseline, ours: stubOurs }, DEFAULT_TIMETABLE),
+    runBatch(s, SEEDS, { baseline: baselineProgram, ours: ourProgram }, DEFAULT_TIMETABLE),
   );
 const elapsed = (Date.now() - started) / 1000;
 

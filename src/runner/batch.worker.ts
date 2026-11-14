@@ -1,7 +1,7 @@
 import { DEFAULT_TIMETABLE } from '../engine/timetable';
 import { SCENARIOS, type ScenarioId } from '../scenarios/scenarios';
 import { runBatch } from './run';
-import { stubBaseline, stubOurs } from './stubs';
+import { baselineProgram, ourProgram } from './programs';
 
 // Runs the many-seed batch off the page's thread, so the demo does not freeze while the
 // averages are worked out. The page sends a scenario id and gets a ScenarioSummary back.
@@ -17,7 +17,7 @@ scope.addEventListener('message', (e) => {
   const summary = runBatch(
     SCENARIOS[e.data.scenario],
     SEEDS,
-    { baseline: stubBaseline, ours: stubOurs },
+    { baseline: baselineProgram, ours: ourProgram },
     DEFAULT_TIMETABLE,
   );
   scope.postMessage(summary);

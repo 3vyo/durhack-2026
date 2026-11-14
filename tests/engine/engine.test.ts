@@ -540,3 +540,61 @@ describe('engine purity', () => {
     }
   });
 });
+
+describe('Engine breakdown', () => {
+  it('stops a broken-down train where it is, for good', () => {
+    const engine = new Engine(config(one));
+    for (let i = 0; i < 200; i++) engine.step();
+    engine.breakDown(1);
+    engine.step();
+    const at = engine.snapshot().trains[0].pos.offset;
+    for (let i = 0; i < 500; i++) engine.step();
+    const train = engine.snapshot().trains[0];
+    expect(train.pos.offset).toBe(at);
+    expect(train.speed).toBe(0);
+    expect(train.brokenDown).toBe(true);
+    expect(engine.result().exits.size).toBe(0);
+  });
+
+  it('breaks a train down from a scripted press', () => {
+    const engine = new Engine({ ...config(one), presses: [{ at: 20, set: {}, breakDown: 1 }] });
+    for (let i = 0; i < 199; i++) engine.step();
+    expect(engine.snapshot().trains[0].brokenDown).toBeUndefined();
+    for (let i = 0; i < 50; i++) engine.step();
+    expect(engine.snapshot().trains[0].brokenDown).toBe(true);
+    expect(engine.snapshot().trains[0].speed).toBe(0);
+  });
+
+  it('tells the agent it has broken down, and still asks it to decide', () => {
+    const seen: boolean[] = [];
+    const program: TrainProgram = {
+      ...stubOurs,
+      agentFactory: (id, timetable) => {
+        const inner = stubOurs.agentFactory(id, timetable);
+        return {
+          decide: (input) => {
+            seen.push(input.self.brokenDown);
+            return inner.decide(input);
+          },
+        };
+      },
+    };
+    const engine = new Engine(config(one, 600, program));
+    for (let i = 0; i < 10; i++) engine.step();
+    engine.breakDown(1);
+    for (let i = 0; i < 10; i++) engine.step();
+    expect(seen.slice(0, 10).every((b) => b === false)).toBe(true);
+    expect(seen.slice(10).every((b) => b === true)).toBe(true);
+    expect(seen.length).toBe(20);
+  });
+
+  it('counts a collision when a train that does not look ahead runs into a broken-down one', () => {
+    const two: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 0 },
+      { id: 2, entry: 'A', enterAt: 60, platform: 'P1', leader: 1, dwell: 0 },
+    ];
+    const engine = new Engine({ ...config(two), presses: [{ at: 40, set: {}, breakDown: 1 }] });
+    runUntilDone(engine);
+    expect(engine.result().collisions).toBe(1);
+  });
+});
