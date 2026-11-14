@@ -32,7 +32,7 @@ const allEmpty: SensorReadings = {
   exitStartClear: true,
 };
 
-// Test values for the inputs that wait on constants from pull request #34.
+// Test values for the inputs that wait on REQUEST_REPEAT and RESUME_SETTLE.
 const settle = 1;
 const repeat = 1;
 
@@ -166,7 +166,8 @@ describe('Entering the station: refusing', () => {
 
 describe('Entering the station: releasing', () => {
   it.todo('records the arrival once the sensor shows occupied after the grant');
-  it.todo('releases the lock once the sensor has shown arrive then leave and the holder has not been heard for longer than one repeat');
+  it.todo('releases the lock once the sensor has shown arrive then leave and the holder has not been heard for longer than one repeat plus two ticks');
+  it.todo('keeps the lock when the holder\'s last repeat was heard exactly one repeat plus one tick ago');
   it.todo('does not release the lock while the sensor still shows the train in the platform');
   it.todo('does not release the lock when the sensor shows empty before the train has arrived');
   it.todo('grants the platform to another train once the lock is released');

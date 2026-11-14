@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { stillSettling, wasSwitchedOff } from '../../src/locks/resume';
 
-// A test value for the input that waits on RESUME_SETTLE from pull request #34.
+// A test value for the input that waits on RESUME_SETTLE, which has no agreed value yet.
 const settle = 1;
 
 describe('resume frame', () => {
@@ -20,8 +20,8 @@ describe('resume frame', () => {
 
 describe('Switched back on: noticing the gap (rule from the review on #31)', () => {
   it.todo('wasSwitchedOff says no on the first step, when lastStepAt is null');
-  it.todo('wasSwitchedOff says no when now is one TICK after lastStepAt');
-  it.todo('wasSwitchedOff says yes when now is more than one TICK after lastStepAt');
+  it.todo('wasSwitchedOff says no when now is one TICK after lastStepAt, even with floating-point rounding');
+  it.todo('wasSwitchedOff says yes when now is two or more TICKs after lastStepAt');
 });
 
 describe('Switched back on: the settle window (rule from the review on #31)', () => {

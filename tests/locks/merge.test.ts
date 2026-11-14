@@ -28,8 +28,9 @@ const clear: SensorReadings = {
   exitStartClear: true,
 };
 
-// A test value for the input that waits on RESUME_SETTLE from pull request #34.
+// Test values for the inputs that wait on constants for src/shared/constants.ts.
 const settle = 1;
+const silence = 1;
 
 const queue: JunctionRequest[] = [
   { train: 3, firstHeardAt: 5, lastHeardAt: 9 },
@@ -69,7 +70,7 @@ describe('merge frame', () => {
 
   it('placeholder dropSilentRequests drops nobody', () => {
     const before = structuredClone(queue);
-    expect(dropSilentRequests(queue, 1000)).toEqual(before);
+    expect(dropSilentRequests(queue, 1000, silence)).toEqual(before);
   });
 
   it('placeholder queuedToAnswer answers nobody', () => {
@@ -136,7 +137,8 @@ describe('Leaving the station: the queue', () => {
   it.todo('removes a train from the queue when it is granted');
   it.todo('does not put the holder back in the queue when it repeats its request');
   it.todo('ignores a late JUNCTION request from a train it already let into EXIT');
-  it.todo('drops a request whose train has stopped asking, for example one that left by clock slot');
+  it.todo('drops a request whose train has not been heard for longer than silence, for example one that left by clock slot');
+  it.todo('keeps a request whose train was heard within silence');
 });
 
 describe('Leaving the station: who is next', () => {

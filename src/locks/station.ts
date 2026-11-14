@@ -16,9 +16,9 @@ import type {
 // Everything here is a placeholder. Each function returns its safest value, and step
 // sends nothing. The design says silence means no, so a silent station is safe.
 //
-// Two numbers are inputs, not constants in this file: `settle` (RESUME_SETTLE) and
-// `repeat` (the 2 second request repeat). Both wait on constants that pull request #34
-// adds to src/shared/constants.ts.
+// Two numbers are inputs, not constants in this file. `repeat` waits on REQUEST_REPEAT,
+// which pull request #34 adds to src/shared/constants.ts. `settle` waits on
+// RESUME_SETTLE, which has no agreed value yet. See resume.ts.
 
 export const PLATFORMS: readonly PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
 
@@ -192,9 +192,9 @@ export interface ReleaseCheck {
   occupied: boolean;
   /** From StationMemory. */
   resumedAt: number | null;
-  /** RESUME_SETTLE, from pull request #34. */
+  /** RESUME_SETTLE. Not agreed yet. See resume.ts. */
   settle: number;
-  /** The request repeat interval, from pull request #34. */
+  /** REQUEST_REPEAT, from pull request #34. */
   repeat: number;
 }
 
@@ -206,7 +206,9 @@ export interface ReleaseCheck {
  * leaving, so the sensor alone is not enough. A train keeps repeating its lockRequest
  * after the grant until its front is in the platform. The actor keeps the lock while it
  * hears those repeats. So a lock releases only when the sensor has shown arrive then
- * leave and the holder has not been heard for longer than one `repeat`.
+ * leave and the holder has not been heard for longer than one `repeat` plus two TICKs.
+ * The two ticks cover a repeat that arrives a tick after it is sent, and a train whose
+ * repeat timer fires a tick late.
  *
  * Switched back on: a lock with `seenArrive` true releases by the rule above. A lock with
  * `seenArrive` false releases only after the window `resumedAt + settle` is over, if its

@@ -8,8 +8,10 @@ import type { LocalActor, Message, Outgoing, SensorReadings, TrainId } from '../
 // Everything here is a placeholder. Each function returns its safest value, and step
 // sends nothing. The design says silence means no, so a silent merge actor is safe.
 //
-// `settle` (RESUME_SETTLE) is an input, not a constant in this file. It waits on a
-// constant that pull request #34 adds to src/shared/constants.ts.
+// `settle` (RESUME_SETTLE) and `silence` (see dropSilentRequests) are inputs, not
+// constants in this file. Neither has an agreed value yet. Each waits on a constant in
+// src/shared/constants.ts. Pull request #34 adds the shared timing constants, but neither
+// of these is in it yet.
 
 /** One train waiting for the junction. */
 export interface JunctionRequest {
@@ -73,11 +75,17 @@ export function recordJunctionRequests(
 /**
  * "Leaving the station": drop a request whose train has stopped asking, for example one
  * that left by clock slot. Otherwise the actor could grant a train that is gone and hold a
- * lock nobody uses. How long to wait is not decided. Trains repeat every 2 seconds.
+ * lock nobody uses. A request goes once its train has not been heard for longer than
+ * `silence`. `silence` is an input. Its value is not agreed and waits on a constant in
+ * src/shared/constants.ts. It must be at least one REQUEST_REPEAT plus two TICKs.
  *
  * Placeholder: drops nobody.
  */
-export function dropSilentRequests(queue: JunctionRequest[], _now: number): JunctionRequest[] {
+export function dropSilentRequests(
+  queue: JunctionRequest[],
+  _now: number,
+  _silence: number,
+): JunctionRequest[] {
   return queue;
 }
 
@@ -171,7 +179,7 @@ export interface JunctionReleaseCheck {
   /** From MergeMemory. */
   resumedAt: number | null;
   zoneOccupiedSinceResume: boolean;
-  /** RESUME_SETTLE, from pull request #34. */
+  /** RESUME_SETTLE. Not agreed yet. See resume.ts. */
   settle: number;
 }
 
@@ -215,7 +223,8 @@ export function createMergeActor(): LocalActor {
       // 1. If wasSwitchedOff, call resumeMerge.
       // 2. Update the zone with observeZone, and the holder with observeJunction. Free
       //    the holder if canReleaseJunction.
-      // 3. Add new requests with recordJunctionRequests, then dropSilentRequests.
+      // 3. Add new requests with recordJunctionRequests, then dropSilentRequests with
+      //    `silence`.
       // 4. If canGrantJunction, grant nextForJunction with follow from followFor, over
       //    short range, and set lastIntoExit to that train. Pass `settling` from
       //    stillSettling.
