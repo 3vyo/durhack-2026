@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TrainProgram } from '../../src/engine/ports';
 import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, TRAIN_LENGTH } from '../../src/shared/constants';
 import type { LocalActor, Message, TimetableEntry, TrainAgentFactory, TrainInput, TrainOutput } from '../../src/shared/types';
-import { ENTRY_CLEAR, Sim, makeRng, makeTimetable } from './harness';
+import { Sim, entryClear, makeRng, makeTimetable } from './harness';
 
 // These tests check the harness itself with stand-in programs, so a failure in the real
 // rules is never confused with a fault in the harness.
@@ -98,8 +98,8 @@ describe('the test simulation', () => {
       timetable: [entry(1, 0), entry(2, 30)],
       presses: [{ at: 5, breakDown: 1 }],
     }).run(200);
-    // Train 1 stopped about 105 m in, inside the first ENTRY_CLEAR metres.
-    expect(sim.trains[0]!.state.pos.offset).toBeLessThan(ENTRY_CLEAR);
+    // Train 1 stopped about 105 m in, inside the first entryClear() metres.
+    expect(sim.trains[0]!.state.pos.offset).toBeLessThan(entryClear());
     expect(sim.entered.has(2)).toBe(false);
     expect(sim.collisions).toBe(0);
   });

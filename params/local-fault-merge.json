@@ -1,0 +1,9 @@
+{
+  "name": "local fault: merge actor off",
+  "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 300, "merge": false },
+    { "at": 600, "merge": true }
+  ],
+  "runLength": 5400
+}

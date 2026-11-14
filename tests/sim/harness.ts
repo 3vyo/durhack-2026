@@ -11,9 +11,12 @@
 //   on the track it came from.
 // - sightAhead is the distance from the front to the rear of the nearest obstacle on the
 //   path, where the path follows the nextTrack the train returned on the previous tick.
-// - Trains enter at SIGHT_SPEED once the first ENTRY_CLEAR metres of their track are clear.
+// - Trains enter at SIGHT_SPEED once the first entryClear() metres of their track are clear.
+// - Sim.fromParams builds a run from a parameter file (src/shared/params.ts).
 
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
+import { applyParams } from '../../src/shared/params';
+import type { SimParams } from '../../src/shared/params';
 import {
   ACCEL,
   BRAKE,
@@ -52,7 +55,13 @@ import type {
   TrainState,
 } from '../../src/shared/types';
 
-export const ENTRY_CLEAR = 400;
+/**
+ * How much of an entry track must be clear before a train enters: far enough that the new
+ * train sees nothing ahead of it. 400 m with the design's values.
+ */
+export function entryClear(): number {
+  return SENSOR_RANGE + TRAIN_LENGTH;
+}
 
 export interface Switches {
   centre: boolean;
@@ -164,6 +173,22 @@ export class Sim {
     this.switches = { ...ALL_ON, ...(o.start ?? {}) };
   }
 
+  /**
+   * Build a run from a parameter file. This also makes the file's physics and timer values
+   * the ones every rule reads, so call resetParams() afterwards if later code needs the
+   * design values back.
+   */
+  static fromParams(program: TrainProgram, params: SimParams): Sim {
+    applyParams(params);
+    const { seed, trains, headway, dwell } = params.timetable;
+    const presses: Press[] = params.failures.map(({ at, breakDown, ...set }) => ({
+      at,
+      ...(Object.keys(set).length > 0 ? { set } : {}),
+      ...(breakDown === undefined ? {} : { breakDown }),
+    }));
+    return new Sim({ program, timetable: makeTimetable(seed, trains, headway, dwell), seed, presses, start: params.start });
+  }
+
   get now(): number {
     return this.tick * TICK;
   }
@@ -264,7 +289,7 @@ export class Sim {
     const stillWaiting: TimetableEntry[] = [];
     for (const entry of this.waiting) {
       const due = entry.enterAt <= now + TICK / 2;
-      const clear = !this.trains.some((t) => segments(t).some((s) => s.track === entry.entry && s.from < ENTRY_CLEAR));
+      const clear = !this.trains.some((t) => segments(t).some((s) => s.track === entry.entry && s.from < entryClear()));
       // Trains enter in timetable order on each track, so a held train holds the ones behind it.
       const queued = stillWaiting.some((w) => w.entry === entry.entry);
       if (due && clear && !queued) {
