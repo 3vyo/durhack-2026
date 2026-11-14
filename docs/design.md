@@ -145,6 +145,12 @@ export interface LocalActor {
 
 The engine calls `decide` on every train each tick, applies the returned acceleration, moves the train, and delivers the outbox through the radio. `sightAhead` also reports any train inside the junction zone as an obstacle at the zone's edge.
 
+`sightAhead` looks along the train's path.
+
+- The path follows the `nextTrack` the train returned on the previous tick. When `nextTrack` is null, the path ends at the end of the current track.
+- A train may change `nextTrack` on any tick until its front crosses the end of the track.
+- It reports the nearest obstacle on the path, whether that is a train or the edge of an occupied junction zone.
+
 ## Train rules
 
 ### Following
@@ -161,7 +167,22 @@ if sightAhead is not null:
     limit = min(limit, safeSpeed(sightAhead - MARGIN))
 ```
 
+The `SIGHT_SPEED` floor applies to the leader's limit point only. `sightAhead` covers the last 300 m behind the leader, so the train can still stop.
+
 If a train has never heard its leader, or does not know who its leader is, it has no limit point and stays at `SIGHT_SPEED` or below.
+
+A stop point is a place the train must not pass. There are two.
+
+- The end of an entry track, for a train with no platform.
+- Offset 300 in a platform.
+
+A stop point has no floor.
+
+```
+limit = min(limit, safeSpeed(distance to stop point))
+```
+
+A train stops at or before a stop point, never past it. It starts braking one tick early, so rounding leaves it a few centimetres short. Offset 300 in a platform is the edge of the junction zone, so a train that passes it counts as being in the zone.
 
 The display labels each train with a mode.
 
@@ -189,7 +210,7 @@ When permits return, the train follows them again on the next tick. It keeps any
 
 ### Entering the station
 
-1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a limit point until it has one.
+1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
 2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for the platform its permit suggests, or for its default platform if it has no fresh permit.
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
@@ -211,7 +232,26 @@ if none are empty, wait
 
 If the sensors are switched off too, the train creeps toward the first platform of its pair that it cannot see a train in.
 
+A train sees one platform at a time, because `sightAhead` follows its `nextTrack`.
+
+1. It sets `nextTrack` to the first platform of its pair and reads `sightAhead` on the next tick.
+2. If it sees a train, it switches to the other platform and reads again.
+3. If both show a train, it waits.
+
+A train that has just changed `nextTrack` does not accelerate until the next tick, because that tick's `sightAhead` still reports the old path.
+
 This is safe because trains on one entry track arrive in a queue, and trains on different entry tracks never want the same platform.
+
+### Platform sensors switched off
+
+A switched-off platform sensor does two things.
+
+- It stops sending `platformStatus`. A train whose x is between 5500 and 6400 should hear the sensors. If it has no `platformStatus` from a platform newer than `FRESH`, it treats that platform as having no sensor. Further back, hearing no status is normal.
+- It reads as occupied in `SensorReadings.platformOccupied`. The station actor never grants that platform. If the other platform of the pair is free, the actor offers it as the alternative.
+
+With every sensor off and the station actor alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the station-off rule and creeps.
+
+The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. How it guards that is the station actor's own choice. One way is for a train to repeat its request until it is in the platform, and for the actor to keep the lock while it hears those requests.
 
 ### Leaving the station
 
