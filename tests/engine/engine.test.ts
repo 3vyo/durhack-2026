@@ -4,7 +4,7 @@ import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, generateTimetable } from '../../src/engine/timetable';
 import { stubOurs } from '../../src/runner/stubs';
-import { ACCEL, MAX_SPEED } from '../../src/shared/constants';
+import { ACCEL, BRAKE, MAX_SPEED } from '../../src/shared/constants';
 import type { TimetableEntry } from '../../src/shared/types';
 
 const one: TimetableEntry[] = [
@@ -133,6 +133,35 @@ describe('Engine switches', () => {
     engine.press({ centre: false });
     for (let i = 0; i < 12; i++) engine.step();
     expect(engine.snapshot().switches.centre).toBe(true);
+  });
+});
+
+describe('Engine sightAhead', () => {
+  it('gives an agent the distance to a slower train ahead on its entry track', () => {
+    const seen: Array<number | null> = [];
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          if (id === 2) seen.push(input.sightAhead);
+          return { accel: id === 1 ? -BRAKE : 0, nextTrack: 'P1', outbox: [], mode: 'blind' };
+        },
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const two: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'A', enterAt: 0, platform: 'P1', leader: 1, dwell: 30 },
+    ];
+    const engine = new Engine(config(two, 60, program));
+    for (let i = 0; i < 600; i++) engine.step();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]).toBeNull();
+    const closing = seen.filter((v): v is number => v !== null);
+    expect(closing.length).toBeGreaterThan(0);
+    for (const v of closing) expect(v).toBeLessThanOrEqual(300);
   });
 });
 

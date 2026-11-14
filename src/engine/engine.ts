@@ -8,9 +8,11 @@ import type {
   TrainOutput,
   TrainState,
 } from '../shared/types';
+import type { Body } from './footprint';
 import { xOf } from './map';
 import { advanceTrain } from './physics';
 import type { TrainProgram } from './ports';
+import { sightAhead } from './sensing';
 import { ALL_ON, type Press, type Switches } from './switches';
 
 export interface EngineConfig {
@@ -107,8 +109,14 @@ export class Engine {
 
     // Every agent decides from the state at the start of the tick, then all move together,
     // so the result does not depend on the order trains are listed in.
-    const outputs = this.active.map((rt) =>
-      rt.agent.decide({ now: this.now, self: rt.state, inbox: [], sightAhead: null }),
+    const bodies: Body[] = this.active.map((rt) => ({ state: rt.state, prev: rt.prev }));
+    const outputs = this.active.map((rt, i) =>
+      rt.agent.decide({
+        now: this.now,
+        self: rt.state,
+        inbox: [],
+        sightAhead: sightAhead(bodies[i], rt.nextTrack, bodies),
+      }),
     );
 
     const exitTime = (this.tick + 1) * TICK;
