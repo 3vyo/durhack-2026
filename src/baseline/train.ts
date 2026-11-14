@@ -4,6 +4,7 @@ import {
   MARGIN,
   MAX_SPEED,
   PERMIT_FRESH,
+  SIGHT_SPEED,
   TICK,
   safeSpeed,
 } from '../shared/constants';
@@ -100,6 +101,14 @@ export function speedLimit(
 }
 
 /**
+ * Radio working: a train holding a fresh permit marked `caution` stays at SIGHT_SPEED or
+ * below. Infinity otherwise. Design: "Radio working".
+ */
+export function cautionLimit(permit: Permit | null, fresh: boolean): number {
+  return fresh && permit?.caution ? SIGHT_SPEED : Infinity;
+}
+
+/**
  * The acceleration that takes the train to its speed limit within one tick, or as near
  * as -BRAKE and ACCEL allow. Design: "Following".
  */
@@ -149,7 +158,10 @@ export const createBaselineAgent: TrainAgentFactory = (id, _timetable) => {
     decide(input: TrainInput): TrainOutput {
       const permit = latestPermit(id, input.inbox, memory.permit);
       const fresh = isPermitFresh(permit, input.now);
-      const limit = speedLimit(input.self, stopX(input.self, permit), fresh, input.sightAhead);
+      const limit = Math.min(
+        speedLimit(input.self, stopX(input.self, permit), fresh, input.sightAhead),
+        cautionLimit(permit, fresh),
+      );
       const nextTrack = chooseNextTrack(input.self, permit, input.now, memory.nextTrack);
       memory = { permit, nextTrack };
       return {

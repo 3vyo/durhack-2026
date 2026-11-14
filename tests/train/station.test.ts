@@ -129,23 +129,16 @@ describe('Entering the station: asking', () => {
     expect(request({ lastSentAt: 100 - REQUEST_REPEAT + 1e-9 })).not.toBeNull();
   });
 
-  it('asks for the platform a fresh permit suggests', () => {
-    expect(platformToAsk('P1', 'P2', null)).toBe('P2');
+  it('sends no request while it obeys a fresh permit, because the centre picks the platform', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: ASK_POINT }, 0);
     tick(run, [{ type: 'permit', to: 1, untilX: 12400, nextTrack: 'P2', sentAt: 0 }]);
-    expect(requests(run)).toEqual(['P2']);
+    expect(requests(run)).toEqual([]);
   });
 
   it('asks for its default platform when it has no fresh permit', () => {
-    expect(platformToAsk('P1', null, null)).toBe('P1');
+    expect(platformToAsk('P1', null)).toBe('P1');
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: ASK_POINT }, 0, 100);
     tick(run, [{ type: 'permit', to: 1, untilX: 12400, nextTrack: 'P2', sentAt: 10 }]);
-    expect(requests(run)).toEqual(['P1']);
-  });
-
-  it('asks for its default platform when the permit suggests a platform from the other pair', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: ASK_POINT }, 0);
-    tick(run, [{ type: 'permit', to: 1, untilX: 12400, nextTrack: 'P3', sentAt: 0 }]);
     expect(requests(run)).toEqual(['P1']);
   });
 
@@ -237,7 +230,7 @@ describe('Entering the station: replies', () => {
   });
 
   it('on a lockRefuse with an alternative, requests the alternative', () => {
-    expect(platformToAsk('P1', null, { kind: 'refuse', platform: 'P1', alternative: 'P2', at: 0 })).toBe('P2');
+    expect(platformToAsk('P1', { kind: 'refuse', platform: 'P1', alternative: 'P2', at: 0 })).toBe('P2');
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5000 }, 0);
     tick(run);
     tick(run, [{ ...refuse, alternative: 'P2' }]);
@@ -245,13 +238,8 @@ describe('Entering the station: replies', () => {
     expect(requests(run)).toEqual(['P1', 'P2']);
   });
 
-  it('the last refusal alternative wins over the permit suggestion', () => {
-    expect(platformToAsk('P2', 'P1', { kind: 'refuse', platform: 'P1', alternative: 'P2', at: 0 })).toBe('P2');
-    expect(platformToAsk('P1', 'P1', { kind: 'refuse', platform: 'P1', alternative: 'P2', at: 0 })).toBe('P2');
-  });
-
   it('on a lockRefuse with no alternative, keeps braking and keeps asking', () => {
-    expect(platformToAsk('P1', null, { kind: 'refuse', platform: 'P1', alternative: null, at: 0 })).toBe('P1');
+    expect(platformToAsk('P1', { kind: 'refuse', platform: 'P1', alternative: null, at: 0 })).toBe('P1');
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5500 }, 28);
     for (let i = 0; i < 600; i++) tick(run, [...sensors(run, i, { P1: true, P2: true }), ...(i % 20 === 1 ? [refuse] : [])]);
     expect(run.state.speed).toBe(0);

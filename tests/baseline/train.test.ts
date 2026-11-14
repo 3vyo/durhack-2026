@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Permit } from '../../src/baseline/centre';
 import {
   accelFor,
+  cautionLimit,
   chooseNextTrack,
   createBaselineAgent,
   initialTrainMemory,
@@ -17,6 +18,7 @@ import {
   MARGIN,
   MAX_SPEED,
   PERMIT_FRESH,
+  SIGHT_SPEED,
   TICK,
   safeSpeed,
 } from '../../src/shared/constants';
@@ -365,5 +367,29 @@ describe('decide', () => {
       const out = agent.decide(input({ now: 10 + tick * TICK, inbox: tick % 10 === 0 ? [permit] : [] }));
       expect(out.outbox).toEqual([]);
     }
+  });
+});
+
+describe('radio working (design: "Radio working")', () => {
+  it('a fresh caution permit keeps the train at SIGHT_SPEED or below', () => {
+    expect(cautionLimit({ ...permit, caution: true }, true)).toBe(SIGHT_SPEED);
+    expect(cautionLimit({ ...permit, caution: true }, false)).toBe(Infinity);
+    expect(cautionLimit(permit, true)).toBe(Infinity);
+    expect(cautionLimit(null, true)).toBe(Infinity);
+  });
+
+  it('a train released by radio never goes above SIGHT_SPEED', () => {
+    const agent = createBaselineAgent(1, timetable);
+    let state = at('A', 1000, 0);
+    let top = 0;
+    for (let i = 0; i < 600; i++) {
+      const inbox: Message[] = i % 10 === 0 ? [{ ...permit, untilX: 6000, sentAt: i * TICK, caution: true }] : [];
+      const out = agent.decide({ now: i * TICK, self: state, inbox, sightAhead: null });
+      const speed = Math.min(MAX_SPEED, Math.max(0, state.speed + out.accel * TICK));
+      state = { ...state, speed, pos: { ...state.pos, offset: state.pos.offset + speed * TICK } };
+      top = Math.max(top, speed);
+    }
+    expect(top).toBeGreaterThan(SIGHT_SPEED - 1);
+    expect(top).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
   });
 });

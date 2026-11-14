@@ -199,12 +199,23 @@ export class Engine {
       }
     }
 
-    // The control centre sees every train's true state, once a second, while it is on.
+    // The control centre sees every train's true state, once a second, while it is on. Its
+    // own train detection does not go through our platform sensors, so their switch does
+    // not affect what it sees.
     if (this.centre && this.switches.centre && onSecond) {
-      const alive = { station: this.switches.station, merge: this.switches.merge };
       const states = this.active.map((rt) => rt.state);
-      for (const msg of this.centre.step(now, states, sensors, alive)) {
+      const trueSensors = readSensors(bodies, { ...this.switches, sensors: true });
+      const routes = new Map(this.active.map((rt) => [rt.id, rt.nextTrack] as const));
+      for (const msg of this.centre.step(now, states, trueSensors, routes)) {
         sent.push({ out: { msg, range: 'long' }, from: { kind: 'centre' } });
+      }
+    } else if (this.centre?.radioStep && onSecond) {
+      // Radio working: staff move trains by radio while the centre is down.
+      const states = this.active.map((rt) => rt.state);
+      const trueSensors = readSensors(bodies, { ...this.switches, sensors: true });
+      const routes = new Map(this.active.map((rt) => [rt.id, rt.nextTrack] as const));
+      for (const msg of this.centre.radioStep(now, states, trueSensors, routes)) {
+        sent.push({ out: { msg, range: 'long' }, from: { kind: 'radio' } });
       }
     }
 

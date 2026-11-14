@@ -1,5 +1,5 @@
 import { Engine, type RunResult } from '../engine/engine';
-import { timeToNormal, totalDelay } from '../engine/metrics';
+import { averageDelay, timeToNormal } from '../engine/metrics';
 import type { TrainProgram } from '../engine/ports';
 import type { Press } from '../engine/switches';
 import { generateTimetable } from '../engine/timetable';
@@ -63,7 +63,7 @@ export function runParams(params: SimParams, program: TrainProgram): RunResult {
 export interface ProgramReport {
   result: RunResult;
   trains: number;
-  /** Total seconds late against the reference. A train that never left counts at the run length. */
+  /** Average seconds late per train against the reference. A train that never left counts at the run length. */
   delay: number;
   /** Seconds from the last scripted change until every later train was on time, or null if never. */
   timeToNormal: number | null;
@@ -94,7 +94,7 @@ export function compareParams(params: SimParams, programs: { baseline: TrainProg
     return {
       result,
       trains: params.timetable.trains,
-      delay: totalDelay(result, reference),
+      delay: averageDelay(result, reference),
       timeToNormal: timeToNormal(result, reference, failureEnd),
     };
   };
@@ -103,8 +103,8 @@ export function compareParams(params: SimParams, programs: { baseline: TrainProg
 
 /** A plain-text table for one report. */
 export function formatParamsReport(r: ParamsReport): string {
-  const head = ['program', 'through', 'total delay', 'back to normal', 'collisions', 'overruns', 'close calls'];
-  const widths = [9, 7, 12, 14, 10, 8, 11];
+  const head = ['program', 'through', 'avg delay per train', 'back to normal', 'collisions', 'overruns', 'close calls'];
+  const widths = [9, 7, 19, 14, 10, 8, 11];
   const line = (cells: string[]) => `  ${cells.map((c, i) => (i === 0 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join('  ')}`;
   const row = (label: string, p: ProgramReport) =>
     line([

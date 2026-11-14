@@ -13,8 +13,11 @@ import type { Message, TrainState } from '../../src/shared/types';
 import { createAgent, initialMemory } from '../../src/train/agent';
 import {
   brakeLimit,
+  hasLeft,
+  isPastPlatformStop,
   leaderLimit,
   leaderReport,
+  leavingMessage,
   modeFor,
   positionMessage,
   recordPositions,
@@ -349,5 +352,59 @@ describe('Following: mode', () => {
 
   it('reports full for a train with leader none, which knows the line ahead is clear', () => {
     expect(modeFor(10, 'none', null, false, N)).toBe('full');
+  });
+});
+
+describe('Following: a leader that leaves the map', () => {
+  const onExit = (offset: number, speed: number): TrainState => ({
+    id: 1,
+    pos: { track: 'EXIT', offset },
+    speed,
+    brokenDown: false,
+  });
+
+  it('sends one last position, with its front at the end of EXIT, on the tick it leaves', () => {
+    const out = leavingMessage(50, onExit(N.exitLength - 3, 40), 0, N);
+    expect(out?.range).toBe('long');
+    expect(out?.msg).toMatchObject({ type: 'position', from: 1, pos: { track: 'EXIT', offset: N.exitLength }, sentAt: 50 });
+  });
+
+  it('sends nothing on a tick it stays on the map', () => {
+    expect(leavingMessage(50, onExit(N.exitLength - 10, 40), 0, N)).toBeNull();
+    // 40 m/s covers 4 m in a tick. Braking this tick it covers 3.991 m, so it stops short.
+    expect(leavingMessage(50, onExit(N.exitLength - 3.995, 40), 0, N)).not.toBeNull();
+    expect(leavingMessage(50, onExit(N.exitLength - 3.995, 40), -BRAKE, N)).toBeNull();
+    expect(leavingMessage(50, { ...onExit(10, 40), pos: { track: 'P1', offset: 399 } }, 0, N)).toBeNull();
+  });
+
+  it('a broken-down train never says it has left', () => {
+    expect(leavingMessage(50, { ...onExit(N.exitLength - 1, 40), brokenDown: true }, 0, N)).toBeNull();
+  });
+
+  it('a report with the front at the end of EXIT means the leader has gone, and leaves no limit point', () => {
+    const gone: PositionReport = { pos: { track: 'EXIT', offset: N.exitLength }, speed: 40, sentAt: 0 };
+    const near: PositionReport = { pos: { track: 'EXIT', offset: N.exitLength - 1 }, speed: 40, sentAt: 0 };
+    expect(hasLeft(gone, N)).toBe(true);
+    expect(hasLeft(near, N)).toBe(false);
+    expect(leaderLimit({ track: 'EXIT', offset: N.exitLength - 300 }, 1, gone, N)).toBe(Infinity);
+    expect(modeFor(100, 1, gone, false, N)).toBe('full');
+  });
+
+  it('the train behind keeps full speed to the end of the line once its leader has left', () => {
+    const run = startRun(createAgent(2, timetable), 2, { track: 'EXIT', offset: 4000 }, MAX_SPEED);
+    const goneMsg: Message = { type: 'position', from: 1, pos: { track: 'EXIT', offset: N.exitLength }, speed: 45, sentAt: 0 };
+    // Train 2's leader on EXIT is train 1, from a junction grant.
+    const memory = initialMemory(2, timetable);
+    expect(memory.leader).toBe(1);
+    tick(run, [goneMsg]);
+    while (run.state.pos.offset < N.exitLength - 1) tick(run);
+    expect(run.state.speed).toBe(MAX_SPEED);
+  });
+
+  it('counts a train past its platform stop as in the junction zone', () => {
+    expect(isPastPlatformStop({ track: 'P2', offset: N.platformStop + 0.5 }, N)).toBe(true);
+    expect(isPastPlatformStop({ track: 'P2', offset: N.platformStop }, N)).toBe(false);
+    expect(isPastPlatformStop({ track: 'EXIT', offset: 350 }, N)).toBe(false);
+    expect(isPastPlatformStop({ track: 'A', offset: 5999 }, N)).toBe(false);
   });
 });

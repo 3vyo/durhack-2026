@@ -39,6 +39,7 @@ export interface TrainNumbers {
   // Map, in metres.
   askPoint: number; // offset on A and B where the train first asks for a platform
   entryLength: number; // length of A and B
+  exitLength: number; // length of EXIT. A train whose front reaches its end leaves the map
   platformStop: number; // offset in a platform where the train stops
   stopClose: number; // a train stopped within this distance of a stop point is "at" it
   hearSensorsFrom: number; // x range where a train should hear the platform sensors
@@ -95,6 +96,7 @@ export function trainNumbers(): TrainNumbers {
     slotOrder: PLATFORMS,
     askPoint: ASK_POINT,
     entryLength: TRACK_LENGTH.A,
+    exitLength: TRACK_LENGTH.EXIT,
     platformStop: PLATFORM_STOP,
     stopClose: STOP_CLOSE,
     hearSensorsFrom: RANGE.sensors[0],

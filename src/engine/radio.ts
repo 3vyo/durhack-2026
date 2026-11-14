@@ -7,7 +7,8 @@ export type Sender =
   | { kind: 'train'; id: TrainId }
   | { kind: 'actor'; id: 'station' | 'merge' }
   | { kind: 'sensors' }
-  | { kind: 'centre' };
+  | { kind: 'centre' }
+  | { kind: 'radio' }; // staff moving trains by radio while the centre is down
 
 export type Recipient =
   | { kind: 'train'; id: TrainId }
@@ -25,7 +26,8 @@ function dropped(sw: Switches, rng: () => number): boolean {
  *
  * - Long range reaches every other train, and the slider drops each delivery on its own
  *   draw. A permit from the control centre goes to its train only, and the slider does not
- *   touch it: the centre is either on or off.
+ *   touch it: the centre is either on or off. A radio working permit also goes to its train
+ *   only, but the slider drops it, because it travels by radio.
  * - Short range depends on where the train is. A train reaches the station actor from x 4300
  *   to 6400 and the merge actor from x 6000 to 6600, and hears the platform sensors from x
  *   5500 to 6400. A local actor is either on or off, so there is no random loss here.
@@ -41,7 +43,11 @@ export function route(
 
   if (out.range === 'long') {
     if (msg.type === 'permit') {
-      if (!sw.centre) return [];
+      if (from.kind === 'radio') {
+        if (dropped(sw, rng)) return [];
+      } else if (!sw.centre) {
+        return [];
+      }
       return trains.some((t) => t.id === msg.to) ? [{ kind: 'train', id: msg.to }] : [];
     }
     return trains

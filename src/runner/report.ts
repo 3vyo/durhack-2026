@@ -9,7 +9,7 @@ function line(name: string, s: Stats, seeds: number): string {
   const normal = `${minutes(s.meanTimeToNormal)} min${stuck}`;
   return (
     `  ${name.padEnd(9)}` +
-    `delay ${minutes(s.meanDelay)} min (spread ${minutes(s.spreadDelay)})  ` +
+    `avg delay per train ${minutes(s.meanDelay)} min (spread ${minutes(s.spreadDelay)})  ` +
     `time to normal ${normal}  ` +
     `collisions ${s.collisions}  close calls ${s.closeCalls}  overruns ${s.overruns}`
   );

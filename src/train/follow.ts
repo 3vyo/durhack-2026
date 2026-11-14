@@ -62,6 +62,35 @@ export function positionMessage(
 }
 
 /**
+ * "Following". The last position message of a train that leaves the map on this tick: its
+ * front at the end of EXIT, sent whatever the broadcast timer says, so the train behind
+ * knows its leader has gone and does not slow down for the last report it heard. Null if
+ * the train does not leave this tick. It works the move out the way the engine does: the
+ * speed first, then the distance. A broken-down train never leaves.
+ */
+export function leavingMessage(
+  now: number,
+  self: TrainState,
+  accel: number,
+  numbers: Pick<TrainNumbers, 'exitLength'>,
+): Outgoing | null {
+  if (self.pos.track !== 'EXIT' || self.brokenDown) return null;
+  const speed = Math.min(MAX_SPEED, Math.max(0, self.speed + accel * TICK));
+  if (self.pos.offset + speed * TICK < numbers.exitLength) return null;
+  const pos: Position = { track: 'EXIT', offset: numbers.exitLength };
+  const msg: Message = { type: 'position', from: self.id, pos, speed, sentAt: now };
+  return { msg, range: 'long' };
+}
+
+/**
+ * "Following". True if the report puts the train's front at the end of EXIT. Only a train
+ * leaving the map sends that, so the train has gone.
+ */
+export function hasLeft(report: PositionReport, numbers: Pick<TrainNumbers, 'exitLength'>): boolean {
+  return report.pos.track === 'EXIT' && report.pos.offset >= numbers.exitLength;
+}
+
+/**
  * "Following". The report log updated with this tick's position messages, keeping the
  * newest report from every train, not only the leader. Then a train that gets a new
  * leader already has its last report.
@@ -91,16 +120,18 @@ export function leaderReport(log: ReportLog, leader: Leader): PositionReport | n
  * "Following". The speed limit from the leader's limit point: the leader's last reported
  * rear minus MARGIN, however old the report is. Floored at SIGHT_SPEED, capped at
  * MAX_SPEED. With an unknown leader, or a leader never heard, it is SIGHT_SPEED. With no
- * leader at all the line ahead is clear, so there is no limit point and no limit.
+ * leader at all the line ahead is clear, so there is no limit point and no limit. A leader
+ * that has left the map leaves no limit point either.
  */
 export function leaderLimit(
   self: Position,
   leader: Leader,
   report: PositionReport | null,
-  numbers: Pick<TrainNumbers, 'xOf'>,
+  numbers: Pick<TrainNumbers, 'xOf' | 'exitLength'>,
 ): number {
   if (leader === 'none') return Infinity;
   if (leader === 'unknown' || report === null) return SIGHT_SPEED;
+  if (hasLeft(report, numbers)) return Infinity;
   const limitPoint = numbers.xOf(report.pos) - TRAIN_LENGTH - MARGIN;
   const distance = limitPoint - numbers.xOf(self);
   return Math.min(MAX_SPEED, Math.max(brakeLimit(distance), SIGHT_SPEED));
@@ -121,8 +152,9 @@ export function sightLimit(sightAhead: number | null): number {
  * The distance to the train's next stop point, or Infinity if it has none: the end of an
  * entry track for a train with no platform, or offset platformStop in a platform. A train
  * with a platform, still on its entry track, measures through to the stop in the platform.
- * `leaving` is true once the train holds the junction lock or has started in its clock
- * slot. Then the platform stop point no longer applies.
+ * `leaving` is true once the train holds the junction lock, has started in its clock slot,
+ * or was let through by the centre before it failed. Then the platform stop point no longer
+ * applies.
  */
 export function stopPointDistance(
   pos: Position,
@@ -136,6 +168,16 @@ export function stopPointDistance(
     return platform === null ? toEnd : toEnd + numbers.platformStop;
   }
   return leaving ? Infinity : numbers.platformStop - pos.offset;
+}
+
+/**
+ * "The centre comes first". True if the train's front is past its platform's stop point,
+ * so it is in the junction zone. Our rules never take a train past it without leave to go,
+ * so a train found there was let through by the centre before the centre failed.
+ */
+export function isPastPlatformStop(pos: Position, numbers: Pick<TrainNumbers, 'platformStop'>): boolean {
+  const inPlatform = pos.track !== 'A' && pos.track !== 'B' && pos.track !== 'EXIT';
+  return inPlatform && pos.offset > numbers.platformStop;
 }
 
 /**
@@ -162,10 +204,11 @@ export function modeFor(
   leader: Leader,
   report: PositionReport | null,
   permitFresh: boolean,
-  numbers: Pick<TrainNumbers, 'fresh' | 'slack'>,
+  numbers: Pick<TrainNumbers, 'fresh' | 'slack' | 'exitLength'>,
 ): TrainOutput['mode'] {
   if (permitFresh) return 'central';
   if (leader === 'none') return 'full';
   if (leader === 'unknown' || report === null) return 'blind';
+  if (hasLeft(report, numbers)) return 'full';
   return elapsed(report.sentAt, now, numbers.fresh, numbers.slack) ? 'stale' : 'full';
 }

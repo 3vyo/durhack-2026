@@ -26,7 +26,7 @@ describe('makeCentre', () => {
   it('returns a centre whose step sends a permit to each train', () => {
     const centre = makeCentre(timetable);
     for (const now of [0, 1]) {
-      const messages = centre.step(now, trains, clear, { station: true, merge: true });
+      const messages = centre.step(now, trains, clear, new Map());
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({ type: 'permit', to: 1, nextTrack: 'P1', sentAt: now });
     }
@@ -58,7 +58,7 @@ describe('baselineProgram', () => {
 
   it('builds a centre that serves baseline trains, whose agent obeys its permits', () => {
     const centre = baselineProgram.makeCentre(timetable);
-    const permits = centre?.step(0, trains, clear, { station: true, merge: true }) ?? [];
+    const permits = centre?.step(0, trains, clear, new Map()) ?? [];
     expect(permits).toHaveLength(1);
     const agent = baselineProgram.agentFactory(1, timetable);
     const out = agent.decide({ now: 0.1, self: trains[0], inbox: permits, sightAhead: null });

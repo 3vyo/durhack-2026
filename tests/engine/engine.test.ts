@@ -5,7 +5,7 @@ import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, setConstants } from '../../src/shared/constants';
-import type { LocalActor, Message, Outgoing, TimetableEntry } from '../../src/shared/types';
+import type { LocalActor, Message, Outgoing, SensorReadings, TimetableEntry, TrackId } from '../../src/shared/types';
 
 const one: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -266,10 +266,15 @@ describe('Engine with changed constants', () => {
 });
 
 describe('Engine control centre', () => {
-  function centreProgram(calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }>): TrainProgram {
+  interface CentreCall {
+    now: number;
+    sensors: SensorReadings;
+    routes: Map<number, TrackId | null>;
+  }
+  function centreProgram(calls: CentreCall[]): TrainProgram {
     const centre: ControlCentre = {
-      step: (now, _trains, _sensors, alive) => {
-        calls.push({ now, alive: { ...alive } });
+      step: (now, _trains, sensors, routes) => {
+        calls.push({ now, sensors, routes: new Map(routes) });
         return [];
       },
     };
@@ -277,7 +282,7 @@ describe('Engine control centre', () => {
   }
 
   it('steps the centre once per simulated second while it is on', () => {
-    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+    const calls: CentreCall[] = [];
     const engine = new Engine(config(one, 60, centreProgram(calls)));
     for (let i = 0; i < 100; i++) engine.step();
     expect(calls.length).toBe(10);
@@ -285,18 +290,24 @@ describe('Engine control centre', () => {
     expect(calls[1].now).toBeCloseTo(1, 10);
   });
 
-  it('tells the centre which local actors are alive', () => {
-    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+  it('gives the centre true platform readings, whatever the platform sensor switch says', () => {
+    const calls: CentreCall[] = [];
     const engine = new Engine(config(one, 60, centreProgram(calls)));
-    engine.step();
-    engine.press({ station: false });
-    for (let i = 0; i < 10; i++) engine.step();
-    expect(calls[0].alive).toEqual({ station: true, merge: true });
-    expect(calls[calls.length - 1].alive).toEqual({ station: false, merge: true });
+    engine.press({ sensors: false, station: false, merge: false });
+    for (let i = 0; i < 11; i++) engine.step();
+    expect(calls[calls.length - 1].sensors.platformOccupied).toEqual({ P1: false, P2: false, P3: false, P4: false });
+  });
+
+  it("gives the centre each train's route from the last tick", () => {
+    const calls: CentreCall[] = [];
+    const engine = new Engine(config(one, 60, centreProgram(calls)));
+    for (let i = 0; i < 11; i++) engine.step();
+    const routes = calls[calls.length - 1].routes;
+    expect([...routes.keys()]).toEqual([1]);
   });
 
   it('stops stepping the centre while it is switched off', () => {
-    const calls: Array<{ now: number; alive: { station: boolean; merge: boolean } }> = [];
+    const calls: CentreCall[] = [];
     const engine = new Engine(config(one, 60, centreProgram(calls)));
     engine.press({ centre: false });
     for (let i = 0; i < 50; i++) engine.step();

@@ -8,13 +8,14 @@ import { createTrainAgent } from '../train';
 
 /**
  * Our program: our train agent, the station and merge actors, and the one control centre.
- * The centre serves our trains permits as hints, and never holds a train its locks let go.
+ * While the centre is on, our trains obey its permits like today's trains. When it fails
+ * they carry on with their own rules and the local actors.
  */
 export const ourProgram: TrainProgram = {
   name: 'ours',
   agentFactory: createTrainAgent,
   makeActors,
-  makeCentre: (timetable) => makeCentre(timetable, { serves: 'ours' }),
+  makeCentre: (timetable) => makeCentre(timetable),
 };
 
 /** Today's rule: the same control centre decides everything, and trains obey their permits. */

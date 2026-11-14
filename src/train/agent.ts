@@ -22,8 +22,10 @@ import {
   type MergeReply,
 } from './depart';
 import {
+  isPastPlatformStop,
   leaderLimit,
   leaderReport,
+  leavingMessage,
   modeFor,
   positionMessage,
   recordPositions,
@@ -33,7 +35,15 @@ import {
   type ReportLog,
 } from './follow';
 import { trainNumbers, type TrainNumbers } from './numbers';
-import { isPermitFresh, latestPermit, permitLimit, suggestedPlatform, type HeldPermit } from './permits';
+import {
+  committedPlatform,
+  isPermitFresh,
+  latestPermit,
+  permitLeader,
+  permitLimit,
+  permitRoute,
+  type HeldPermit,
+} from './permits';
 import {
   creepStep,
   dwellStart,
@@ -56,6 +66,10 @@ import {
 // The agent for one of our trains. It keeps the train's memory, calls the rule files each
 // tick, takes the lowest speed limit and builds the TrainOutput. The rules themselves live
 // in follow.ts, permits.ts, station.ts and depart.ts. See "Train rules" in docs/design.md.
+//
+// While the train holds a fresh permit it obeys the control centre, like today's trains,
+// and sends no lock requests. When the permit goes stale it runs on its own rules. It keeps
+// its memory up to date in both, so it can switch on any tick.
 
 /** Everything one train remembers between ticks. */
 export interface TrainMemory {
@@ -83,6 +97,10 @@ export interface TrainMemory {
   slotStarted: boolean; // true once the train has started in its clock slot
   platformStatus: PlatformStatusLog;
   lastNextTrack: TrackId | null; // the nextTrack returned last tick, which sightAhead follows now
+
+  // The centre comes first.
+  central: boolean; // true if the train obeyed a fresh permit last tick
+  cleared: boolean; // true if the centre let the train through the junction before it failed
 }
 
 /** The output of a train that holds its brakes on and does nothing else. */
@@ -116,6 +134,8 @@ export function initialMemory(id: TrainId, timetable: TimetableEntry[]): TrainMe
     slotStarted: false,
     platformStatus: {},
     lastNextTrack: null,
+    central: false,
+    cleared: false,
   };
 }
 
@@ -148,9 +168,12 @@ export interface RouteChoice {
   slotStart: boolean; // true on the tick the train starts in its clock slot
 }
 
-/** True once the train may run out of its platform: it holds the junction lock or has started in its slot. */
+/**
+ * True once the train may run out of its platform: it holds the junction lock, has started
+ * in its slot, or the centre let it through before it failed.
+ */
 export function isLeaving(memory: TrainMemory): boolean {
-  return memory.locks.includes('JUNCTION') || memory.slotStarted;
+  return memory.locks.includes('JUNCTION') || memory.slotStarted || memory.cleared;
 }
 
 /**
@@ -316,22 +339,89 @@ export function dropPlatformLocks(memory: TrainMemory, pos: Position): void {
   if (pos.track === 'EXIT') memory.locks = memory.locks.filter((lock) => lock === 'JUNCTION');
 }
 
-/** Reads this tick's inbox into memory. A message sent on tick t arrives on tick t + 1. */
+/**
+ * Reads this tick's inbox into memory. A message sent on tick t arrives on tick t + 1.
+ * While the train obeys the centre it ignores the local actors' replies: it has not asked.
+ */
 function readInbox(memory: TrainMemory, entry: TimetableEntry, input: TrainInput, numbers: TrainNumbers): void {
   const { now, self, inbox } = input;
-  const station = ownPairOnly(stationReply(inbox, memory.id), numbers.pairs[entry.entry]);
-  remember(memory, now, self.pos, station, mergeReply(inbox, memory.id));
+  if (!memory.central) {
+    const station = ownPairOnly(stationReply(inbox, memory.id), numbers.pairs[entry.entry]);
+    remember(memory, now, self.pos, station, mergeReply(inbox, memory.id));
+  }
   dropPlatformLocks(memory, self.pos);
   expireJunctionGrant(memory, input, numbers);
   memory.reports = recordPositions(memory.reports, inbox);
   memory.permit = latestPermit(memory.permit, inbox, memory.id);
   memory.platformStatus = recordPlatformStatus(memory.platformStatus, inbox);
   memory.dwellStartedAt = dwellStart(memory.dwellStartedAt, self, now);
-  memory.asking = platformToAsk(
-    entry.platform,
-    suggestedPlatform(memory.permit, now, entry.entry, numbers),
-    memory.lastStationReply,
-  );
+  memory.asking = platformToAsk(entry.platform, memory.lastStationReply);
+}
+
+/**
+ * "The centre comes first". The train starts obeying the centre. It forgets its request
+ * timers and fallback state, so a later failure starts them afresh, and it drops a junction
+ * grant, because the centre now orders the junction. It keeps a platform it has chosen: the
+ * centre sees its route and sends it there.
+ */
+export function enterCentral(memory: TrainMemory): void {
+  memory.firstPlatformRequestAt = null;
+  memory.lastPlatformRequestAt = null;
+  memory.lastStationReply = null;
+  memory.stationHeardAt = null;
+  memory.usingFallback = false;
+  memory.firstJunctionRequestAt = null;
+  memory.lastJunctionRequestAt = null;
+  memory.lastMergeReplyAt = null;
+  memory.junctionGrantAt = null;
+  memory.locks = memory.locks.filter((lock) => lock !== 'JUNCTION');
+  memory.cleared = false;
+}
+
+/**
+ * "The centre comes first". The train's permit has just gone stale, so it carries on with
+ * its own rules from where the centre left it.
+ * - On EXIT, or past its platform stop and so in the junction zone, it follows the train
+ *   its last permit named. The centre let it through, so it carries on out.
+ * - On A or B, if it can no longer stop before the end of its entry track, it keeps the
+ *   platform its last permit sent it to, and asks the station for it.
+ * - Anywhere else it stops where its own rules say and asks for what it needs.
+ */
+export function enterLocal(
+  memory: TrainMemory,
+  entry: TimetableEntry,
+  self: TrainInput['self'],
+  permit: HeldPermit | null,
+  numbers: TrainNumbers,
+): void {
+  if (self.pos.track === 'EXIT' || isPastPlatformStop(self.pos, numbers)) {
+    memory.leader = permitLeader(permit);
+    memory.cleared = self.pos.track !== 'EXIT';
+  } else if (memory.platform === null) {
+    memory.platform = committedPlatform(self, permit, entry.entry, numbers);
+  }
+}
+
+/** The position messages to send this tick: the last one if the train leaves the map, else the usual one. */
+function positionsToSend(memory: TrainMemory, self: TrainInput['self'], now: number, accel: number, numbers: TrainNumbers) {
+  const leaving = leavingMessage(now, self, accel, numbers);
+  return leaving ?? positionMessage(now, self, memory.lastPositionSentAt, numbers);
+}
+
+/**
+ * "The centre comes first". One tick obeying a fresh permit, like today's trains: the
+ * permit's nextTrack, its untilX and the train's own sensor. No lock requests.
+ */
+function centralDecide(memory: TrainMemory, input: TrainInput, permit: HeldPermit, numbers: TrainNumbers): TrainOutput {
+  const { now, self, sightAhead } = input;
+  const nextTrack = permitRoute(self.pos.track, permit, memory.lastNextTrack);
+  const limit = lowestLimit([permitLimit(self, permit, now, numbers), sightLimit(sightAhead)]);
+  const accel = clampAccel(self.brokenDown ? -BRAKE : accelFor(self.speed, limit));
+  const position = positionsToSend(memory, self, now, accel, numbers);
+  const outbox = position ? [position] : [];
+  noteSent(memory, outbox, now);
+  memory.lastNextTrack = nextTrack;
+  return { accel, nextTrack, outbox, mode: 'central' };
 }
 
 /**
@@ -368,11 +458,12 @@ function buildOutbox(
   memory: TrainMemory,
   entry: TimetableEntry,
   input: TrainInput,
+  accel: number,
   numbers: TrainNumbers,
 ): Outgoing[] {
   const { now, self } = input;
   const id = memory.id;
-  const position = positionMessage(now, self, memory.lastPositionSentAt, numbers);
+  const position = positionsToSend(memory, self, now, accel, numbers);
   if (self.brokenDown) return position ? [position] : [];
   return [
     position,
@@ -412,7 +503,14 @@ export function createAgent(
       const numbers = readNumbers();
       const { now, self, sightAhead } = input;
 
+      const permit = latestPermit(memory.permit, input.inbox, memory.id);
+      const central = isPermitFresh(permit, now, numbers);
+      if (central && !memory.central) enterCentral(memory);
+      if (!central && memory.central) enterLocal(memory, entry, self, permit, numbers);
+      memory.central = central;
+
       readInbox(memory, entry, input, numbers);
+      if (central && permit !== null) return centralDecide(memory, input, permit, numbers);
       updateFallback(memory, entry, input, numbers);
 
       const route = chooseRoute(memory, input, numbers);
@@ -428,23 +526,23 @@ export function createAgent(
         leaderLimit(self.pos, memory.leader, report, numbers),
         sightLimit(sightAhead),
         stopPointLimit(self, memory.platform, isLeaving(memory), numbers),
-        permitLimit(self, memory.permit, now, numbers),
         fallbackLimit(memory.usingFallback),
       ]);
 
       let accel = accelFor(self.speed, limit);
       if (pathJustChanged(memory.lastNextTrack, nextTrack)) accel = Math.min(accel, 0);
       if (self.brokenDown) accel = -BRAKE;
+      accel = clampAccel(accel);
 
-      const outbox = buildOutbox(memory, entry, input, numbers);
+      const outbox = buildOutbox(memory, entry, input, accel, numbers);
       noteSent(memory, outbox, now);
 
       memory.lastNextTrack = nextTrack;
       return {
-        accel: clampAccel(accel),
+        accel,
         nextTrack,
         outbox,
-        mode: modeFor(now, memory.leader, report, isPermitFresh(memory.permit, now, numbers), numbers),
+        mode: modeFor(now, memory.leader, report, false, numbers),
       };
     },
   };

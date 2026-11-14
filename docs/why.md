@@ -73,7 +73,7 @@ Run four scenarios against the baseline, where every train waits for the control
 
 One train losing its long-range radio is an optional second local fault.
 
-For each, report throughput, total delay and collisions, using the metrics in design.md. The claims to test:
+For each, report throughput, average delay per train and collisions, using the metrics in design.md. The claims to test:
 
 - Collisions stay at zero in every failure the demo can inject.
 - Delay is lower with the fallback than with the baseline in each of the four scenarios.
@@ -81,7 +81,7 @@ For each, report throughput, total delay and collisions, using the metrics in de
 
 ## When nothing has failed
 
-Ours is no better than the baseline when nothing has failed, and probably slightly worse. Our trains have to win locks, and the baseline's centre does not. The simulation measures by how much, and the pitch should report that number. The claim of lower delay covers the four scenarios above and not healthy running.
+Ours is the same as the baseline when nothing has failed. While the control centre works, our trains obey its permits exactly as today's trains do, and our own rules stay out of the way. The same holds for any failure that leaves the centre working: the train-to-train radio, the station actor, the merge actor or the platform sensors. The claim of lower delay covers the failures where the centre is down.
 
 ## What the demo does not prove
 
@@ -99,9 +99,9 @@ A browser simulation shows the logic works under its own assumptions. It says no
 
 The baseline in the sim is an idealised central controller that knows the true state of every train and stops all trains five seconds after it loses contact. Real lineside signalling works in fixed blocks and lets trains run on to the next signal. The comparison is a model of today's behaviour, not a measurement of it, and any numbers from it should be presented that way.
 
-The controller uses no locks, so a local fault needs its own rule. A dead platform sensor means the controller cannot tell if that platform is clear, so it treats the platform as occupied and permits no train into it. A dead station or merge actor means it treats that piece of track as unavailable and permits no train through it. Real signalling behaves the same way, because a failed detector turns the signal red.
+The controller does not use the station actor, the merge actor or our platform sensors. Those are part of our fallback, so switching them off changes nothing for the baseline. The controller's own train detection is assumed to keep working. A failure of that detection is not modelled.
 
-The baseline and ours are two train programs. Ours holds locks and treats permits as hints. The baseline holds no locks and obeys its permits.
+The baseline and ours are two train programs. Both obey the controller's permits while they come. The baseline stops when they stop. Ours carries on with its own rules, its locks and the local actors.
 
 ## Sources
 

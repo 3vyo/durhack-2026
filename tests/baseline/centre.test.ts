@@ -6,6 +6,7 @@ import {
   choosePlatform,
   initialMemory,
   isAvailable,
+  isRadioWorking,
   isReadyToLeave,
   makeCentre,
   makePermit,
@@ -14,17 +15,17 @@ import {
   nextTrackFor,
   reachOf,
   releaseHeld,
+  trainAhead,
   untilXFor,
   updateMemory,
-  type Alive,
   type CentreMemory,
   type CentreOptions,
   type Permit,
+  type Routes,
   type TrainPlan,
 } from '../../src/baseline/centre';
-import { createBaselineAgent } from '../../src/baseline/train';
-import { BRAKE, MARGIN, MAX_SPEED, TRAIN_LENGTH } from '../../src/shared/constants';
-import { JUNCTION_START_X, PLATFORM_STOP, TRACK_LENGTH, TRACK_START, xOf } from '../../src/shared/map';
+import { BRAKE, DEFAULT_CONSTANTS, MARGIN, MAX_SPEED, TRAIN_LENGTH } from '../../src/shared/constants';
+import { JUNCTION_END_X, JUNCTION_START_X, PLATFORM_STOP, TRACK_LENGTH, TRACK_START, xOf } from '../../src/shared/map';
 import type {
   Message,
   PlatformId,
@@ -35,11 +36,12 @@ import type {
   TrainState,
 } from '../../src/shared/types';
 import { Engine } from '../../src/engine/engine';
+import type { TrainProgram } from '../../src/engine/ports';
 import type { Press } from '../../src/engine/switches';
 import { baselineProgram } from '../../src/baseline';
 
-// Rules: "Today's rule, for comparison" and "Following permits" in docs/design.md, plus
-// "The map" and "Platform sensors switched off".
+// Rules: "Today's rule, for comparison", "The centre comes first" and "Following permits"
+// in docs/design.md, plus "The map".
 
 const timetable: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -54,8 +56,8 @@ const clear: SensorReadings = {
   exitStartClear: true,
 };
 
-const allAlive: Alive = { station: true, merge: true };
-const ours: CentreOptions = { serves: 'ours' };
+/** No train has set a route. */
+const none: Routes = new Map();
 const ENTRY_END_X = TRACK_START.A + TRACK_LENGTH.A;
 const STOP_X = TRACK_START.P1 + PLATFORM_STOP;
 
@@ -81,9 +83,13 @@ function occupied(...platforms: PlatformId[]): SensorReadings {
   return { ...clear, platformOccupied };
 }
 
-/** The memory after one step that sees these trains. */
-function seen(trains: TrainState[], now = 0, from = initialMemory(timetable)): CentreMemory {
-  return updateMemory(from, now, trains, clear, allAlive);
+/** The memory after one step that sees these trains, with these routes set. */
+function seen(trains: TrainState[], now = 0, from = initialMemory(timetable), routes = none): CentreMemory {
+  return updateMemory(from, now, trains, clear, routes);
+}
+
+function routes(set: Record<number, TrackId | null>): Routes {
+  return new Map(Object.entries(set).map(([id, track]) => [Number(id), track]));
 }
 
 function sentTo(memory: CentreMemory, sent: Record<number, PlatformId>): CentreMemory {
@@ -126,13 +132,18 @@ describe('makePermit', () => {
       untilX: 6300,
       nextTrack: 'P2',
       sentAt: 12,
+      leader: null,
     });
+  });
+
+  it('names the leader it is given', () => {
+    expect(makePermit(2, 6300, 'P2', 12, 1).leader).toBe(1);
   });
 });
 
 describe('makeCentre', () => {
-  it('defaults to serving baseline trains, with no slow restart', () => {
-    expect(DEFAULT_CENTRE_OPTIONS).toEqual({ serves: 'baseline' });
+  it('defaults to no slow restart', () => {
+    expect(DEFAULT_CENTRE_OPTIONS).toEqual({});
   });
 });
 
@@ -140,17 +151,15 @@ describe('step', () => {
   const trains = [train(1, 'A', 3000), train(2, 'A', 1000), train(3, 'B', 2000)];
 
   it('sends exactly one permit to each train in trains on every call', () => {
-    for (const serves of ['baseline', 'ours'] as const) {
-      const centre = makeCentre(timetable, { serves });
-      for (let now = 0; now < 3; now++) {
-        const to = centre.step(now, trains, clear, allAlive).map((msg) => (msg as Permit).to);
-        expect(to.sort()).toEqual([1, 2, 3]);
-      }
+    const centre = makeCentre(timetable);
+    for (let now = 0; now < 3; now++) {
+      const to = centre.step(now, trains, clear, none).map((msg) => (msg as Permit).to);
+      expect(to.sort()).toEqual([1, 2, 3]);
     }
   });
 
   it('addresses each permit to its train and sets sentAt to now', () => {
-    const messages = makeCentre(timetable).step(7, trains, clear, allAlive);
+    const messages = makeCentre(timetable).step(7, trains, clear, none);
     for (const t of trains) {
       const permit = permitFor(messages, t.id);
       expect(permit.sentAt).toBe(7);
@@ -159,25 +168,25 @@ describe('step', () => {
   });
 
   it('sends only permit messages', () => {
-    const messages = makeCentre(timetable).step(0, trains, clear, allAlive);
+    const messages = makeCentre(timetable).step(0, trains, clear, none);
     expect(messages.every((msg) => msg.type === 'permit')).toBe(true);
   });
 
   it('keeps its memory from one call to the next', () => {
     const centre = makeCentre(timetable);
-    expect(permitFor(centre.step(0, [train(1, 'A', 3000)], clear, allAlive), 1).nextTrack).toBe('P1');
+    expect(permitFor(centre.step(0, [train(1, 'A', 3000)], clear, none), 1).nextTrack).toBe('P1');
     // Train 4 also defaults to P1. The centre remembers P1 is taken and sends it to P2.
     const both = [train(1, 'A', 3100), train(4, 'A', 100)];
-    const second = centre.step(1, both, clear, allAlive);
+    const second = centre.step(1, both, clear, none);
     expect(permitFor(second, 1).nextTrack).toBe('P1');
     expect(permitFor(second, 4).nextTrack).toBe('P2');
   });
 
   it('sends a train that is not yet in trains no permit until it enters', () => {
     const centre = makeCentre(timetable);
-    const first = centre.step(0, [train(1, 'A', 3000)], clear, allAlive);
+    const first = centre.step(0, [train(1, 'A', 3000)], clear, none);
     expect(first.map((msg) => (msg as Permit).to)).toEqual([1]);
-    const second = centre.step(1, [train(1, 'A', 3020), train(2, 'A', 0)], clear, allAlive);
+    const second = centre.step(1, [train(1, 'A', 3020), train(2, 'A', 0)], clear, none);
     expect(second.map((msg) => (msg as Permit).to).sort()).toEqual([1, 2]);
   });
 });
@@ -263,7 +272,7 @@ describe('updateMemory', () => {
 });
 
 describe('slow restart', () => {
-  const slow: CentreOptions = { serves: 'baseline', restartGap: 30 };
+  const slow: CentreOptions = { restartGap: 30 };
   const waiting = [stopped(1, 'A', 3000), stopped(2, 'A', 1000), stopped(3, 'B', 2000)];
   const held = (memory: CentreMemory) =>
     [...memory.plans.values()].filter((p) => p.heldForRestart).map((p) => p.id);
@@ -287,10 +296,10 @@ describe('slow restart', () => {
 
   it('after a gap, releases one held train every restartGap seconds', () => {
     const centre = makeCentre(timetable, slow);
-    centre.step(0, waiting, clear, allAlive);
+    centre.step(0, waiting, clear, none);
     const moving = (now: number) =>
       centre
-        .step(now, waiting, clear, allAlive)
+        .step(now, waiting, clear, none)
         .filter((msg) => (msg as Permit).untilX > xOf(waiting.find((t) => t.id === (msg as Permit).to)!.pos))
         .map((msg) => (msg as Permit).to)
         .sort();
@@ -313,9 +322,9 @@ describe('slow restart', () => {
 
   it("keeps untilX at a held train's own x until its turn", () => {
     const memory = releaseHeld(seen(waiting, 100, seen(waiting, 10)), waiting, 100, slow);
-    expect(untilXFor(waiting[0], waiting, memory, clear, allAlive)).toBeGreaterThan(3000);
-    expect(untilXFor(waiting[1], waiting, memory, clear, allAlive)).toBe(1000);
-    expect(untilXFor(waiting[2], waiting, memory, clear, allAlive)).toBe(2000);
+    expect(untilXFor(waiting[0], waiting, memory, clear)).toBeGreaterThan(3000);
+    expect(untilXFor(waiting[1], waiting, memory, clear)).toBe(1000);
+    expect(untilXFor(waiting[2], waiting, memory, clear)).toBe(2000);
   });
 
   it('records lastReleaseAt each time it releases a train', () => {
@@ -327,10 +336,10 @@ describe('slow restart', () => {
   });
 
   it('resumes every train at once when restartGap is 0 or absent', () => {
-    for (const options of [{ serves: 'baseline' }, { serves: 'baseline', restartGap: 0 }] as CentreOptions[]) {
+    for (const options of [{}, { restartGap: 0 }] as CentreOptions[]) {
       const centre = makeCentre(timetable, options);
-      centre.step(0, waiting, clear, allAlive);
-      for (const msg of centre.step(100, waiting, clear, allAlive)) {
+      centre.step(0, waiting, clear, none);
+      for (const msg of centre.step(100, waiting, clear, none)) {
         const permit = msg as Permit;
         expect(permit.untilX).toBeGreaterThan(xOf(waiting.find((t) => t.id === permit.to)!.pos));
       }
@@ -375,124 +384,82 @@ describe('isAvailable', () => {
 
   it('says a platform is available when its sensor reads empty and no train is sent to it', () => {
     for (const platform of ['P1', 'P2', 'P3', 'P4'] as const) {
-      expect(isAvailable(platform, memory, clear, allAlive)).toBe(true);
+      expect(isAvailable(platform, memory, clear)).toBe(true);
     }
   });
 
   it('says a platform is unavailable when its sensor reads occupied', () => {
-    expect(isAvailable('P1', memory, occupied('P1'), allAlive)).toBe(false);
-    expect(isAvailable('P2', memory, occupied('P1'), allAlive)).toBe(true);
+    expect(isAvailable('P1', memory, occupied('P1'))).toBe(false);
+    expect(isAvailable('P2', memory, occupied('P1'))).toBe(true);
   });
 
-  it('says a platform with a dead sensor is unavailable, because a dead sensor reads occupied', () => {
-    const allDead = occupied('P1', 'P2', 'P3', 'P4');
-    for (const platform of ['P1', 'P2', 'P3', 'P4'] as const) {
-      expect(isAvailable(platform, memory, allDead, allAlive)).toBe(false);
-    }
-  });
-
-  it('says a platform is available again once its sensor returns and reads empty', () => {
-    expect(isAvailable('P3', memory, occupied('P3'), allAlive)).toBe(false);
-    expect(isAvailable('P3', memory, clear, allAlive)).toBe(true);
+  it('says a platform is available again once it reads empty', () => {
+    expect(isAvailable('P3', memory, occupied('P3'))).toBe(false);
+    expect(isAvailable('P3', memory, clear)).toBe(true);
   });
 
   it('says a platform another train is sent to is unavailable', () => {
     const taken = sentTo(memory, { 1: 'P1' });
-    expect(isAvailable('P1', taken, clear, allAlive)).toBe(false);
-    expect(isAvailable('P2', taken, clear, allAlive)).toBe(true);
-  });
-
-  it('says every platform is unavailable while alive.station is false', () => {
-    for (const platform of ['P1', 'P2', 'P3', 'P4'] as const) {
-      expect(isAvailable(platform, memory, clear, { station: false, merge: true })).toBe(false);
-    }
+    expect(isAvailable('P1', taken, clear)).toBe(false);
+    expect(isAvailable('P2', taken, clear)).toBe(true);
   });
 
   it('says the junction is unavailable while junctionOccupied is true', () => {
-    expect(isAvailable('JUNCTION', memory, { ...clear, junctionOccupied: true }, allAlive)).toBe(false);
+    expect(isAvailable('JUNCTION', memory, { ...clear, junctionOccupied: true })).toBe(false);
   });
 
   it('says the junction is unavailable while exitStartClear is false (borrowed from the merge actor in "Leaving the station")', () => {
-    expect(isAvailable('JUNCTION', memory, { ...clear, exitStartClear: false }, allAlive)).toBe(false);
+    expect(isAvailable('JUNCTION', memory, { ...clear, exitStartClear: false })).toBe(false);
   });
 
   it('says the junction is unavailable while another train holds it', () => {
-    expect(isAvailable('JUNCTION', { ...memory, junctionHolder: 1 }, clear, allAlive)).toBe(false);
+    expect(isAvailable('JUNCTION', { ...memory, junctionHolder: 1 }, clear)).toBe(false);
   });
 
-  it('says the junction is unavailable while alive.merge is false', () => {
-    expect(isAvailable('JUNCTION', memory, clear, { station: true, merge: false })).toBe(false);
-  });
-
-  it('says the junction is available again once alive.merge is true and the zone is clear', () => {
-    expect(isAvailable('JUNCTION', memory, clear, allAlive)).toBe(true);
+  it('says the junction is available when the zone is clear and no train holds it', () => {
+    expect(isAvailable('JUNCTION', memory, clear)).toBe(true);
     const pieces: ResourceId[] = ['JUNCTION', 'P1'];
-    expect(pieces.every((piece) => isAvailable(piece, memory, clear, allAlive))).toBe(true);
+    expect(pieces.every((piece) => isAvailable(piece, memory, clear))).toBe(true);
   });
 });
 
 describe('choosePlatform', () => {
   const memory = initialMemory(timetable);
-  const baseline = DEFAULT_CENTRE_OPTIONS;
-  const stationOff: Alive = { station: false, merge: true };
 
   it('picks a platform the entry track feeds: P1 or P2 from A, P3 or P4 from B', () => {
     for (const sensors of [clear, occupied('P1', 'P3')]) {
-      expect(['P1', 'P2']).toContain(choosePlatform(train(1, 'A', 0), timetable[0], memory, sensors, allAlive, baseline));
-      expect(['P3', 'P4']).toContain(choosePlatform(train(3, 'B', 0), timetable[2], memory, sensors, allAlive, baseline));
+      expect(['P1', 'P2']).toContain(choosePlatform(train(1, 'A', 0), timetable[0], memory, sensors));
+      expect(['P3', 'P4']).toContain(choosePlatform(train(3, 'B', 0), timetable[2], memory, sensors));
     }
   });
 
   it('picks the default platform from the timetable when it is available (the design leaves the choice to the centre)', () => {
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, clear, allAlive, baseline)).toBe('P1');
-    expect(choosePlatform(train(2, 'A', 0), timetable[1], memory, clear, allAlive, baseline)).toBe('P2');
+    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, clear)).toBe('P1');
+    expect(choosePlatform(train(2, 'A', 0), timetable[1], memory, clear)).toBe('P2');
   });
 
   it('picks the other platform of the pair when the default is unavailable (the design leaves the choice to the centre)', () => {
-    expect(choosePlatform(train(2, 'A', 0), timetable[1], memory, occupied('P2'), allAlive, baseline)).toBe('P1');
-    expect(choosePlatform(train(3, 'B', 0), timetable[2], sentTo(memory, { 9: 'P3' }), clear, allAlive, baseline)).toBe('P4');
+    expect(choosePlatform(train(2, 'A', 0), timetable[1], memory, occupied('P2'))).toBe('P1');
+    expect(choosePlatform(train(3, 'B', 0), timetable[2], sentTo(memory, { 9: 'P3' }), clear)).toBe('P4');
   });
 
   it('returns null when neither platform of the pair is available', () => {
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, occupied('P1', 'P2'), allAlive, baseline)).toBeNull();
-  });
-
-  it('never picks a platform whose sensor reads occupied, so a dead sensor rules it out', () => {
-    const allDead = occupied('P1', 'P2', 'P3', 'P4');
-    for (const entry of timetable) {
-      expect(choosePlatform(train(entry.id, entry.entry, 0), entry, memory, allDead, allAlive, baseline)).toBeNull();
-    }
-  });
-
-  it('returns null while alive.station is false', () => {
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, clear, stationOff, baseline)).toBeNull();
+    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, occupied('P1', 'P2'))).toBeNull();
   });
 
   it('keeps the platform it already chose for a train instead of switching it (borrowed from "Following permits")', () => {
     const chosen = sentTo(memory, { 1: 'P2' });
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], chosen, clear, allAlive, baseline)).toBe('P2');
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], chosen, occupied('P2'), stationOff, baseline)).toBe('P2');
+    expect(choosePlatform(train(1, 'A', 0), timetable[0], chosen, clear)).toBe('P2');
+    expect(choosePlatform(train(1, 'A', 0), timetable[0], chosen, occupied('P2'))).toBe('P2');
   });
 
   it('never sends two trains to the same platform at once', () => {
     const centre = makeCentre(timetable);
     const trains = [train(1, 'A', 4000), train(2, 'A', 2000), train(4, 'A', 0)];
-    const messages = centre.step(0, trains, clear, allAlive);
+    const messages = centre.step(0, trains, clear, none);
     expect(permitFor(messages, 1).nextTrack).toBe('P1');
     expect(permitFor(messages, 2).nextTrack).toBe('P2');
     expect(permitFor(messages, 4).nextTrack).toBeNull();
-  });
-
-  it("with serves: 'ours', suggests only platforms from the train's own pair", () => {
-    const full = sentTo(memory, { 8: 'P1', 9: 'P2' });
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, clear, allAlive, ours)).toBe('P1');
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], sentTo(memory, { 9: 'P1' }), clear, allAlive, ours)).toBe('P2');
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], full, clear, allAlive, ours)).toBeNull();
-  });
-
-  it("with serves: 'ours', skips the dead actor and dead sensor rules", () => {
-    const allDead = occupied('P1', 'P2', 'P3', 'P4');
-    expect(choosePlatform(train(1, 'A', 0), timetable[0], memory, allDead, stationOff, ours)).toBe('P1');
   });
 });
 
@@ -529,37 +496,33 @@ describe('nextThroughJunction', () => {
 
   it('lets only one train into the junction zone at a time', () => {
     const centre = makeCentre(timetable);
-    centre.step(0, waiting, clear, allAlive);
+    centre.step(0, waiting, clear, none);
     const leaving = (now: number, sensors: SensorReadings) =>
-      centre.step(now, waiting, sensors, allAlive).filter((msg) => (msg as Permit).nextTrack === 'EXIT');
+      centre.step(now, waiting, sensors, none).filter((msg) => (msg as Permit).nextTrack === 'EXIT');
     expect(leaving(100, clear).map((msg) => (msg as Permit).to)).toEqual([1]);
     expect(leaving(101, clear).map((msg) => (msg as Permit).to)).toEqual([1]);
   });
 
   it('returns null while another train holds the junction', () => {
-    expect(nextThroughJunction({ ...ready, junctionHolder: 3 }, waiting, clear, allAlive, 100)).toBeNull();
+    expect(nextThroughJunction({ ...ready, junctionHolder: 3 }, waiting, clear, 100)).toBeNull();
   });
 
   it('returns null while junctionOccupied is true', () => {
-    expect(nextThroughJunction(ready, waiting, { ...clear, junctionOccupied: true }, allAlive, 100)).toBeNull();
+    expect(nextThroughJunction(ready, waiting, { ...clear, junctionOccupied: true }, 100)).toBeNull();
   });
 
   it('returns null while exitStartClear is false (borrowed from the merge actor in "Leaving the station")', () => {
-    expect(nextThroughJunction(ready, waiting, { ...clear, exitStartClear: false }, allAlive, 100)).toBeNull();
-  });
-
-  it('returns null while alive.merge is false', () => {
-    expect(nextThroughJunction(ready, waiting, clear, { station: true, merge: false }, 100)).toBeNull();
+    expect(nextThroughJunction(ready, waiting, { ...clear, exitStartClear: false }, 100)).toBeNull();
   });
 
   it('picks only trains that are ready to leave', () => {
     const late = [stopped(1, 'P1', PLATFORM_STOP), train(2, 'P2', 100)];
     const memory = { ...seen(late, 1, seen([late[0]], 0)), junctionOrder: [2, 1] };
-    expect(nextThroughJunction(memory, late, clear, allAlive, 100)).toBe(1);
+    expect(nextThroughJunction(memory, late, clear, 100)).toBe(1);
   });
 
   it('picks the train first in junctionOrder', () => {
-    expect(nextThroughJunction({ ...ready, junctionOrder: [3, 1, 2] }, waiting, clear, allAlive, 100)).toBe(3);
+    expect(nextThroughJunction({ ...ready, junctionOrder: [3, 1, 2] }, waiting, clear, 100)).toBe(3);
   });
 
   it('puts the lowest ID first in junctionOrder when two trains become ready in the same step (borrowed from the merge actor in "Leaving the station")', () => {
@@ -571,7 +534,7 @@ describe('nextThroughJunction', () => {
   });
 
   it('returns null when no train is waiting', () => {
-    expect(nextThroughJunction(seen([train(1, 'A', 100)]), [train(1, 'A', 100)], clear, allAlive, 100)).toBeNull();
+    expect(nextThroughJunction(seen([train(1, 'A', 100)]), [train(1, 'A', 100)], clear, 100)).toBeNull();
   });
 });
 
@@ -599,127 +562,116 @@ describe('nextTrackFor', () => {
 
   it('gives null to a train on EXIT', () => {
     expect(nextTrackFor(train(1, 'EXIT', 10), { ...initialMemory(timetable), junctionHolder: 1 })).toBeNull();
-    expect(nextTrackFor(train(1, 'EXIT', 10), initialMemory(timetable), ours)).toBeNull();
-  });
-
-  it("with serves: 'ours', gives EXIT to every train in a platform, because the merge lock decides when", () => {
-    expect(nextTrackFor(train(1, 'P1', 300), initialMemory(timetable), ours)).toBe('EXIT');
+    expect(nextTrackFor(train(1, 'EXIT', 10), initialMemory(timetable))).toBeNull();
   });
 });
 
 describe('untilXFor', () => {
-  const stationOff: Alive = { station: false, merge: true };
-  const mergeOff: Alive = { station: true, merge: false };
-
   it("keeps a train's front at least MARGIN behind the rear of the train ahead on its path", () => {
     const trains = [train(1, 'A', 3000), train(2, 'A', 2000)];
-    expect(untilXFor(trains[1], trains, seen(trains), clear, allAlive)).toBe(3000 - TRAIN_LENGTH - MARGIN);
+    expect(untilXFor(trains[1], trains, seen(trains), clear)).toBe(3000 - TRAIN_LENGTH - MARGIN);
     const exit = [train(1, 'EXIT', 1000), train(2, 'EXIT', 400)];
-    expect(untilXFor(exit[1], exit, seen(exit), clear, allAlive)).toBe(
+    expect(untilXFor(exit[1], exit, seen(exit), clear)).toBe(
       TRACK_START.EXIT + 1000 - TRAIN_LENGTH - MARGIN,
     );
     // A train on the other entry track is not on its path.
     const apart = [train(3, 'B', 3000), train(2, 'A', 2000)];
-    expect(untilXFor(apart[1], apart, seen(apart), clear, allAlive)).toBe(ENTRY_END_X);
+    expect(untilXFor(apart[1], apart, seen(apart), clear)).toBe(ENTRY_END_X);
   });
 
   it('uses the true position of the train ahead, however far it is', () => {
     const trains = [train(1, 'A', 5900), train(2, 'A', 10)];
-    expect(untilXFor(trains[1], trains, seen(trains), clear, allAlive)).toBe(5900 - TRAIN_LENGTH - MARGIN);
+    expect(untilXFor(trains[1], trains, seen(trains), clear)).toBe(5900 - TRAIN_LENGTH - MARGIN);
   });
 
   it('keeps a train behind a broken-down train ahead of it', () => {
     const trains = [broken(1, 'A', 3000), train(2, 'A', 2000)];
     const memory = sentTo(seen(trains), { 2: 'P2' });
-    expect(untilXFor(trains[1], trains, memory, clear, allAlive)).toBe(3000 - TRAIN_LENGTH - MARGIN);
+    expect(untilXFor(trains[1], trains, memory, clear)).toBe(3000 - TRAIN_LENGTH - MARGIN);
   });
 
   it('keeps a train on A or B with no platform short of the end of its entry track, x 6000', () => {
     const t = train(1, 'A', 3000);
-    expect(untilXFor(t, [t], seen([t]), clear, allAlive)).toBe(ENTRY_END_X);
+    expect(untilXFor(t, [t], seen([t]), clear)).toBe(ENTRY_END_X);
   });
 
   it('lets a train with a platform run to offset 300 in that platform, x 6300', () => {
     const t = train(1, 'A', 3000);
-    expect(untilXFor(t, [t], sentTo(seen([t]), { 1: 'P1' }), clear, allAlive)).toBe(STOP_X);
+    expect(untilXFor(t, [t], sentTo(seen([t]), { 1: 'P1' }), clear)).toBe(STOP_X);
   });
 
   it('keeps a train short of a platform that is unavailable', () => {
     const t = train(1, 'A', 3000);
     const memory = sentTo(seen([t]), { 1: 'P1' });
-    expect(untilXFor(t, [t], memory, occupied('P1'), allAlive)).toBe(ENTRY_END_X);
-    expect(untilXFor(t, [t], memory, clear, stationOff)).toBe(ENTRY_END_X);
+    expect(untilXFor(t, [t], memory, occupied('P1'))).toBe(ENTRY_END_X);
   });
 
   it('holds a train in its platform at x 6300 until it holds the junction', () => {
     const t = stopped(1, 'P1', PLATFORM_STOP - 0.01);
     const memory = seen([t]);
-    expect(untilXFor(t, [t], memory, clear, allAlive)).toBe(STOP_X);
-    expect(untilXFor(t, [t], { ...memory, junctionHolder: 1 }, clear, allAlive)).toBe(freeRunX());
+    expect(untilXFor(t, [t], memory, clear)).toBe(STOP_X);
+    expect(untilXFor(t, [t], { ...memory, junctionHolder: 1 }, clear)).toBe(freeRunX());
   });
 
   it('holds every train short of the junction zone while the junction is unavailable', () => {
     const waiting = [stopped(1, 'P1', PLATFORM_STOP), stopped(2, 'P2', PLATFORM_STOP), stopped(3, 'P3', PLATFORM_STOP)];
     const centre = makeCentre(timetable);
-    centre.step(0, waiting, clear, allAlive);
+    centre.step(0, waiting, clear, none);
     for (const sensors of [{ ...clear, junctionOccupied: true }, { ...clear, exitStartClear: false }]) {
-      for (const msg of centre.step(100, waiting, sensors, allAlive)) {
+      for (const msg of centre.step(100, waiting, sensors, none)) {
         expect((msg as Permit).untilX).toBe(JUNCTION_START_X);
       }
-    }
-    for (const msg of centre.step(101, waiting, clear, mergeOff)) {
-      expect((msg as Permit).untilX).toBe(JUNCTION_START_X);
     }
   });
 
   it('keeps two trains from being in the junction zone at the same time', () => {
     const waiting = [stopped(1, 'P1', PLATFORM_STOP), stopped(2, 'P2', PLATFORM_STOP)];
     const centre = makeCentre(timetable);
-    centre.step(0, waiting, clear, allAlive);
-    const first = centre.step(100, waiting, clear, allAlive);
+    centre.step(0, waiting, clear, none);
+    const first = centre.step(100, waiting, clear, none);
     expect(permitFor(first, 1).untilX).toBe(freeRunX());
     expect(permitFor(first, 2).untilX).toBe(JUNCTION_START_X);
     // Train 1 is in the zone. Train 2 stays out until train 1's rear has cleared it.
     const inZone = [train(1, 'EXIT', 250), waiting[1]];
     const busy = { ...clear, junctionOccupied: true, exitStartClear: false };
-    expect(permitFor(centre.step(101, inZone, busy, allAlive), 2).untilX).toBe(JUNCTION_START_X);
+    expect(permitFor(centre.step(101, inZone, busy, none), 2).untilX).toBe(JUNCTION_START_X);
     const through = [train(1, 'EXIT', 1000), waiting[1]];
-    const second = permitFor(centre.step(102, through, clear, allAlive), 2);
+    const second = permitFor(centre.step(102, through, clear, none), 2);
     expect(second.nextTrack).toBe('EXIT');
     expect(second.untilX).toBe(TRACK_START.EXIT + 1000 - TRAIN_LENGTH - MARGIN);
   });
 
   it('gives a train on EXIT with nothing ahead freeRunX(), far enough past the end of EXIT that it leaves at full speed', () => {
     const t = train(1, 'EXIT', 10);
-    expect(untilXFor(t, [t], seen([t]), clear, allAlive)).toBe(freeRunX());
+    expect(untilXFor(t, [t], seen([t]), clear)).toBe(freeRunX());
     const braking = (MAX_SPEED * MAX_SPEED) / (2 * BRAKE);
     expect(freeRunX() - MAP_END_X).toBeGreaterThanOrEqual(braking);
   });
 
   it('holds a broken-down train where it is', () => {
     const t = broken(1, 'A', 1234);
-    expect(untilXFor(t, [t], sentTo(seen([t]), { 1: 'P1' }), clear, allAlive)).toBe(1234);
-    expect(untilXFor(t, [t], seen([t]), clear, allAlive, ours)).toBe(1234);
+    expect(untilXFor(t, [t], sentTo(seen([t]), { 1: 'P1' }), clear)).toBe(1234);
+    expect(untilXFor(t, [t], seen([t]), clear)).toBe(1234);
   });
 
   it('keeps a follower bound for P2 MARGIN behind the rear of a train whose front is in P1 and rear is still on A', () => {
     const trains = [train(1, 'P1', 60), train(2, 'A', 5500)];
     const memory = sentTo(seen(trains), { 2: 'P2' });
-    expect(untilXFor(trains[1], trains, memory, clear, allAlive)).toBe(
+    expect(untilXFor(trains[1], trains, memory, clear)).toBe(
       TRACK_START.P1 + 60 - TRAIN_LENGTH - MARGIN,
     );
     // Once the rear of train 1 is in P1, the way into P2 is clear.
     const inside = [train(1, 'P1', 150), train(2, 'A', 5500)];
-    expect(untilXFor(inside[1], inside, sentTo(seen(inside), { 2: 'P2' }), clear, allAlive)).toBe(STOP_X);
+    expect(untilXFor(inside[1], inside, sentTo(seen(inside), { 2: 'P2' }), clear)).toBe(STOP_X);
   });
 
-  it('for a train already past x 6000 or in the junction zone when the station or merge actor dies, lets it run clear', () => {
+  it('lets a train already in its platform or holding the junction run on when that track reads occupied', () => {
     const entering = train(1, 'P1', 50);
-    expect(untilXFor(entering, [entering], promised(seen([entering]), 1, STOP_X), clear, stationOff)).toBe(STOP_X);
+    expect(untilXFor(entering, [entering], promised(seen([entering]), 1, STOP_X), occupied('P1'))).toBe(STOP_X);
     const leaving = train(1, 'P1', 350);
     const holding = { ...promised(seen([leaving]), 1, freeRunX()), junctionHolder: 1 };
     const busy = { ...clear, junctionOccupied: true };
-    expect(untilXFor(leaving, [leaving], holding, busy, mergeOff)).toBe(freeRunX());
+    expect(untilXFor(leaving, [leaving], holding, busy)).toBe(freeRunX());
   });
 
   it('never moves untilX closer than a running train can stop, when a platform or the junction becomes unavailable (the design does not say)', () => {
@@ -727,47 +679,184 @@ describe('untilXFor', () => {
     const close = train(1, 'A', 5000, MAX_SPEED);
     const closeMemory = promised(sentTo(seen([close]), { 1: 'P1' }), 1, STOP_X);
     expect(reachOf(close)).toBeGreaterThan(ENTRY_END_X);
-    expect(untilXFor(close, [close], closeMemory, clear, stationOff)).toBe(STOP_X);
-    expect(untilXFor(close, [close], closeMemory, occupied('P1'), allAlive)).toBe(STOP_X);
+    expect(untilXFor(close, [close], closeMemory, occupied('P1'))).toBe(STOP_X);
     // Further back it can still stop, so the centre holds it at the end of its entry track.
     const far = train(1, 'A', 3000, MAX_SPEED);
     const farMemory = promised(sentTo(seen([far]), { 1: 'P1' }), 1, STOP_X);
-    expect(untilXFor(far, [far], farMemory, clear, stationOff)).toBe(ENTRY_END_X);
+    expect(untilXFor(far, [far], farMemory, occupied('P1'))).toBe(ENTRY_END_X);
     // Whatever the reason, untilX never drops below what was promised and is in reach.
     const fast = train(2, 'A', 2000, MAX_SPEED);
     const trains = [stopped(1, 'A', 2300), fast];
     const memory = promised(seen(trains), 2, 5000);
-    expect(untilXFor(fast, trains, memory, clear, allAlive)).toBe(reachOf(fast));
+    expect(untilXFor(fast, trains, memory, clear)).toBe(reachOf(fast));
+  });
+});
+
+describe('taking over from routes our trains set (design: "The centre comes first")', () => {
+  const t = train(1, 'A', 5000);
+
+  it('sends a train on A or B to the platform of its own pair its route is set into', () => {
+    expect(seen([t], 0, initialMemory(timetable), routes({ 1: 'P2' })).platformFor.get(1)).toBe('P2');
   });
 
-  it("with serves: 'ours', only keeps a train MARGIN behind the rear of the train ahead", () => {
-    const trains = [train(1, 'A', 3000), train(2, 'A', 2000)];
-    expect(untilXFor(trains[1], trains, seen(trains), clear, allAlive, ours)).toBe(3000 - TRAIN_LENGTH - MARGIN);
-    expect(untilXFor(trains[0], trains, seen(trains), clear, allAlive, ours)).toBe(freeRunX());
+  it("adopts the route even over the centre's own earlier choice", () => {
+    const chose = sentTo(seen([t]), { 1: 'P1' });
+    expect(seen([t], 1, chose, routes({ 1: 'P2' })).platformFor.get(1)).toBe('P2');
+    // With no route set, the earlier choice stands.
+    expect(seen([t], 1, chose, routes({ 1: null })).platformFor.get(1)).toBe('P1');
   });
 
-  it("with serves: 'ours', never holds a train at the end of its entry track, at the platform stop or for a dead actor", () => {
-    const allDead = occupied('P1', 'P2', 'P3', 'P4');
-    const dead: Alive = { station: false, merge: false };
-    for (const t of [train(1, 'A', 5900), stopped(1, 'P1', PLATFORM_STOP), train(1, 'EXIT', 50)]) {
-      expect(untilXFor(t, [t], seen([t]), allDead, dead, ours)).toBe(freeRunX());
-    }
+  it("ignores a route into the other pair's platform", () => {
+    expect(seen([t], 0, initialMemory(timetable), routes({ 1: 'P3' })).platformFor.has(1)).toBe(false);
+    const chose = sentTo(seen([t]), { 1: 'P1' });
+    expect(seen([t], 1, chose, routes({ 1: 'P4' })).platformFor.get(1)).toBe('P1');
   });
 
-  it("with serves: 'ours', does not hold a train on A or B behind a train standing in a platform", () => {
-    // The station lock decides the platform, so the centre cannot know which one is ahead.
+  it('does not adopt a route once the train is past its entry track', () => {
+    const inP1 = train(1, 'P1', 50);
+    expect(seen([inP1], 0, initialMemory(timetable), routes({ 1: 'P2' })).platformFor.get(1)).toBe('P1');
+    // Rear still in P1, front on EXIT.
+    const leaving = train(1, 'EXIT', 50);
+    const before = sentTo(seen([leaving]), { 1: 'P1' });
+    expect(seen([leaving], 1, before, routes({ 1: 'P2' })).platformFor.get(1)).toBe('P1');
+  });
+
+  it('puts the adopted platform in the permit and sends no other train to it', () => {
+    // Train 2 defaults to P2, so it goes to P1 once train 1 has taken P2.
+    const trains = [t, train(2, 'A', 1000)];
+    const messages = makeCentre(timetable).step(0, trains, clear, routes({ 1: 'P2' }));
+    expect(permitFor(messages, 1)).toMatchObject({ nextTrack: 'P2', untilX: STOP_X });
+    expect(permitFor(messages, 2).nextTrack).toBe('P1');
+  });
+});
+
+describe('taking over a train already in the junction zone (design: "The centre comes first")', () => {
+  it('makes a train past its platform stop, or on EXIT with its rear in the zone, the holder when there is none', () => {
+    expect(seen([train(1, 'P1', PLATFORM_STOP + 50)]).junctionHolder).toBe(1);
+    expect(seen([train(1, 'EXIT', 150)]).junctionHolder).toBe(1);
+  });
+
+  it('does not make a train the holder once it is clear of the zone, or still at its platform stop', () => {
+    const clearOffset = JUNCTION_END_X - TRACK_START.EXIT + TRAIN_LENGTH;
+    expect(seen([train(1, 'EXIT', clearOffset)]).junctionHolder).toBeNull();
+    expect(seen([stopped(1, 'P1', PLATFORM_STOP)]).junctionHolder).toBeNull();
+  });
+
+  it('does not let another ready train into the junction until the adopted holder has cleared it', () => {
+    const centre = makeCentre(timetable);
+    const waiting = stopped(2, 'P2', PLATFORM_STOP);
+    centre.step(0, [train(1, 'EXIT', 100), waiting], clear, none);
+    // Train 2's dwell is over and the sensors read clear, so only the holder keeps it back.
+    const blocked = permitFor(centre.step(100, [train(1, 'EXIT', 150), waiting], clear, none), 2);
+    expect(blocked).toMatchObject({ nextTrack: null, untilX: JUNCTION_START_X });
+    const freed = permitFor(centre.step(101, [train(1, 'EXIT', 1000), waiting], clear, none), 2);
+    expect(freed.nextTrack).toBe('EXIT');
+  });
+});
+
+describe('leader in the permit (design: "The centre comes first")', () => {
+  it('is null when nothing is ahead on the path', () => {
+    const t = train(1, 'A', 3000);
+    expect(trainAhead(t, [t], seen([t]))).toBeNull();
+    expect(permitFor(makeCentre(timetable).step(0, [t], clear, none), 1).leader).toBeNull();
+  });
+
+  it('names the nearest train ahead when two are ahead', () => {
+    const trains = [train(1, 'A', 4000), train(2, 'A', 3000), train(4, 'A', 1000)];
+    expect(trainAhead(trains[2], trains, seen(trains))?.id).toBe(2);
+    const messages = makeCentre(timetable).step(0, trains, clear, none);
+    expect(permitFor(messages, 4).leader).toBe(2);
+    expect(permitFor(messages, 2).leader).toBe(1);
+    expect(permitFor(messages, 1).leader).toBeNull();
+  });
+
+  it('ignores a train that is not on the path', () => {
+    const apart = [train(3, 'B', 3000), train(2, 'A', 2000)];
+    expect(trainAhead(apart[1], apart, seen(apart))).toBeNull();
+    // A train in P1 leads a train sent to P1, not one sent to P2.
     const trains = [stopped(1, 'P1', PLATFORM_STOP), train(2, 'A', 5500)];
-    const memory = sentTo(seen(trains), { 2: 'P1' });
-    expect(untilXFor(trains[1], trains, memory, clear, allAlive, ours)).toBe(freeRunX());
+    expect(trainAhead(trains[1], trains, sentTo(seen(trains), { 2: 'P1' }))?.id).toBe(1);
+    expect(trainAhead(trains[1], trains, sentTo(seen(trains), { 2: 'P2' }))).toBeNull();
+  });
+});
+
+describe('local failures', () => {
+  it('sends the same permits whatever the station actor, merge actor and platform sensors are doing', () => {
+    // step has no input for them: the engine passes the true occupancy, not our sensors.
+    const two: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const permitsWith = (presses: Press[]) => {
+      const log: Message[][] = [];
+      const program: TrainProgram = {
+        ...baselineProgram,
+        makeCentre: (tt) => {
+          const centre = makeCentre(tt);
+          return {
+            step: (...args) => {
+              const out = centre.step(...args);
+              log.push(out);
+              return out;
+            },
+          };
+        },
+      };
+      const engine = new Engine({ timetable: two, program, seed: 1, runLength: 400, presses });
+      while (engine.now < 400) engine.step();
+      return log;
+    };
+    const healthy = permitsWith([]);
+    const broken = permitsWith([{ at: 0, set: { station: false, merge: false, sensors: false } }]);
+    expect(broken).toEqual(healthy);
+    expect(healthy.flat().some((msg) => msg.type === 'permit' && msg.nextTrack === 'EXIT')).toBe(true);
+  });
+});
+
+describe('radio working (design: "Radio working")', () => {
+  const DELAY = DEFAULT_CONSTANTS.RADIO_WORKING_DELAY;
+  const GAP = DEFAULT_CONSTANTS.RADIO_RELEASE_GAP;
+
+  it('starts RADIO_WORKING_DELAY after the centre last stepped, and never before its first step', () => {
+    const memory = { ...initialMemory(timetable), lastStepAt: 100 };
+    expect(isRadioWorking(initialMemory(timetable), 1e6)).toBe(false);
+    expect(isRadioWorking(memory, 100 + DELAY - 1)).toBe(false);
+    expect(isRadioWorking(memory, 100 + DELAY)).toBe(true);
+    expect(isRadioWorking({ ...memory, radioWorking: true }, 101)).toBe(true);
   });
 
-  it("with serves: 'ours', a step suggests a platform and never orders the junction", () => {
-    const centre = makeCentre(timetable, ours);
-    const trains = [stopped(1, 'P1', PLATFORM_STOP), train(2, 'A', 3000), train(4, 'A', 1000)];
-    const messages = centre.step(0, trains, clear, { station: false, merge: false });
-    expect(permitFor(messages, 1)).toMatchObject({ nextTrack: 'EXIT', untilX: freeRunX() });
-    expect(permitFor(messages, 2).nextTrack).toBe('P2');
-    expect(permitFor(messages, 4).nextTrack).toBeNull();
-    expect(permitFor(messages, 4).untilX).toBe(3000 - TRAIN_LENGTH - MARGIN);
+  it('sends nothing until then', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000)];
+    centre.step(0, trains, clear, none);
+    expect(centre.radioStep!(DELAY - 1, trains, clear, none)).toEqual([]);
+  });
+
+  it('then releases one stopped train at a time, furthest along first, with caution permits', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000), stopped(2, 'A', 1000)];
+    centre.step(0, trains, clear, none);
+    const first = centre.radioStep!(DELAY, trains, clear, none);
+    expect(first.every((m) => m.type === 'permit' && m.caution === true)).toBe(true);
+    expect(permitFor(first, 1).untilX).toBeGreaterThan(xOf(trains[0].pos));
+    expect(permitFor(first, 2).untilX).toBe(xOf(trains[1].pos));
+    // The engine calls radioStep once a second. Train 2 waits its turn, RADIO_RELEASE_GAP later.
+    let last: Message[] = first;
+    for (let t = DELAY + 1; t < DELAY + GAP; t++) {
+      last = centre.radioStep!(t, trains, clear, none);
+      expect(permitFor(last, 2).untilX).toBe(xOf(trains[1].pos));
+    }
+    last = centre.radioStep!(DELAY + GAP, trains, clear, none);
+    expect(permitFor(last, 2).untilX).toBeGreaterThan(xOf(trains[1].pos));
+  });
+
+  it('stops when the centre is back: its permits carry no caution and release every held train', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000), stopped(2, 'A', 1000)];
+    centre.step(0, trains, clear, none);
+    centre.radioStep!(DELAY, trains, clear, none);
+    const back = centre.step(DELAY + 1, trains, clear, none);
+    expect(back.some((m) => m.type === 'permit' && m.caution)).toBe(false);
+    expect(permitFor(back, 2).untilX).toBeGreaterThan(xOf(trains[1].pos));
   });
 });

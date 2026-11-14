@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { BRAKE, PERMIT_FRESH, SIGHT_SPEED, TICK, safeSpeed } from '../../src/shared/constants';
+import { BRAKE, MAX_SPEED, PERMIT_FRESH, SIGHT_SPEED, TICK, safeSpeed } from '../../src/shared/constants';
 import type { Message, TrainState } from '../../src/shared/types';
 import { createAgent } from '../../src/train/agent';
 import { brakeLimit } from '../../src/train/follow';
 import { STOP_SHORT, trainNumbers } from '../../src/train/numbers';
 import {
+  committedPlatform,
   isPermitFresh,
   latestPermit,
+  permitLeader,
   permitLimit,
-  suggestedPlatform,
+  permitRoute,
   type HeldPermit,
 } from '../../src/train/permits';
-import { platformToAsk } from '../../src/train/station';
 import { requests, startRun, tick, ticks, timetable } from './sim';
 
 const N = trainNumbers();
@@ -20,16 +21,40 @@ const permit: HeldPermit = { untilX: 6000, nextTrack: 'P1', sentAt: 9 };
 const self: TrainState = { id: 1, pos: { track: 'A', offset: 1000 }, speed: 30, brokenDown: false };
 const forMe: Message = { type: 'permit', to: 1, untilX: 6000, nextTrack: 'P1', sentAt: 9 };
 
-function permitMsg(sentAt: number, untilX: number, nextTrack: HeldPermit['nextTrack'] = null, to = 1): Message {
-  return { type: 'permit', to, untilX, nextTrack, sentAt };
+function permitMsg(
+  sentAt: number,
+  untilX: number,
+  nextTrack: HeldPermit['nextTrack'] = null,
+  to = 1,
+  leader?: number | null,
+): Message {
+  const msg: Message = { type: 'permit', to, untilX, nextTrack, sentAt };
+  return leader === undefined ? msg : { ...msg, leader };
 }
 
-describe('Following permits: reading permits', () => {
+/** A permit that allows everything, sent one tick ago. */
+function wideOpen(now: number, nextTrack: HeldPermit['nextTrack'], to = 1, leader?: number | null): Message {
+  return permitMsg(now - TICK, 12400, nextTrack, to, leader);
+}
+
+describe('The centre comes first: reading permits', () => {
   it('keeps the newest permit addressed to this train', () => {
     const newer = permitMsg(10, 6200, 'P2');
     expect(latestPermit(null, [forMe], 1)).toEqual(permit);
     expect(latestPermit(permit, [newer], 1)).toEqual({ untilX: 6200, nextTrack: 'P2', sentAt: 10 });
     expect(latestPermit(null, [newer, forMe], 1)).toEqual({ untilX: 6200, nextTrack: 'P2', sentAt: 10 });
+  });
+
+  it('keeps the leader the permit names, null included', () => {
+    expect(latestPermit(null, [permitMsg(9, 6000, null, 1, 7)], 1)?.leader).toBe(7);
+    expect(latestPermit(null, [permitMsg(9, 6000, null, 1, null)], 1)?.leader).toBeNull();
+    expect(latestPermit(null, [permitMsg(9, 6000, null, 1)], 1)).not.toHaveProperty('leader');
+  });
+
+  it('ignores a radio working permit, because by then it is running on its own rules', () => {
+    const radio: Message = { ...permitMsg(10, 6200, 'P2'), caution: true } as Message;
+    expect(latestPermit(null, [radio], 1)).toBeNull();
+    expect(latestPermit(permit, [radio], 1)).toBe(permit);
   });
 
   it('ignores permits addressed to other trains', () => {
@@ -46,7 +71,7 @@ describe('Following permits: reading permits', () => {
   });
 });
 
-describe('Following permits: freshness', () => {
+describe('The centre comes first: freshness', () => {
   it('a permit is fresh while it is under 5 seconds old', () => {
     expect(isPermitFresh(permit, 9, N)).toBe(true);
     expect(isPermitFresh(permit, 9 + PERMIT_FRESH - 0.1, N)).toBe(true);
@@ -66,7 +91,7 @@ describe('Following permits: freshness', () => {
     expect(isPermitFresh(null, 10, N)).toBe(false);
   });
 
-  it('when permits return after an outage, the train follows them on the next tick', () => {
+  it('when permits return after an outage, the train obeys them on the next tick', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 1000 }, SIGHT_SPEED);
     tick(run, [permitMsg(0, 6000)]);
     expect(run.out?.mode).toBe('central');
@@ -80,7 +105,7 @@ describe('Following permits: freshness', () => {
   });
 });
 
-describe('Following permits: untilX', () => {
+describe('The centre comes first: untilX', () => {
   it('a fresh permit limits speed so the train stops at or before untilX', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 1000 }, 40);
     for (let i = 0; i < 1500; i++) {
@@ -105,11 +130,6 @@ describe('Following permits: untilX', () => {
     expect(permitLimit(self, { ...permit, untilX: 400 }, 10, N)).toBe(0);
   });
 
-  it('brakes one tick early for untilX, like a stop point', () => {
-    expect(permitLimit(self, { ...permit, untilX: 1200 }, 10, N)).toBe(brakeLimit(200));
-    expect(permitLimit(self, { ...permit, untilX: 1200 }, 10, N)).toBeLessThan(safeSpeed(200));
-  });
-
   it('a permit that is not fresh adds no limit', () => {
     expect(permitLimit(self, { ...permit, untilX: 1000 }, 9 + PERMIT_FRESH, N)).toBe(Infinity);
   });
@@ -118,16 +138,7 @@ describe('Following permits: untilX', () => {
     expect(permitLimit(self, null, 10, N)).toBe(Infinity);
   });
 
-  it('the untilX limit only lowers speed and never raises it above the other limits', () => {
-    // Train 2 has never heard its leader, so it is held to SIGHT_SPEED. A generous permit
-    // does not lift that.
-    const run = startRun(createAgent(2, timetable), 2, { track: 'A', offset: 0 }, SIGHT_SPEED);
-    for (let i = 0; i < 300; i++) tick(run, i % 10 === 0 ? [permitMsg(run.now - TICK, 12000, null, 2)] : []);
-    expect(run.out?.mode).toBe('central');
-    expect(run.topSpeed).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
-  });
-
-  it('an old but still fresh permit can hold the train back for up to 5 seconds', () => {
+  it('an old but still fresh permit holds the train back for up to 5 seconds', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 1000 }, 0);
     tick(run, [permitMsg(0, 1000)]);
     ticks(run, 48);
@@ -137,120 +148,143 @@ describe('Following permits: untilX', () => {
   });
 });
 
-describe('Following permits: platform suggestion', () => {
-  it('a fresh permit suggests its nextTrack as the platform to ask for', () => {
-    expect(suggestedPlatform(permit, 10, 'A', N)).toBe('P1');
-    expect(suggestedPlatform({ ...permit, nextTrack: 'P4' }, 10, 'B', N)).toBe('P4');
-  });
-
-  it('ignores a suggested platform from the other pair', () => {
-    expect(suggestedPlatform({ ...permit, nextTrack: 'P3' }, 10, 'A', N)).toBeNull();
-    expect(suggestedPlatform(permit, 10, 'B', N)).toBeNull();
-  });
-
-  it('ignores a nextTrack that is not a platform (A, B, EXIT or null)', () => {
-    for (const nextTrack of ['A', 'B', 'EXIT', null] as const) {
-      expect(suggestedPlatform({ ...permit, nextTrack }, 10, 'A', N)).toBeNull();
-    }
-  });
-
-  it('a permit that is not fresh suggests nothing', () => {
-    expect(suggestedPlatform(permit, 9 + PERMIT_FRESH, 'A', N)).toBeNull();
-  });
-
-  it('the station grant or alternative wins over the suggestion', () => {
-    // The alternative wins on what to ask for.
-    expect(platformToAsk('P1', 'P1', { kind: 'refuse', platform: 'P1', alternative: 'P2', at: 0 })).toBe('P2');
-    // The grant wins on where to go: the permit says P1, the station grants P2.
+describe('The centre comes first: obeying a fresh permit', () => {
+  it("takes the permit's nextTrack, not its default platform", () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5000 }, 20);
-    tick(run, [permitMsg(0, 12000, 'P1')]);
-    tick(run, [{ type: 'lockGrant', to: 1, resource: 'P2', follow: null }]);
-    tick(run, [permitMsg(run.now - TICK, 12000, 'P1')]);
-    expect(run.out?.nextTrack).toBe('P2');
+    expect(tick(run, [wideOpen(run.now, 'P2')]).nextTrack).toBe('P2');
+  });
+
+  it('ignores a nextTrack that does not lead on from its track, and keeps the last one that did', () => {
+    expect(permitRoute('A', { ...permit, nextTrack: 'P3' }, null)).toBeNull();
+    expect(permitRoute('A', { ...permit, nextTrack: 'P3' }, 'P2')).toBe('P2');
+    expect(permitRoute('A', { ...permit, nextTrack: 'EXIT' }, null)).toBeNull();
+    expect(permitRoute('P1', { ...permit, nextTrack: 'EXIT' }, null)).toBe('EXIT');
+    expect(permitRoute('A', { ...permit, nextTrack: null }, 'P1')).toBeNull();
+  });
+
+  it('runs into the platform the centre sends it to and sends no lock request', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 4700 }, 20);
+    for (let i = 0; i < 600; i++) tick(run, [permitMsg(run.now - TICK, 6300, 'P2')]);
+    expect(run.state.pos.track).toBe('P2');
+    expect(run.overruns).toBe(0);
+    expect(requests(run)).toEqual([]);
+  });
+
+  it('waits in its platform until the centre sends it on, and never asks the merge actor', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 299 }, 0);
+    for (let i = 0; i < 600; i++) tick(run, [permitMsg(run.now - TICK, 6300, null)]);
+    expect(run.state.pos.track).toBe('P1');
+    expect(requests(run)).toEqual([]);
+  });
+
+  it('still broadcasts its position every second', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 1000 }, 20);
+    for (let i = 0; i < 30; i++) tick(run, [wideOpen(run.now, null)]);
+    expect(run.sent.filter((o) => o.msg.type === 'position')).toHaveLength(3);
+  });
+
+  it('still brakes for what its own sensor sees', () => {
+    const agent = createAgent(1, timetable);
+    expect(agent.decide({ now: 0, self, inbox: [wideOpen(0, 'P1')], sightAhead: 60 }).accel).toBe(-BRAKE);
+  });
+
+  it('needs no position reports from the train ahead, so a radio failure does not slow it', () => {
+    // Train 2 has never heard train 1. On its own rules it would stay at SIGHT_SPEED.
+    const run = startRun(createAgent(2, timetable), 2, { track: 'A', offset: 0 }, SIGHT_SPEED);
+    for (let i = 0; i < 600; i++) tick(run, [wideOpen(run.now, null, 2)]);
+    expect(run.out?.mode).toBe('central');
+    expect(run.topSpeed).toBeGreaterThan(SIGHT_SPEED + 10);
+    expect(run.topSpeed).toBeLessThanOrEqual(MAX_SPEED);
+  });
+
+  it('when permits return it drops a junction grant and lets the centre decide when it leaves', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 299.995 }, 0, 100);
+    ticks(run, 330); // dwell, then ask
+    expect(requests(run)).toContain('JUNCTION');
+    tick(run, [{ type: 'lockGrant', to: 1, resource: 'JUNCTION', follow: null }]);
+    // The centre is back and says stay.
+    for (let i = 0; i < 200; i++) tick(run, [permitMsg(run.now - TICK, 6300, null)]);
+    expect(run.state.pos.track).toBe('P1');
+    expect(run.out?.nextTrack).toBeNull();
   });
 });
 
-describe('Following permits: permits never replace the train rules', () => {
-  /** A permit that allows everything, sent one tick ago. */
-  function wideOpen(now: number, nextTrack: HeldPermit['nextTrack'], to = 1): Message {
-    return permitMsg(now - TICK, 12400, nextTrack, to);
-  }
-
-  it('with a fresh permit the train still keeps its leader limit, sightAhead limit and stop points', () => {
-    // Leader limit: train 2 has never heard train 1, so it stays at SIGHT_SPEED.
-    const blind = startRun(createAgent(2, timetable), 2, { track: 'A', offset: 0 }, SIGHT_SPEED);
-    for (let i = 0; i < 100; i++) tick(blind, [wideOpen(blind.now, 'P2', 2)]);
-    expect(blind.topSpeed).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
-    // sightAhead: an obstacle 60 m ahead means full brakes.
-    const seeing = createAgent(1, timetable);
-    expect(seeing.decide({ now: 0, self, inbox: [wideOpen(0, 'P1')], sightAhead: 60 }).accel).toBe(-BRAKE);
-    // Stop point: with no platform, it stops before the end of A.
-    const stopping = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5700 }, 20);
-    for (let i = 0; i < 600 && stopping.state.speed > 0; i++) tick(stopping, [wideOpen(stopping.now, 'P1')]);
-    expect(stopping.state.speed).toBe(0);
-    expect(stopping.state.pos.track).toBe('A');
-    expect(stopping.state.pos.offset).toBeLessThan(6000);
+describe('The centre comes first: carrying on when the centre fails', () => {
+  it('reads the leader from its last permit', () => {
+    expect(permitLeader({ ...permit, leader: 4 })).toBe(4);
+    expect(permitLeader({ ...permit, leader: null })).toBe('none');
+    expect(permitLeader(permit)).toBe('unknown');
+    expect(permitLeader(null)).toBe('unknown');
   });
 
-  it('with a fresh permit the train still needs a platform lock before it passes the end of its entry track', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5900 }, 10);
-    // The station refuses every two seconds, so it is alive and the train must wait.
-    for (let i = 0; i < 600; i++) {
-      const inbox: Message[] = [wideOpen(run.now, 'P1')];
-      if (i % 20 === 0) inbox.push({ type: 'lockRefuse', to: 1, resource: 'P1', alternative: null });
-      if (i % 10 === 0) inbox.push({ type: 'platformStatus', platform: 'P1', occupied: true, sentAt: run.now - TICK });
-      tick(run, inbox);
-      expect(run.out?.nextTrack).toBeNull();
-    }
-    expect(run.state.pos.track).toBe('A');
+  it('keeps the platform its last permit sent it to only if it can no longer stop before the end of its track', () => {
+    const near: TrainState = { ...self, pos: { track: 'A', offset: 5950 }, speed: 20 };
+    const sent: HeldPermit = { ...permit, nextTrack: 'P2' };
+    expect(committedPlatform(near, sent, 'A', N)).toBe('P2');
+    expect(committedPlatform({ ...near, pos: { track: 'A', offset: 5000 } }, sent, 'A', N)).toBeNull();
+    expect(committedPlatform({ ...near, speed: 0 }, sent, 'A', N)).toBeNull();
+    expect(committedPlatform(near, { ...permit, nextTrack: 'P3' }, 'A', N)).toBeNull();
+    expect(committedPlatform(near, { ...permit, nextTrack: null }, 'A', N)).toBeNull();
+    expect(committedPlatform({ ...near, pos: { track: 'P2', offset: 10 } }, sent, 'A', N)).toBeNull();
+    expect(committedPlatform(near, null, 'A', N)).toBeNull();
+  });
+
+  it('a train that can no longer stop runs into the platform the centre gave it and asks the station for it', () => {
+    // The last permit is nearly 5 seconds old, so it goes stale on the next tick.
+    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5950 }, 21, 100);
+    tick(run, [permitMsg(100 - PERMIT_FRESH + 0.2, 6300, 'P2')]);
+    expect(run.out?.mode).toBe('central');
+    ticks(run, 300); // the centre has gone quiet
+    expect(run.state.pos.track).toBe('P2');
     expect(run.overruns).toBe(0);
+    expect(requests(run)).toContain('P2');
+    expect(requests(run)).not.toContain('P1');
   });
 
-  it('with a fresh permit the train still needs a junction lock or an open slot to leave the platform', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 290 }, 0);
-    // The merge actor refuses, so the train never falls back to clock slots.
-    for (let i = 0; i < 1500; i++) {
-      const inbox: Message[] = [wideOpen(run.now, 'EXIT')];
-      if (i % 20 === 0) inbox.push({ type: 'lockRefuse', to: 1, resource: 'JUNCTION', alternative: null });
-      tick(run, inbox);
-      expect(run.out?.nextTrack).toBeNull();
-    }
+  it('a train that can still stop stops at the end of its track and asks for its default platform', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 4000 }, 20);
+    tick(run, [permitMsg(run.now - TICK, 6300, 'P2')]);
+    for (let i = 0; i < 2000 && !(run.state.speed === 0 && run.state.pos.offset > 5000); i++) tick(run);
+    expect(run.state.pos.track).toBe('A');
+    expect(run.state.speed).toBe(0);
+    expect(requests(run)[0]).toBe('P1');
+  });
+
+  it('a train the centre let into the junction zone carries on out without asking the merge actor', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 310 }, 5);
+    tick(run, [permitMsg(run.now - TICK, 12400, 'EXIT', 1, null)]);
+    ticks(run, 600);
+    expect(run.state.pos.track).toBe('EXIT');
+    expect(run.overruns).toBe(0);
+    expect(requests(run)).not.toContain('JUNCTION');
+    // Its last permit said nothing was ahead, so it runs at full speed, not SIGHT_SPEED.
+    expect(run.out?.mode).toBe('full');
+    expect(run.topSpeed).toBeGreaterThan(SIGHT_SPEED + 1);
+  });
+
+  it('a train on EXIT follows the train its last permit named', () => {
+    const speedAfterReport = (leader: number | null): number => {
+      const run = startRun(createAgent(2, timetable), 2, { track: 'EXIT', offset: 1000 }, 30);
+      tick(run, [permitMsg(run.now - TICK, 12400, null, 2, leader)]);
+      ticks(run, 60);
+      // Train 7 reports it has stopped about 300 m ahead.
+      const report: Message = { type: 'position', from: 7, pos: { track: 'EXIT', offset: 1600 }, speed: 0, sentAt: run.now - TICK };
+      tick(run, [report]);
+      ticks(run, 150);
+      return run.state.speed;
+    };
+    // Following train 7, it slows to SIGHT_SPEED near train 7's limit point.
+    expect(speedAfterReport(7)).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
+    // Told nothing was ahead, the same report means nothing to it.
+    expect(speedAfterReport(null)).toBeGreaterThan(SIGHT_SPEED + 1);
+  });
+
+  it('a train in its platform, not yet past the stop, waits and asks the merge actor as usual', () => {
+    const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 250 }, 0);
+    tick(run, [permitMsg(run.now - TICK, 6300, null, 1, null)]);
+    ticks(run, 500);
     expect(run.state.pos.track).toBe('P1');
     expect(run.state.pos.offset).toBeLessThan(300);
     expect(requests(run)).toContain('JUNCTION');
-  });
-
-  it('after permits stop, the train drops the untilX limit and the suggestion and carries on', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 4700 }, 10);
-    for (let i = 0; i < 30; i++) tick(run, [permitMsg(run.now - TICK, 4750, 'P2')]);
-    expect(run.state.pos.offset).toBeLessThan(4750);
-    ticks(run, 400);
-    expect(run.state.pos.offset).toBeGreaterThan(4800);
-    // Past the ask point with no fresh permit, it asks for its default platform.
-    expect(requests(run)).toContain('P1');
-    expect(requests(run)).not.toContain('P2');
-  });
-
-  it('when permits return, the train keeps the locks it holds', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5000 }, 20);
-    tick(run);
-    tick(run, [{ type: 'lockGrant', to: 1, resource: 'P1', follow: null }]);
-    ticks(run, 60);
-    // Permits return and point somewhere else. The train still runs into P1.
-    for (let i = 0; i < 1200; i++) tick(run, [wideOpen(run.now, 'P2')]);
-    expect(run.state.pos.track).toBe('P1');
-    expect(run.overruns).toBe(0);
-  });
-
-  it('when permits return, the train keeps a platform it has already chosen', () => {
-    const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5000 }, 20);
-    tick(run);
-    tick(run, [{ type: 'lockGrant', to: 1, resource: 'P1', follow: null }]);
-    for (let i = 0; i < 100; i++) {
-      tick(run, [wideOpen(run.now, 'P2')]);
-      expect(run.out?.nextTrack).toBe('P1');
-    }
-    // It keeps asking for the platform it holds, not the one the permit suggests.
-    expect(requests(run)).not.toContain('P2');
   });
 });
