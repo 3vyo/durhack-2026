@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+import {
+  MERGE_TIMEOUT,
+  PERMIT_FRESH,
+  PERMIT_INTERVAL,
+  POSITION_INTERVAL,
+  REQUEST_REPEAT,
+  SLOT_COUNT,
+  SLOT_LENGTH,
+  SLOT_WINDOW,
+} from '../../src/shared/constants';
+
+// Each value is checked against the line in docs/design.md that states it.
+
+describe('timers', () => {
+  it('keeps a permit fresh for 5 seconds ("A permit is fresh for 5 seconds")', () => {
+    expect(PERMIT_FRESH).toBe(5);
+  });
+
+  it('sends permits every second ("it sends each train a permit every second")', () => {
+    expect(PERMIT_INTERVAL).toBe(1);
+  });
+
+  it('broadcasts positions every second ("a position message every second")', () => {
+    expect(POSITION_INTERVAL).toBe(1);
+  });
+
+  it('repeats a lock request every 2 seconds ("repeats it every 2 seconds")', () => {
+    expect(REQUEST_REPEAT).toBe(2);
+  });
+
+  it('waits 10 seconds for the merge actor ("After 10 seconds without a reply")', () => {
+    expect(MERGE_TIMEOUT).toBe(10);
+  });
+
+  it('uses 60 second slots, 4 of them, with a 15 second start window', () => {
+    expect(SLOT_LENGTH).toBe(60);
+    expect(SLOT_COUNT).toBe(4);
+    expect(SLOT_WINDOW).toBe(15);
+  });
+});
