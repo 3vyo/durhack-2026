@@ -186,7 +186,7 @@ describe('a parameter file with mistakes', () => {
     expect(problemsOf({ failures: [{ at: 10 }] }).join('\n')).toContain('failures[0] changes nothing');
     expect(problemsOf({ failures: [{ at: 10, center: false }] }).join('\n')).toContain('failures[0].center is not a known setting');
     expect(problemsOf({ failures: [{ at: -5, junctionKeeper: false }] }).join('\n')).toContain('failures[0].at must not be negative');
-    expect(problemsOf({ failures: [{ at: 10, breakDown: 99 }] }).join('\n')).toContain('failures[0].breakDown must be a train number from 1 to 12');
+    expect(problemsOf({ failures: [{ at: 10, breakDown: 99 }] }).join('\n')).toContain('failures[0].breakDown must be a train number from 1 to 16');
     expect(problemsOf({ failures: 'none' })).toEqual(['failures must be a list']);
   });
 
@@ -222,5 +222,29 @@ describe('radio working timers', () => {
 
   it('defaults to 20 minutes and one train a minute', () => {
     expect(DEFAULT_PARAMS.timers).toMatchObject({ radioWorkingDelay: 1200, radioReleaseGap: 60 });
+  });
+});
+
+describe('the timetable and the slow restart', () => {
+  it('calls the shortest gap between trains minHeadway', () => {
+    expect(parseParams({ timetable: { minHeadway: 60 } }).timetable.minHeadway).toBe(60);
+    expect(problemsOf({ timetable: { headway: 60 } }).join('\n')).toContain('timetable.headway is not a known setting');
+  });
+
+  it('defaults to 16 trains and a 2-hour run, like the demo and the batch', () => {
+    expect(DEFAULT_PARAMS.timetable).toMatchObject({ trains: 16, minHeadway: 45, dwell: 30 });
+    expect(DEFAULT_PARAMS.runLength).toBe(7200);
+  });
+
+  it('has the slow restart off by default, and lets a file turn it on', () => {
+    expect(DEFAULT_PARAMS.timers.restartGap).toBe(0);
+    expect(constantsFor(parseParams({ timers: { restartGap: 60 } })).RESTART_GAP).toBe(60);
+    expect(problemsOf({ timers: { restartGap: -1 } }).join('\n')).toContain('timers.restartGap must not be negative');
+  });
+
+  it('sets every constant from the file, and only from the file', () => {
+    const p = parseParams({ physics: { maxSpeed: 30, sightSpeed: 20 }, timers: { slotLength: 90 } });
+    expect(constantsFor(p)).toMatchObject({ MAX_SPEED: 30, SIGHT_SPEED: 20, SLOT_LENGTH: 90, BRAKE: 0.9 });
+    expect(Object.keys(constantsFor(DEFAULT_PARAMS)).sort()).toEqual(Object.keys(DEFAULT_CONSTANTS).sort());
   });
 });

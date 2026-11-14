@@ -41,6 +41,10 @@ export let RESUME_SETTLE = 5; // a local actor that is switched back on grants n
 export let RADIO_WORKING_DELAY = 1200; // the centre is down this long before staff move the first train
 export let RADIO_RELEASE_GAP = 60; // staff release one stopped train this often
 
+// Slow restart: when the centre comes back, staff release the stopped trains one at a time
+// instead of all at once. Our assumption, off by default (0). See "Slow restart" in docs/design.md.
+export let RESTART_GAP = 0; // seconds between releases. 0 releases every train at once
+
 // Clock slots, used while the junction keeper is switched off.
 // slot = floor(now / SLOT_LENGTH) mod SLOT_COUNT. Platform Pk may start during the
 // first SLOT_WINDOW seconds of slot k - 1.
@@ -48,36 +52,14 @@ export let SLOT_LENGTH = 60;
 export let SLOT_WINDOW = 15;
 export let SLOT_COUNT = 4;
 
-/** Every constant above, by name. */
-export interface ConstantValues {
-  MAX_SPEED: number;
-  ACCEL: number;
-  BRAKE: number;
-  TRAIN_LENGTH: number;
-  MARGIN: number;
-  SENSOR_RANGE: number;
-  SIGHT_SPEED: number;
-  FRESH: number;
-  TICK: number;
-  PERMIT_FRESH: number;
-  PERMIT_INTERVAL: number;
-  POSITION_INTERVAL: number;
-  REQUEST_REPEAT: number;
-  JUNCTION_KEEPER_TIMEOUT: number;
-  PLATFORM_KEEPER_TIMEOUT: number;
-  RESUME_SETTLE: number;
-  RADIO_WORKING_DELAY: number;
-  RADIO_RELEASE_GAP: number;
-  SLOT_LENGTH: number;
-  SLOT_WINDOW: number;
-  SLOT_COUNT: number;
-}
+/** Every constant above, by name. currentConstants is the one list of them. */
+export type ConstantValues = ReturnType<typeof currentConstants>;
 
 /** The values in docs/design.md. resetConstants puts these back. */
 export const DEFAULT_CONSTANTS: Readonly<ConstantValues> = Object.freeze(currentConstants());
 
 /** The values in use right now. */
-export function currentConstants(): ConstantValues {
+export function currentConstants() {
   return {
     MAX_SPEED,
     ACCEL,
@@ -97,6 +79,7 @@ export function currentConstants(): ConstantValues {
     RESUME_SETTLE,
     RADIO_WORKING_DELAY,
     RADIO_RELEASE_GAP,
+    RESTART_GAP,
     SLOT_LENGTH,
     SLOT_WINDOW,
     SLOT_COUNT,
@@ -128,6 +111,7 @@ export function setConstants(values: Partial<ConstantValues>): void {
   RESUME_SETTLE = v.RESUME_SETTLE;
   RADIO_WORKING_DELAY = v.RADIO_WORKING_DELAY;
   RADIO_RELEASE_GAP = v.RADIO_RELEASE_GAP;
+  RESTART_GAP = v.RESTART_GAP;
   SLOT_LENGTH = v.SLOT_LENGTH;
   SLOT_WINDOW = v.SLOT_WINDOW;
   SLOT_COUNT = v.SLOT_COUNT;

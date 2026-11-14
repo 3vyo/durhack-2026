@@ -14,44 +14,59 @@ import { DEFAULT_CONSTANTS, resetConstants, setConstants } from './constants';
 import type { ConstantValues } from './constants';
 import type { TrainId } from './types';
 
+// Each file key and the constant it sets. These two tables are the only list of the
+// settable values in this file: the types, the defaults and constantsFor all come from them.
+
 /** How trains move and what they can see. Metres, seconds, metres per second. */
-export interface PhysicsParams {
-  maxSpeed: number;
-  accel: number;
-  brake: number;
-  trainLength: number;
-  margin: number; // extra gap kept beyond braking distance
-  sensorRange: number; // how far a train's own sensor sees
-  /**
-   * The speed a train keeps to when it can only trust what it sees. Leave it out to use
-   * the fastest whole number that can stop within sensorRange - margin.
-   */
-  sightSpeed: number;
-  fresh: number; // a position report older than this is stale
-  tick: number; // simulation step
-}
+const PHYSICS_KEYS = {
+  maxSpeed: 'MAX_SPEED',
+  accel: 'ACCEL',
+  brake: 'BRAKE',
+  trainLength: 'TRAIN_LENGTH',
+  margin: 'MARGIN', // extra gap kept beyond braking distance
+  sensorRange: 'SENSOR_RANGE', // how far a train's own sensor sees
+  // The speed a train keeps to when it can only trust what it sees. Leave it out to use the
+  // fastest whole number that can stop within sensorRange - margin.
+  sightSpeed: 'SIGHT_SPEED',
+  fresh: 'FRESH', // a position report older than this is stale
+  tick: 'TICK', // simulation step
+} as const satisfies Record<string, keyof ConstantValues>;
 
 /** Every timer the rules use, in seconds. */
-export interface TimerParams {
-  permitFresh: number;
-  permitInterval: number;
-  positionInterval: number;
-  requestRepeat: number;
-  junctionKeeperTimeout: number;
-  platformKeeperTimeout: number;
-  resumeSettle: number;
-  radioWorkingDelay: number;
-  radioReleaseGap: number;
-  slotLength: number;
-  slotWindow: number;
-  slotCount: number;
+const TIMER_KEYS = {
+  permitFresh: 'PERMIT_FRESH',
+  permitInterval: 'PERMIT_INTERVAL',
+  positionInterval: 'POSITION_INTERVAL',
+  requestRepeat: 'REQUEST_REPEAT',
+  junctionKeeperTimeout: 'JUNCTION_KEEPER_TIMEOUT',
+  platformKeeperTimeout: 'PLATFORM_KEEPER_TIMEOUT',
+  resumeSettle: 'RESUME_SETTLE',
+  radioWorkingDelay: 'RADIO_WORKING_DELAY',
+  radioReleaseGap: 'RADIO_RELEASE_GAP',
+  restartGap: 'RESTART_GAP', // 0 turns the slow restart off
+  slotLength: 'SLOT_LENGTH',
+  slotWindow: 'SLOT_WINDOW',
+  slotCount: 'SLOT_COUNT',
+} as const satisfies Record<string, keyof ConstantValues>;
+
+export type PhysicsParams = { -readonly [K in keyof typeof PHYSICS_KEYS]: number };
+export type TimerParams = { -readonly [K in keyof typeof TIMER_KEYS]: number };
+
+/** The defaults for one table, read from the constants' values in docs/design.md. */
+function defaultsFor<T extends Record<string, keyof ConstantValues>>(keys: T): { -readonly [K in keyof T]: number } {
+  const out = {} as Record<string, number>;
+  for (const [key, constant] of Object.entries(keys)) out[key] = DEFAULT_CONSTANTS[constant];
+  return Object.freeze(out) as { -readonly [K in keyof T]: number };
 }
 
-/** The trains in the run. Trains alternate between track A and track B. */
+/**
+ * The trains in the run. Each train picks track A or B at random from the seed, so the same
+ * seed always gives the same timetable.
+ */
 export interface TimetableParams {
-  seed: number; // the same seed always gives the same timetable
+  seed: number;
   trains: number;
-  headway: number; // each gap between trains is headway to 2 * headway seconds
+  minHeadway: number; // the shortest gap between two trains entering. Each gap is minHeadway to 2 * minHeadway seconds
   dwell: number; // seconds each train waits in its platform
 }
 
@@ -87,35 +102,12 @@ export function defaultSightSpeed(brake: number, sensorRange: number, margin: nu
 
 export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
   name: 'default',
-  physics: Object.freeze({
-    maxSpeed: DEFAULT_CONSTANTS.MAX_SPEED,
-    accel: DEFAULT_CONSTANTS.ACCEL,
-    brake: DEFAULT_CONSTANTS.BRAKE,
-    trainLength: DEFAULT_CONSTANTS.TRAIN_LENGTH,
-    margin: DEFAULT_CONSTANTS.MARGIN,
-    sensorRange: DEFAULT_CONSTANTS.SENSOR_RANGE,
-    sightSpeed: DEFAULT_CONSTANTS.SIGHT_SPEED,
-    fresh: DEFAULT_CONSTANTS.FRESH,
-    tick: DEFAULT_CONSTANTS.TICK,
-  }),
-  timers: Object.freeze({
-    permitFresh: DEFAULT_CONSTANTS.PERMIT_FRESH,
-    permitInterval: DEFAULT_CONSTANTS.PERMIT_INTERVAL,
-    positionInterval: DEFAULT_CONSTANTS.POSITION_INTERVAL,
-    requestRepeat: DEFAULT_CONSTANTS.REQUEST_REPEAT,
-    junctionKeeperTimeout: DEFAULT_CONSTANTS.JUNCTION_KEEPER_TIMEOUT,
-    platformKeeperTimeout: DEFAULT_CONSTANTS.PLATFORM_KEEPER_TIMEOUT,
-    resumeSettle: DEFAULT_CONSTANTS.RESUME_SETTLE,
-    radioWorkingDelay: DEFAULT_CONSTANTS.RADIO_WORKING_DELAY,
-    radioReleaseGap: DEFAULT_CONSTANTS.RADIO_RELEASE_GAP,
-    slotLength: DEFAULT_CONSTANTS.SLOT_LENGTH,
-    slotWindow: DEFAULT_CONSTANTS.SLOT_WINDOW,
-    slotCount: DEFAULT_CONSTANTS.SLOT_COUNT,
-  }),
-  timetable: Object.freeze({ seed: 1, trains: 12, headway: 45, dwell: 30 }),
+  physics: defaultsFor(PHYSICS_KEYS),
+  timers: defaultsFor(TIMER_KEYS),
+  timetable: Object.freeze({ seed: 1, trains: 16, minHeadway: 45, dwell: 30 }),
   start: Object.freeze({ centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 }),
   failures: Object.freeze([]) as unknown as FailureEvent[],
-  runLength: 3600,
+  runLength: 7200,
 });
 
 /** Thrown by parseParams. `problems` has one line per thing wrong with the file. */
@@ -199,11 +191,14 @@ function checkValues(p: SimParams, problems: string[]): void {
   };
 
   for (const [key, value] of Object.entries(p.physics)) positive(value as number, `physics.${key}`);
-  for (const [key, value] of Object.entries(p.timers)) positive(value as number, `timers.${key}`);
+  for (const [key, value] of Object.entries(p.timers)) {
+    if (key !== 'restartGap') positive(value as number, `timers.${key}`);
+  }
+  if (p.timers.restartGap < 0) problems.push(`timers.restartGap must not be negative, but is ${p.timers.restartGap}`);
   whole(p.timers.slotCount, 'timers.slotCount', 1);
   whole(p.timetable.trains, 'timetable.trains', 1);
   whole(p.timetable.seed, 'timetable.seed', 0);
-  positive(p.timetable.headway, 'timetable.headway');
+  positive(p.timetable.minHeadway, 'timetable.minHeadway');
   if (p.timetable.dwell < 0) problems.push(`timetable.dwell must not be negative, but is ${p.timetable.dwell}`);
   positive(p.runLength, 'runLength');
   share(p.start.radioDrop, 'start.radioDrop');
@@ -282,29 +277,10 @@ export function parseParams(input: unknown): SimParams {
 
 /** The constants a set of parameters stands for. */
 export function constantsFor(p: SimParams): ConstantValues {
-  return {
-    MAX_SPEED: p.physics.maxSpeed,
-    ACCEL: p.physics.accel,
-    BRAKE: p.physics.brake,
-    TRAIN_LENGTH: p.physics.trainLength,
-    MARGIN: p.physics.margin,
-    SENSOR_RANGE: p.physics.sensorRange,
-    SIGHT_SPEED: p.physics.sightSpeed,
-    FRESH: p.physics.fresh,
-    TICK: p.physics.tick,
-    PERMIT_FRESH: p.timers.permitFresh,
-    PERMIT_INTERVAL: p.timers.permitInterval,
-    POSITION_INTERVAL: p.timers.positionInterval,
-    REQUEST_REPEAT: p.timers.requestRepeat,
-    JUNCTION_KEEPER_TIMEOUT: p.timers.junctionKeeperTimeout,
-    PLATFORM_KEEPER_TIMEOUT: p.timers.platformKeeperTimeout,
-    RESUME_SETTLE: p.timers.resumeSettle,
-    RADIO_WORKING_DELAY: p.timers.radioWorkingDelay,
-    RADIO_RELEASE_GAP: p.timers.radioReleaseGap,
-    SLOT_LENGTH: p.timers.slotLength,
-    SLOT_WINDOW: p.timers.slotWindow,
-    SLOT_COUNT: p.timers.slotCount,
-  };
+  const out = { ...DEFAULT_CONSTANTS };
+  for (const [key, constant] of Object.entries(PHYSICS_KEYS)) out[constant] = p.physics[key as keyof PhysicsParams];
+  for (const [key, constant] of Object.entries(TIMER_KEYS)) out[constant] = p.timers[key as keyof TimerParams];
+  return out;
 }
 
 /**

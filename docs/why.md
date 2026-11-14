@@ -45,7 +45,7 @@ The model is a ladder of fallbacks, so each step down stays safe and throughput 
 
 1. **Healthy.** The control centre sends every train a permit each second, and trains follow them. Each train still runs its own rules and holds its own locks underneath.
 2. **Centre lost, local actors alive.** Trains carry on under their own rules with the platform keeper's and junction keeper's locks. This is the best fallback.
-3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. The spec caps this at about 60 trains an hour through the junction.
+3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. Clock slots give each platform one 15-second turn every 4 minutes, so at most one train a minute, about 60 trains an hour, gets through the junction.
 4. **Sensors dead as well.** Trains creep towards a platform they can't see a train in. This only works if a dead sensor reads as occupied.
 
 ## How the model answers each failure
@@ -56,7 +56,7 @@ The model is a ladder of fallbacks, so each step down stays safe and throughput 
 
 ## What the demo should show
 
-Run four scenarios against the baseline, where every train waits for the control centre.
+Run these scenarios against the baseline, where every train waits for the control centre. The full list, with timings, is in "Scenarios and timings" in design.md.
 
 | Scenario | Control centre | Platform and junction keepers | Train-to-train radio |
 |---|---|---|---|
@@ -76,7 +76,7 @@ One train losing its long-range radio is an optional second local fault.
 For each, report throughput, average delay per train and collisions, using the metrics in design.md. The claims to test:
 
 - Collisions stay at zero in every failure the demo can inject.
-- Delay is lower with the fallback than with the baseline in each of the four scenarios.
+- Delay is no higher with the fallback than with the baseline in any scenario, and lower in every scenario where the control centre is down.
 - Trains recover to normal running when the failure ends, without staff restarting them one at a time.
 
 ## When nothing has failed
