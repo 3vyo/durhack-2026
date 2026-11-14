@@ -1,3 +1,5 @@
+import { REQUEST_REPEAT, RESUME_SETTLE, TICK } from '../shared/constants';
+import { PLATFORMS, pairOf } from '../shared/map';
 import type {
   LocalActor,
   Message,
@@ -7,29 +9,24 @@ import type {
   TimetableEntry,
   TrainId,
 } from '../shared/types';
+import { longerThan, stillSettling, wasSwitchedOff } from './resume';
 
 // The station actor owns the four platforms and grants one lock per platform.
 // Rules: docs/design.md, "Entering the station" and "Platform sensors switched off".
-// The switched-back-on rule is from the review on pull request #31. Pull request #35
-// writes it into the design.
+// The switched-back-on rule is from the review on pull request #31.
 //
-// Everything here is a placeholder. Each function returns its safest value, and step
-// sends nothing. The design says silence means no, so a silent station is safe.
-//
-// Two numbers are inputs, not constants in this file. `repeat` waits on REQUEST_REPEAT,
-// which pull request #34 adds to src/shared/constants.ts. `settle` waits on
-// RESUME_SETTLE, which has no agreed value yet. See resume.ts.
-
-export const PLATFORMS: readonly PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
+// The actor uses only `now`, its inbox, the sensor readings and the timetable. In any
+// doubtful case it refuses. A wrong refusal costs time. A wrong grant can cost a collision.
 
 /**
- * The fixed split from "Station switched off": A owns P1 and P2, B owns P3 and P4.
- * This moves to src/shared/ when pull request #34 merges. Import it from there then.
+ * How long a platform must have read empty before it is granted, after it read occupied
+ * with no lock on it. Local to this file. It is the same wait as RESUME_SETTLE, for the
+ * same reason: it covers a train getting from its stop at the end of A or B to the
+ * platform sensor.
  */
-export const PLATFORM_PAIRS: Readonly<Record<TimetableEntry['entry'], readonly PlatformId[]>> = {
-  A: ['P1', 'P2'],
-  B: ['P3', 'P4'],
-};
+export function unlockedSettle(): number {
+  return RESUME_SETTLE;
+}
 
 /** What the station has seen of the train holding a platform lock. */
 export interface PlatformLock {
@@ -37,20 +34,25 @@ export interface PlatformLock {
   grantedAt: number;
   /** True once the platform sensor has shown occupied since the grant. */
   seenArrive: boolean;
-  /** The last time the holder's lockRequest for this platform was heard. */
+  /** The last time the holder's lockRequest was heard. */
   lastRequestAt: number;
 }
 
 /** The station's memory. It survives the actor being switched off and on again. */
 export interface StationMemory {
   locks: Record<PlatformId, PlatformLock | null>;
+  /**
+   * The last time each platform read occupied while nobody held its lock. That reading is
+   * a train that came in without a lock, or a dead sensor. Null if never.
+   */
+  unlockedOccupiedAt: Record<PlatformId, number | null>;
   /** The `now` of the last step, so the actor can spot a gap where it was switched off. */
   lastStepAt: number | null;
   /** When the actor last came back on. Null if it has never been off. */
   resumedAt: number | null;
 }
 
-/** The answer to one lockRequest for a platform. Null from answerPlatformRequest means say nothing. */
+/** The answer to one lockRequest for a platform. */
 export type StationReply =
   | { kind: 'grant'; platform: PlatformId }
   | { kind: 'refuse'; alternative: PlatformId | null };
@@ -58,6 +60,7 @@ export type StationReply =
 export function initialStationMemory(): StationMemory {
   return {
     locks: { P1: null, P2: null, P3: null, P4: null },
+    unlockedOccupiedAt: { P1: null, P2: null, P3: null, P4: null },
     lastStepAt: null,
     resumedAt: null,
   };
@@ -66,26 +69,32 @@ export function initialStationMemory(): StationMemory {
 /**
  * "Entering the station": the station only offers platforms from the train's own pair.
  * Looks up the train's entry track in the timetable and returns that track's two platforms.
- *
- * Placeholder: returns no platforms, so the train is offered nothing.
+ * A train that is not in the timetable has no pair, so it is offered nothing.
  */
-export function ownPair(_timetable: TimetableEntry[], _train: TrainId): PlatformId[] {
-  return [];
+export function ownPair(timetable: TimetableEntry[], train: TrainId): PlatformId[] {
+  const entry = timetable.find((e) => e.id === train);
+  return entry ? [...pairOf(entry.entry)] : [];
 }
 
 /**
  * "Entering the station": when several trains ask on one tick, answer them in order of
  * `enterAt`, earliest first, lowest ID on a tie. So when two ask for the same platform,
  * the train in front gets it. If the train behind won, the one in front could sit at the
- * end of the entry track and block the train that holds the lock.
- *
- * Placeholder: answers nobody.
+ * end of the entry track and block the train that holds the lock. A train that is not in
+ * the timetable goes last.
  */
-export function answerOrder(_trains: TrainId[], _timetable: TimetableEntry[]): TrainId[] {
-  return [];
+export function answerOrder(trains: TrainId[], timetable: TimetableEntry[]): TrainId[] {
+  const enterAt = (id: TrainId) => timetable.find((e) => e.id === id)?.enterAt ?? Infinity;
+  return [...trains].sort((a, b) => enterAt(a) - enterAt(b) || a - b);
+}
+
+/** The platform this train holds the lock on, or null. */
+export function heldBy(memory: StationMemory, train: TrainId): PlatformId | null {
+  return PLATFORMS.find((p) => memory.locks[p]?.holder === train) ?? null;
 }
 
 export interface GrantCheck {
+  now: number;
   train: TrainId;
   platform: PlatformId;
   pair: PlatformId[];
@@ -93,18 +102,33 @@ export interface GrantCheck {
   sensors: SensorReadings;
 }
 
+/** True if the platform read occupied with no lock on it less than unlockedSettle() ago. */
+function unlockedTrainMayBeNear(memory: StationMemory, platform: PlatformId, now: number): boolean {
+  const at = memory.unlockedOccupiedAt[platform];
+  return at !== null && !longerThan(now - at, unlockedSettle());
+}
+
 /**
- * "Entering the station" and "Platform sensors switched off": grant a platform only if it
- * is in the train's pair, its sensor says empty (a dead sensor reads occupied), and no
- * other train holds its lock.
+ * "Entering the station" and "Platform sensors switched off": a new grant. Grant a
+ * platform only if it is in the train's pair, its sensor says empty (a dead sensor reads
+ * occupied), nobody holds its lock, and the train holds no lock already.
  *
- * Placeholder: never grants.
+ * One more guard. A platform that read occupied with no lock on it had a train that came
+ * in by the fixed split, or a dead sensor. When that reading turns empty, the sensors may
+ * have just come back while a creeping train is about to roll onto the platform. So the
+ * platform must then read empty for unlockedSettle() before it is granted.
  */
-export function canGrantPlatform(_check: GrantCheck): boolean {
-  return false;
+export function canGrantPlatform(check: GrantCheck): boolean {
+  const { now, train, platform, pair, memory, sensors } = check;
+  if (!pair.includes(platform)) return false;
+  if (sensors.platformOccupied[platform]) return false;
+  if (memory.locks[platform] !== null) return false;
+  if (heldBy(memory, train) !== null) return false;
+  return !unlockedTrainMayBeNear(memory, platform, now);
 }
 
 export interface AlternativeCheck {
+  now: number;
   train: TrainId;
   requested: PlatformId;
   pair: PlatformId[];
@@ -115,11 +139,11 @@ export interface AlternativeCheck {
 /**
  * "Platform sensors switched off": when the requested platform cannot be granted, offer
  * the other platform of the train's pair if it could be granted now.
- *
- * Placeholder: offers nothing.
  */
-export function chooseAlternative(_check: AlternativeCheck): PlatformId | null {
-  return null;
+export function chooseAlternative(check: AlternativeCheck): PlatformId | null {
+  const { requested, ...rest } = check;
+  const others = check.pair.filter((p) => p !== requested);
+  return others.find((p) => canGrantPlatform({ ...rest, platform: p })) ?? null;
 }
 
 export interface PlatformRequest {
@@ -133,57 +157,89 @@ export interface PlatformRequest {
   settling: boolean;
 }
 
+const REFUSE: StationReply = { kind: 'refuse', alternative: null };
+
+/** True if this lock was granted before the actor was last switched off. */
+function grantedBeforeResume(lock: PlatformLock, resumedAt: number | null): boolean {
+  return resumedAt !== null && lock.grantedAt < resumedAt;
+}
+
+/**
+ * "Platform sensors switched off": a train that already holds a lock gets that grant
+ * again, never a refusal, even when its own front makes the sensor read occupied. It
+ * gets the platform it holds, whichever platform it asked for, so no train ever holds two.
+ *
+ * The one exception is a lock from before the actor was switched off whose platform reads
+ * occupied. A train may have taken that platform by the fixed split meanwhile. The holder
+ * is refused until the platform reads empty, and keeps its lock. A holder that did hear
+ * its grant ignores the refusal.
+ */
+function answerHolder(request: PlatformRequest, held: PlatformId): StationReply {
+  const lock = request.memory.locks[held] as PlatformLock;
+  const stale = grantedBeforeResume(lock, request.memory.resumedAt);
+  if (stale && request.sensors.platformOccupied[held]) return REFUSE;
+  return { kind: 'grant', platform: held };
+}
+
 /**
  * "Entering the station": answer one lockRequest for a platform with a grant, or a refusal
  * with or without an alternative. Uses canGrantPlatform and chooseAlternative.
  *
  * Switched back on: while `settling` is true, grant nothing and refuse with alternative
- * null, so waiting trains stop falling back to the fixed split.
- *
- * Placeholder: says nothing.
+ * null, so waiting trains stop falling back to the fixed split. This goes for lock
+ * holders too. They keep their locks, and a train that holds a grant ignores the refusal.
  */
-export function answerPlatformRequest(_request: PlatformRequest): StationReply | null {
-  return null;
+export function answerPlatformRequest(request: PlatformRequest): StationReply {
+  const { now, train, platform, pair, memory, sensors, settling } = request;
+  if (settling) return REFUSE;
+  const held = heldBy(memory, train);
+  if (held !== null) return answerHolder(request, held);
+  if (canGrantPlatform({ now, train, platform, pair, memory, sensors })) {
+    return { kind: 'grant', platform };
+  }
+  const alternative = chooseAlternative({ now, train, requested: platform, pair, memory, sensors });
+  return { kind: 'refuse', alternative };
 }
 
 /**
  * "Entering the station": after a grant, write the new lock into the lock table, so a
  * second request on the same tick sees the platform as taken.
- *
- * Placeholder: records nothing. This is safe only because nothing is granted yet.
  */
 export function recordGrant(
   memory: StationMemory,
-  _train: TrainId,
-  _platform: PlatformId,
-  _now: number,
+  train: TrainId,
+  platform: PlatformId,
+  now: number,
 ): StationMemory {
-  return memory;
+  const lock: PlatformLock = { holder: train, grantedAt: now, seenArrive: false, lastRequestAt: now };
+  return { ...memory, locks: { ...memory.locks, [platform]: lock } };
 }
 
 /**
- * "Platform sensors switched off": note each lockRequest from a train that already holds
- * that platform in its lock's lastRequestAt. The release guard in canReleasePlatform
- * uses this.
- *
- * Placeholder: records nothing.
+ * "Platform sensors switched off": note each platform lockRequest from a train that holds
+ * a lock in that lock's lastRequestAt, whichever platform it asked for. The release guard
+ * in canReleasePlatform uses this.
  */
 export function recordHolderRequests(
   memory: StationMemory,
-  _inbox: Message[],
-  _now: number,
+  inbox: Message[],
+  now: number,
 ): StationMemory {
-  return memory;
+  const locks = { ...memory.locks };
+  for (const msg of inbox) {
+    if (msg.type !== 'lockRequest' || msg.resource === 'JUNCTION') continue;
+    const held = heldBy(memory, msg.from);
+    if (held !== null) locks[held] = { ...(locks[held] as PlatformLock), lastRequestAt: now };
+  }
+  return { ...memory, locks };
 }
 
 /**
  * "Entering the station": the actor releases a lock after the sensor has shown the train
  * arrive and then leave. This updates what the actor has seen, from one sensor reading.
- *
- * Placeholder: records nothing, so the lock never looks ready to release.
  */
-export function observePlatform(lock: PlatformLock, _occupied: boolean, _now: number): PlatformLock {
-  return lock;
+export function observePlatform(lock: PlatformLock, occupied: boolean, _now: number): PlatformLock {
+  return occupied && !lock.seenArrive ? { ...lock, seenArrive: true } : lock;
 }
 
 export interface ReleaseCheck {
@@ -192,9 +248,9 @@ export interface ReleaseCheck {
   occupied: boolean;
   /** From StationMemory. */
   resumedAt: number | null;
-  /** RESUME_SETTLE. Not agreed yet. See resume.ts. */
+  /** RESUME_SETTLE. */
   settle: number;
-  /** REQUEST_REPEAT, from pull request #34. */
+  /** REQUEST_REPEAT. */
   repeat: number;
 }
 
@@ -210,47 +266,130 @@ export interface ReleaseCheck {
  * The two ticks cover a repeat that arrives a tick after it is sent, and a train whose
  * repeat timer fires a tick late.
  *
+ * The actor hears nothing while it is off. So after it comes back the silence counts from
+ * `resumedAt`, not from a request it heard before the gap.
+ *
  * Switched back on: a lock with `seenArrive` true releases by the rule above. A lock with
  * `seenArrive` false releases only after the window `resumedAt + settle` is over, if its
  * sensor reads empty and the holder was not heard during the whole window. A holder still
  * on its way in is in the station's radio range, and short range drops nothing. A holder
  * in the platform shows on the sensor. A dead sensor reads occupied.
- *
- * Placeholder: never releases.
  */
-export function canReleasePlatform(_check: ReleaseCheck): boolean {
-  return false;
+export function canReleasePlatform(check: ReleaseCheck): boolean {
+  const { now, lock, occupied, resumedAt, settle, repeat } = check;
+  if (occupied) return false;
+  if (lock.seenArrive) {
+    const silentSince = Math.max(lock.lastRequestAt, resumedAt ?? lock.lastRequestAt);
+    return longerThan(now - silentSince, repeat + 2 * TICK);
+  }
+  if (resumedAt === null) return false;
+  return !stillSettling(resumedAt, now, settle) && lock.lastRequestAt < resumedAt;
 }
 
 /**
  * Switched back on: set `resumedAt` to now and keep every lock. The gap itself releases
  * nothing.
- *
- * Placeholder: changes nothing. That is safe because stillSettling's placeholder already
- * keeps the actor from granting.
  */
-export function resumeStation(memory: StationMemory, _now: number): StationMemory {
-  return memory;
+export function resumeStation(memory: StationMemory, now: number): StationMemory {
+  return { ...memory, resumedAt: now };
+}
+
+/** Updates every lock from the sensors, then frees the ones that canReleasePlatform. */
+function updateLocks(memory: StationMemory, sensors: SensorReadings, now: number): StationMemory {
+  const locks = { ...memory.locks };
+  for (const platform of PLATFORMS) {
+    const held = locks[platform];
+    if (held === null) continue;
+    const occupied = sensors.platformOccupied[platform];
+    const lock = observePlatform(held, occupied, now);
+    const release = canReleasePlatform({
+      now,
+      lock,
+      occupied,
+      resumedAt: memory.resumedAt,
+      settle: RESUME_SETTLE,
+      repeat: REQUEST_REPEAT,
+    });
+    locks[platform] = release ? null : lock;
+  }
+  return { ...memory, locks };
+}
+
+/** Notes each platform that reads occupied while nobody holds its lock. */
+function noteUnlockedOccupied(
+  memory: StationMemory,
+  sensors: SensorReadings,
+  now: number,
+): StationMemory {
+  const unlockedOccupiedAt = { ...memory.unlockedOccupiedAt };
+  for (const platform of PLATFORMS) {
+    if (sensors.platformOccupied[platform] && memory.locks[platform] === null) {
+      unlockedOccupiedAt[platform] = now;
+    }
+  }
+  return { ...memory, unlockedOccupiedAt };
+}
+
+interface Asked {
+  train: TrainId;
+  platform: PlatformId;
+}
+
+/** The platform lockRequests in the inbox, in answerOrder. Everything else is ignored. */
+function platformRequests(inbox: Message[], timetable: TimetableEntry[]): Asked[] {
+  const asked: Asked[] = [];
+  for (const msg of inbox) {
+    if (msg.type === 'lockRequest' && msg.resource !== 'JUNCTION') {
+      asked.push({ train: msg.from, platform: msg.resource });
+    }
+  }
+  const order = answerOrder([...new Set(asked.map((a) => a.train))], timetable);
+  return order.flatMap((train) => asked.filter((a) => a.train === train));
+}
+
+function toOutgoing(train: TrainId, asked: PlatformId, reply: StationReply): Outgoing {
+  const msg: Message =
+    reply.kind === 'grant'
+      ? { type: 'lockGrant', to: train, resource: reply.platform, follow: null }
+      : { type: 'lockRefuse', to: train, resource: asked, alternative: reply.alternative };
+  return { msg, range: 'short' };
+}
+
+/** One step of the station actor: the memory after the step and the replies to send. */
+export function stepStation(
+  before: StationMemory,
+  timetable: TimetableEntry[],
+  now: number,
+  inbox: Message[],
+  sensors: SensorReadings,
+): { memory: StationMemory; out: Outgoing[] } {
+  let memory = wasSwitchedOff(before.lastStepAt, now) ? resumeStation(before, now) : before;
+  const settling = stillSettling(memory.resumedAt, now, RESUME_SETTLE);
+  memory = recordHolderRequests(memory, inbox, now);
+  memory = updateLocks(memory, sensors, now);
+  memory = noteUnlockedOccupied(memory, sensors, now);
+
+  const out: Outgoing[] = [];
+  for (const { train, platform } of platformRequests(inbox, timetable)) {
+    const pair = ownPair(timetable, train);
+    const reply = answerPlatformRequest({ now, train, platform, pair, memory, sensors, settling });
+    if (reply.kind === 'grant' && memory.locks[reply.platform] === null) {
+      memory = recordGrant(memory, train, reply.platform, now);
+    }
+    out.push(toOutgoing(train, platform, reply));
+  }
+  return { memory: { ...memory, lastStepAt: now }, out };
 }
 
 /** Builds the station actor. Its memory lives in this closure. */
 export function createStationActor(timetable: TimetableEntry[]): LocalActor {
-  const memory = initialStationMemory();
-  void timetable;
+  let memory = initialStationMemory();
   return {
     id: 'station',
-    step(_now: number, _inbox: Message[], _sensors: SensorReadings): Outgoing[] {
-      // The order the real step will follow:
-      // 1. If wasSwitchedOff, call resumeStation.
-      // 2. Note repeat requests from lock holders with recordHolderRequests.
-      // 3. Update each lock with observePlatform, then free it if canReleasePlatform.
-      // 4. Take the platform lockRequests from the inbox, put them in answerOrder, and
-      //    answer each with answerPlatformRequest over short range. Pass `settling` from
-      //    stillSettling. After each grant, call recordGrant before the next request.
-      //    Ignore JUNCTION requests and every other message type.
-      // 5. Set memory.lastStepAt to now.
-      void memory;
-      return [];
+    step(now: number, inbox: Message[], sensors: SensorReadings): Outgoing[] {
+      const result = stepStation(memory, timetable, now, inbox, sensors);
+      memory = result.memory;
+      return result.out;
     },
   };
 }
