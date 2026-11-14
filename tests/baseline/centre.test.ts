@@ -156,10 +156,11 @@ describe('updateMemory', () => {
 });
 
 describe('slow restart', () => {
-  it.todo('treats a gap of more than one second since lastStepAt as a restart');
+  it.todo('treats a gap of more than 1.5 seconds since lastStepAt as a restart, so rounding in a 1 second step does not');
   it.todo('does not treat the first step as a restart');
   it.todo('after a gap, marks every stopped train heldForRestart');
   it.todo('after a gap, releases one held train every restartGap seconds');
+  it.todo('releases the held train furthest ahead on each track first, so no release waits behind a held train (the design does not say)');
   it.todo("keeps untilX at a held train's own x until its turn");
   it.todo('records lastReleaseAt each time it releases a train');
   it.todo('resumes every train at once when restartGap is 0 or absent');

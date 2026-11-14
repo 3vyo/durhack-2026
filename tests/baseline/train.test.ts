@@ -128,8 +128,7 @@ describe('stopX', () => {
 });
 
 describe('speedLimit', () => {
-  it.todo('is 0 with no permit');
-  it.todo('is 0 once the permit is 5 seconds old, so the train brakes to a stop');
+  it.todo('is 0 when fresh is false, so a train with no permit, or one 5 seconds old, brakes to a stop');
   it.todo("is safeSpeed of the distance from the train's front to stopX while the permit is fresh");
   it.todo('starts braking one tick early, so the train stops a few centimetres short of stopX');
   it.todo('is 0 when the front is at or past stopX');
@@ -160,7 +159,7 @@ describe('decide', () => {
   it.todo('runs while it holds a fresh permit');
   it.todo('never lets its front pass untilX');
   it.todo('comes to rest at or before the untilX of its last permit when its permits stop at MAX_SPEED, 5 seconds of running included');
-  it.todo('keeps nextTrack P1 when its permits stop near x 5500 at speed with untilX 6300, crosses onto P1 while braking, and stops at or before x 6300');
+  it.todo('keeps nextTrack P1 when its permits stop at x 5500 and 35 m/s with untilX 6300, crosses onto P1 while braking, and stops at or before x 6300');
   it.todo('brakes to a stop after 5 seconds with no new permit');
   it.todo('waits stopped while it has no fresh permit');
   it.todo('carries on on the tick after permits return, since a message sent on tick t arrives on tick t + 1');

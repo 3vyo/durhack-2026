@@ -60,7 +60,10 @@ describe('baselineProgram', () => {
 
   it('builds a centre whose step returns an empty list for now', () => {
     const centre = baselineProgram.makeCentre(timetable);
+    const trains = [
+      { id: 1, pos: { track: 'A' as const, offset: 100 }, speed: 20, brokenDown: false },
+    ];
     expect(centre).not.toBeNull();
-    expect(centre?.step(0, [], clear, { station: true, merge: true })).toEqual([]);
+    expect(centre?.step(0, trains, clear, { station: true, merge: true })).toEqual([]);
   });
 });
