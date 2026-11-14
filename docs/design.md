@@ -57,6 +57,7 @@ Braking distance is speed squared divided by twice `BRAKE`. The speed that can s
 - The merge actor owns the junction zone and grants one lock at a time.
 - The station actor owns the four platforms and grants one lock per platform.
 - Each platform has a sensor that broadcasts empty or occupied.
+- The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second.
 
 The merge and station actors have wired sensors, so they see their own track without radio.
 
@@ -64,7 +65,8 @@ The merge and station actors have wired sensors, so they see their own track wit
 
 Every message goes through one function in the engine.
 
-- Long range reaches every train. A slider sets the share of long-range messages the engine drops.
+- Long range reaches every train. A slider sets the share of train-to-train messages the engine drops.
+- The slider does not affect the control centre's permits. The centre is either on or switched off.
 - Short range does not drop messages at random. A local actor is either alive or switched off.
 - A train reaches the station actor when its x is between 4300 and 6400.
 - A train reaches the merge actor when its x is between 6000 and 6600.
@@ -104,7 +106,7 @@ export type Message =
   | { type: 'lockGrant'; to: TrainId; resource: ResourceId; follow: TrainId | null }
   | { type: 'lockRefuse'; to: TrainId; resource: ResourceId; alternative: PlatformId | null }
   | { type: 'platformStatus'; platform: PlatformId; occupied: boolean; sentAt: number }
-  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number }; // baseline only
+  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number }; // from the control centre
 
 export interface Outgoing { msg: Message; range: 'long' | 'short' }
 
@@ -119,7 +121,7 @@ export interface TrainOutput {
   accel: number;             // between -BRAKE and ACCEL
   nextTrack: TrackId | null; // where to go at the end of the current track
   outbox: Outgoing[];
-  mode: 'full' | 'stale' | 'blind'; // for the display only
+  mode: 'central' | 'full' | 'stale' | 'blind'; // for the display only
 }
 
 export interface TrainAgent {
@@ -165,14 +167,30 @@ The display labels each train with a mode.
 
 | Mode | Meaning |
 |---|---|
+| central | The train holds a permit under 5 seconds old. This label takes priority over the other three |
 | full | Leader's report is under `FRESH` seconds old |
 | stale | Leader's report is older |
 | blind | No report from the leader, or leader unknown |
 
+### Following permits
+
+A train always runs the rules in this section, with or without the control centre. It keeps its limit point, obeys `sightAhead`, and gets its locks from the station and merge actors. The centre never replaces a lock.
+
+A `permit` does two things only.
+
+- `nextTrack` suggests which platform to ask for. The centre only suggests platforms from the train's own pair.
+- `untilX` adds one more limit. The train may not pass that x.
+
+The lock always wins on which platform. If the station actor refuses the suggested platform or offers another, the train follows the station actor. A permit never makes a train go where its own rules say stop.
+
+A permit is fresh for 5 seconds. After that the train drops the permit's limit and its suggestion, and carries on. Until then an old permit can hold a train back, which costs up to 5 seconds and no safety. The timer is not a safety mechanism. Safety comes from the train's own rules and the locks.
+
+When permits return, the train follows them again on the next tick. It keeps any lock it holds and any platform it has already chosen.
+
 ### Entering the station
 
 1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a limit point until it has one.
-2. At the ask point it sends a `lockRequest` for its default platform and repeats it every 2 seconds.
+2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for the platform its permit suggests, or for its default platform if it has no fresh permit.
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
@@ -215,13 +233,21 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 
 ## Failures the demo can inject
 
-- A slider for the share of long-range messages dropped.
+- A switch for the control centre.
+- A slider for the share of train-to-train messages dropped. At 100% no train hears another.
 - Switches for the station actor, the merge actor and the platform sensors.
 - A button to break down a chosen train, which stops it where it is.
 
 ## Today's rule, for comparison
 
 A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
+
+The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats permits as hints.
+
+The baseline's centre uses no locks, so a local fault needs its own rule.
+
+- A dead platform sensor means the centre cannot tell if that platform is clear. It treats the platform as occupied and permits no train into it.
+- A dead station actor or merge actor means the centre treats that piece of track as unavailable. It permits no train through it.
 
 ## Metrics
 
@@ -250,4 +276,6 @@ Build these only after the five issues are done.
 - Early booking. A train asks the station for a platform over long range before the ask point and adjusts its speed to arrive as the platform frees.
 - Borrowing. When the station is off and nearby trains can hear each other, the lowest ID picks first and may take a free platform from the other pair.
 - Hazard broadcast. A train that spots a problem tells nearby trains, and only trains heading towards it stop.
-- An advisory control centre that suggests a better junction order when it is healthy.
+- Junction order hints. The control centre suggests a better junction order through its permits.
+- A radio kill for one train. Its long-range radio dies and its short-range radio keeps working.
+- A switch for a single platform sensor. Without it, the sensors switch off together.
