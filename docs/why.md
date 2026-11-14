@@ -21,7 +21,8 @@ The common causes, and how each maps to a failure switch in the demo:
 | Train detection | Track circuits fail through corrosion, contamination or flooding. Some axle counters respond poorly to heat, and restart without detecting trains after a power failure. | The system can't tell if a section is clear, so the signal stays red until staff check and reset. | Platform sensors off |
 | Points | Debris, ice, drive mechanism failure, or heat expansion. | The protecting signal turns red. Points can sometimes be secured in one position. | Not modelled |
 | Power | Loss of the main supply or ageing cable, often in places where cables are older or stolen. | Signals go dark. A power failure can affect systems over a very large area. | Station or merge actor off |
-| Telecoms links | Failure of base stations or communication links. | Signals show red with no train present, or no movement authority reaches trains. | Radio drop slider |
+| Telecoms links | Failure of base stations or communication links. | Signals show red with no train present, or no movement authority reaches trains. | Train-to-train radio slider |
+| Control centre | The centre loses power or its links, as at Manchester in 2026. | No permits reach any train. | Control centre off |
 | Cable theft | Thieves target signalling, telecoms and power cables for scrap. | Any of the above, depending on which cable. | Any |
 
 Most failures are the safe kind: the system fails to red. A rarer and more dangerous kind is the wrong-side failure, where a track circuit makes a train disappear. A dead sensor in the demo must therefore read as occupied, never as empty.
@@ -42,8 +43,8 @@ We pitch it as a layer underneath the central system. It does not replace the co
 
 The model is a ladder of fallbacks, so each step down stays safe and throughput falls gradually.
 
-1. **Healthy.** The control centre runs everything, as today.
-2. **Centre or radio lost, local actors alive.** Trains use the station and merge locks. This is the best fallback.
+1. **Healthy.** The control centre sends every train a permit each second, and trains follow them. Each train still runs its own rules and holds its own locks underneath.
+2. **Centre lost, local actors alive.** Trains carry on under their own rules with the station and merge locks. This is the best fallback.
 3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. The spec caps this at about 60 trains an hour through the junction.
 4. **Sensors dead as well.** Trains creep towards a platform they can't see a train in. This only works if a dead sensor reads as occupied.
 
@@ -55,16 +56,32 @@ The model is a ladder of fallbacks, so each step down stays safe and throughput 
 
 ## What the demo should show
 
-Run two scenarios against the baseline, where every train waits for the control centre.
+Run four scenarios against the baseline, where every train waits for the control centre.
 
-- **One local fault.** A single sensor or actor switched off.
-- **Blackout.** Radio at 100% drop, with the station and merge actors off.
+| Scenario | Control centre | Station and merge actors | Train-to-train radio |
+|---|---|---|---|
+| Local fault | On | One device off | On |
+| Centre outage | Off | On | On |
+| Blackout, trains talking | Off | Off | On |
+| Blackout, trains silent | Off | Off | Off |
+
+- **Local fault.** One trackside device stops working. That is the station actor, the merge actor or the platform sensors.
+- **Centre outage.** The control centre is off and the local actors are alive. This is the Manchester case, and it uses the best fallback.
+- **Blackout.** The control centre, the station actor and the merge actor are all off. Train-to-train radio is a separate setting, so the blackout has two versions.
+
+"Train-to-train radio off" is the radio slider at 100%, not a second control. With trains silent, every train runs at `SIGHT_SPEED` or below, which is the slowest case the demo shows.
+
+One train losing its long-range radio is an optional second local fault.
 
 For each, report throughput, total delay and collisions, using the metrics in design.md. The claims to test:
 
 - Collisions stay at zero in every failure the demo can inject.
-- Delay is lower with the fallback than with the baseline at every step of the ladder.
+- Delay is lower with the fallback than with the baseline in each of the four scenarios.
 - Trains recover to normal running when the failure ends, without staff restarting them one at a time.
+
+## When nothing has failed
+
+Ours is no better than the baseline when nothing has failed, and probably slightly worse. Our trains have to win locks, and the baseline's centre does not. The simulation measures by how much, and the pitch should report that number. The claim of lower delay covers the four scenarios above and not healthy running.
 
 ## What the demo does not prove
 
@@ -81,6 +98,10 @@ A browser simulation shows the logic works under its own assumptions. It says no
 ## How the baseline is chosen
 
 The baseline in the sim is an idealised central controller that knows the true state of every train and stops all trains five seconds after it loses contact. Real lineside signalling works in fixed blocks and lets trains run on to the next signal. The comparison is a model of today's behaviour, not a measurement of it, and any numbers from it should be presented that way.
+
+The controller uses no locks, so a local fault needs its own rule. A dead platform sensor means the controller cannot tell if that platform is clear, so it treats the platform as occupied and permits no train into it. A dead station or merge actor means it treats that piece of track as unavailable and permits no train through it. Real signalling behaves the same way, because a failed detector turns the signal red.
+
+The baseline and ours are two train programs. Ours holds locks and treats permits as hints. The baseline holds no locks and obeys its permits.
 
 ## Sources
 
