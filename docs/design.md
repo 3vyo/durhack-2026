@@ -288,7 +288,7 @@ When its permits stop, a baseline train keeps two things from its last permit.
 - It keeps its last `nextTrack` while it waits. A train still braking can cross onto its platform, and a null `nextTrack` would end its path at the end of its entry track.
 - The `untilX` of its last permit still applies after the permit is stale. A baseline train never goes faster than `safeSpeed` of the distance to that `untilX`, so full braking always stops it at or before that x.
 
-The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats permits as hints.
+There is one control centre, and it lives in `src/baseline/`. Both train programs get their permits from it. The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats the same permits as hints.
 
 The baseline's centre uses no locks, so a local fault needs its own rule.
 
@@ -310,7 +310,7 @@ The baseline's centre uses no locks, so a local fault needs its own rule.
 | `src/engine/` | Clock, physics, map, radio, timetable, failure switches, metrics |
 | `src/train/` | The train agent |
 | `src/locks/` | Station actor, merge actor, platform sensors |
-| `src/baseline/` | Central controller and the baseline train agent |
+| `src/baseline/` | The control centre, used by both train programs, and the baseline train agent |
 | `src/ui/` | Canvas, controls, metrics panel |
 
 Stack: TypeScript, Vite, a canvas, and Vitest for tests. No server.
