@@ -295,6 +295,8 @@ The baseline's centre uses no locks, so a local fault needs its own rule.
 - A dead platform sensor means the centre cannot tell if that platform is clear. It treats the platform as occupied and permits no train into it.
 - A dead station actor or merge actor means the centre treats that piece of track as unavailable. It permits no train through it.
 
+The team has not yet decided whether the dead actor rule also applies to the permits the centre sends our trains.
+
 ## Metrics
 
 - Trains per hour leaving the right-hand end of EXIT.
