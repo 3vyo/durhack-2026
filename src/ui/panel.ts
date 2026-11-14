@@ -1,10 +1,14 @@
+import type { Switches } from '../engine/switches';
+import type { TrainId } from '../shared/types';
+import { radioLabel, SWITCH_KEYS, switchLabel, type SwitchKey } from './controls';
 import type { Row } from './hud';
 
 export interface PanelHandlers {
-  onCutCentre(): void;
-  onRestoreCentre(): void;
-  onCutRadio(): void;
-  onRestoreRadio(): void;
+  /** Flip one on/off switch. The page reads the new state back from the engines. */
+  onToggle(key: SwitchKey): void;
+  /** The radio slider moved. `drop` is the share of train-to-train messages dropped, 0 to 1. */
+  onRadioDrop(drop: number): void;
+  onBreakDown(id: TrainId): void;
   onSpeed(speed: number): void;
   onPause(): void;
   onRestart(): void;
@@ -22,6 +26,10 @@ export interface Panel {
   setCard(side: 'baseline' | 'ours', lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
+  /** Shows the current switches on the switch buttons and the radio slider. */
+  setSwitches(sw: Switches): void;
+  /** The trains the breakdown picker offers. */
+  setTrains(ids: TrainId[]): void;
 }
 
 const SPEEDS = [1, 4, 8, 16];
@@ -80,12 +88,47 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const scoreboard = el('div', 'padding:4px 0 8px 0;');
   scoreboard.append(table);
 
-  const controls = el('div', 'display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px;border-top:1px solid #26303c;');
+  const controls = el('div', 'display:flex;flex-wrap:wrap;gap:16px;padding:10px 16px;border-top:1px solid #26303c;');
+  const groupStyle = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 10px;border:1px solid #26303c;border-radius:6px;';
+  function group(heading: string): HTMLElement {
+    const g = el('div', groupStyle);
+    g.append(el('span', 'font-size:12px;color:#7d8da1;text-transform:uppercase;letter-spacing:0.05em;', heading));
+    return g;
+  }
   function button(text: string, onClick: () => void): HTMLButtonElement {
     const b = el('button', 'padding:8px 12px;font-size:14px;cursor:pointer;', text);
     b.addEventListener('click', onClick);
     return b;
   }
+
+  // Failures: one toggle per switch, the radio slider, and the breakdown picker.
+  const failures = group('Failures');
+  const toggles = {} as Record<SwitchKey, HTMLButtonElement>;
+  for (const key of SWITCH_KEYS) {
+    toggles[key] = button(switchLabel(key, true), () => h.onToggle(key));
+    failures.append(toggles[key]);
+  }
+  const radio = el('label', 'display:flex;align-items:center;gap:6px;font-size:14px;');
+  const radioText = el('span', 'min-width:118px;', radioLabel(0));
+  const slider = el('input', 'width:120px;cursor:pointer;');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = '100';
+  slider.step = '5';
+  slider.value = '0';
+  slider.addEventListener('input', () => h.onRadioDrop(Number(slider.value) / 100));
+  radio.append(radioText, slider);
+  const breakdown = el('label', 'display:flex;align-items:center;gap:6px;font-size:14px;', 'Break down train');
+  const picker = el('select', 'padding:8px;font-size:14px;');
+  const breakButton = button('▸', () => {
+    if (picker.value !== '') h.onBreakDown(Number(picker.value));
+  });
+  breakButton.title = 'Break down the chosen train on both sides';
+  breakdown.append(picker, breakButton);
+  failures.append(radio, breakdown);
+
+  // Running the demo.
+  const run = group('Run');
   const pause = button('Pause', h.onPause);
   const camera = button('Camera', h.onCamera);
   const speed = el('select', 'padding:8px;font-size:14px;');
@@ -95,16 +138,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     speed.append(option);
   }
   speed.addEventListener('change', () => h.onSpeed(Number(speed.value)));
-  controls.append(
-    button('Cut control centre', h.onCutCentre),
-    button('Restore control centre', h.onRestoreCentre),
-    button('Cut radio', h.onCutRadio),
-    button('Restore radio', h.onRestoreRadio),
-    speed,
-    pause,
-    button('Restart', h.onRestart),
-    camera,
-  );
+  run.append(speed, pause, button('Restart', h.onRestart), camera);
+  controls.append(failures, run);
+
+  let shownTrains = '';
 
   root.append(banner, columns, scoreboard, controls);
 
@@ -146,6 +183,34 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setCameraLabel(text) {
       camera.textContent = text;
+    },
+    setSwitches(sw) {
+      for (const key of SWITCH_KEYS) {
+        const on = sw[key];
+        toggles[key].textContent = switchLabel(key, on);
+        toggles[key].style.background = on ? '' : '#5a2a2a';
+        toggles[key].style.color = on ? '' : '#ffd7d7';
+      }
+      radioText.textContent = radioLabel(sw.radioDrop);
+      // Leave the slider alone while it is being dragged, so it does not jump under the pointer.
+      const value = String(Math.round(sw.radioDrop * 100));
+      if (document.activeElement !== slider && slider.value !== value) slider.value = value;
+    },
+    setTrains(ids) {
+      // Rebuild only when the list changes, so an open dropdown is not closed every frame.
+      const key = ids.join(',');
+      if (key === shownTrains) return;
+      shownTrains = key;
+      const chosen = picker.value;
+      picker.replaceChildren(
+        ...ids.map((id) => {
+          const option = el('option', '', String(id));
+          option.value = String(id);
+          return option;
+        }),
+      );
+      if (ids.map(String).includes(chosen)) picker.value = chosen;
+      breakButton.disabled = ids.length === 0;
     },
   };
 }

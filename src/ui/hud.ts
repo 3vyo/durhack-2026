@@ -1,4 +1,5 @@
 import type { ScenarioSummary } from '../runner/run';
+import { batchRunsText } from './controls';
 
 /** The same measurement for the baseline and for ours. */
 export interface Pair<T> {
@@ -69,19 +70,21 @@ export function scoreboardRows(i: ScoreboardInput): Row[] {
   }
   if (i.avg) {
     const stuck = (n: number): string => (n > 0 ? ` (${n} never recovered)` : '');
+    // The batch runs a scripted failure, so the labels say which one. Live presses do not reach it.
+    const runs = batchRunsText(i.avg);
     rows.push(
       {
-        label: `Average delay per train over ${i.avg.seeds} runs (min)`,
+        label: `Average delay per train (min), ${runs}`,
         baseline: minutes(i.avg.baseline.meanDelay),
         ours: minutes(i.avg.ours.meanDelay),
       },
       {
-        label: `Average time to normal over ${i.avg.seeds} runs (min)`,
+        label: `Average time to normal (min), same ${i.avg.seeds} runs`,
         baseline: minutes(i.avg.baseline.meanTimeToNormal) + stuck(i.avg.baseline.neverRecovered),
         ours: minutes(i.avg.ours.meanTimeToNormal) + stuck(i.avg.ours.neverRecovered),
       },
       {
-        label: `Collisions over ${i.avg.seeds} runs`,
+        label: `Collisions, same ${i.avg.seeds} runs`,
         baseline: String(i.avg.baseline.collisions),
         ours: String(i.avg.ours.collisions),
       },
