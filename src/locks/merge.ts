@@ -1,10 +1,15 @@
 import type { LocalActor, Message, Outgoing, SensorReadings, TrainId } from '../shared/types';
 
 // The merge actor owns the junction zone and grants one lock at a time.
-// Rules: docs/design.md, "Leaving the station".
+// Rules: docs/design.md, "Leaving the station" and "Merge switched off". Refusing queued
+// trains and the switched-back-on rule are from the review on pull request #31. Pull
+// request #35 writes them into the design.
 //
 // Everything here is a placeholder. Each function returns its safest value, and step
 // sends nothing. The design says silence means no, so a silent merge actor is safe.
+//
+// `settle` (RESUME_SETTLE) is an input, not a constant in this file. It waits on a
+// constant that pull request #34 adds to src/shared/constants.ts.
 
 /** One train waiting for the junction. */
 export interface JunctionRequest {
@@ -33,15 +38,27 @@ export interface MergeMemory {
   lastIntoExit: TrainId | null;
   /** The `now` of the last step, so the actor can spot a gap where it was switched off. */
   lastStepAt: number | null;
+  /** When the actor last came back on. Null if it has never been off. */
+  resumedAt: number | null;
+  /** True if junctionOccupied has read true at any step since resumedAt. */
+  zoneOccupiedSinceResume: boolean;
 }
 
 export function initialMergeMemory(): MergeMemory {
-  return { holder: null, queue: [], lastIntoExit: null, lastStepAt: null };
+  return {
+    holder: null,
+    queue: [],
+    lastIntoExit: null,
+    lastStepAt: null,
+    resumedAt: null,
+    zoneOccupiedSinceResume: false,
+  };
 }
 
 /**
  * "Leaving the station": add each new JUNCTION lockRequest to the queue with the time it
- * was first heard. A repeat keeps its first time. Platform requests are not for this actor.
+ * was first heard. A repeat keeps its first time and updates lastHeardAt. Platform
+ * requests are not for this actor.
  *
  * Placeholder: returns the queue unchanged, so nobody joins it.
  */
@@ -67,12 +84,21 @@ export function dropSilentRequests(queue: JunctionRequest[], _now: number): Junc
 /**
  * "Merge switched off": a train that hears no reply for 10 seconds starts using clock
  * slots. A train waiting in the queue behind others could wait that long while this actor
- * is alive. This picks the queued trains to answer with a lockRefuse, so they keep
- * waiting. Whether to do this is not decided, and the design does not cover it yet.
+ * is alive, start in its slot, and meet the train the actor just granted. So the actor
+ * answers every JUNCTION lockRequest it does not grant with a lockRefuse, alternative
+ * null, over short range, on the tick it hears it. Not every tick.
+ *
+ * Switched back on: while `settling` is true it refuses every JUNCTION request it hears.
+ *
+ * Returns the trains to refuse this tick. `memory` is after this tick's grant, if any.
  *
  * Placeholder: answers nobody.
  */
-export function queuedToAnswer(_memory: MergeMemory, _now: number): TrainId[] {
+export function queuedToAnswer(
+  _memory: MergeMemory,
+  _inbox: Message[],
+  _settling: boolean,
+): TrainId[] {
   return [];
 }
 
@@ -89,9 +115,16 @@ export function nextForJunction(_queue: JunctionRequest[]): TrainId | null {
  * "Leaving the station": grant only when nobody holds the lock, `junctionOccupied` is false
  * and `exitStartClear` is true.
  *
+ * Switched back on: grant nothing while `settling` is true. A train that started in its
+ * clock slot on the tick the actor came back shows on junctionOccupied inside the window.
+ *
  * Placeholder: never grants.
  */
-export function canGrantJunction(_holder: JunctionHolder | null, _sensors: SensorReadings): boolean {
+export function canGrantJunction(
+  _holder: JunctionHolder | null,
+  _sensors: SensorReadings,
+  _settling: boolean,
+): boolean {
   return false;
 }
 
@@ -116,21 +149,57 @@ export function observeJunction(holder: JunctionHolder, _sensors: SensorReadings
 }
 
 /**
+ * Switched back on, and every step: track the zone as a whole.
+ * - Set zoneOccupiedSinceResume once junctionOccupied reads true.
+ * - Set lastIntoExit to null whenever junctionOccupied is true and nobody holds the lock.
+ *   That train came by clock slot, and this actor does not know who it is. A stale
+ *   `follow` is the one unsafe value in this file. The train would take a limit point
+ *   beyond a clock-slot train it has never heard and run at MAX_SPEED. Null keeps it at
+ *   SIGHT_SPEED.
+ *
+ * Placeholder: changes nothing. That is safe because followFor's placeholder names no
+ * leader.
+ */
+export function observeZone(memory: MergeMemory, _sensors: SensorReadings): MergeMemory {
+  return memory;
+}
+
+export interface JunctionReleaseCheck {
+  now: number;
+  holder: JunctionHolder;
+  sensors: SensorReadings;
+  /** From MergeMemory. */
+  resumedAt: number | null;
+  zoneOccupiedSinceResume: boolean;
+  /** RESUME_SETTLE, from pull request #34. */
+  settle: number;
+}
+
+/**
  * "Leaving the station": release once the holder has entered the zone and the zone is
  * empty again.
  *
+ * Switched back on: a holder with `seenEnter` false is released once the window
+ * `resumedAt + settle` is over, if the zone read empty for the whole window. Otherwise a
+ * holder that went through while the actor was off blocks the junction for the rest of
+ * the run.
+ *
  * Placeholder: never releases.
  */
-export function canReleaseJunction(_holder: JunctionHolder, _sensors: SensorReadings): boolean {
+export function canReleaseJunction(_check: JunctionReleaseCheck): boolean {
   return false;
 }
 
 /**
- * The actor was switched off and is now on again. It still has its old memory. What it
- * should do with it is not decided yet. While it was off, trains used clock slots, so
- * `lastIntoExit` and the queue may be out of date.
+ * Switched back on:
+ * - Set resumedAt to now and zoneOccupiedSinceResume to false.
+ * - Set lastIntoExit to null, so no grant names a stale `follow`.
+ * - Keep the queue and its order, but set every lastHeardAt to now, so dropSilentRequests
+ *   clears the trains that left by clock slot.
+ * - Keep the holder. canReleaseJunction decides about it after the window.
  *
- * Placeholder: keeps the memory as it was.
+ * Placeholder: changes nothing. That is safe because stillSettling's placeholder keeps
+ * the actor from granting, and followFor's placeholder names no leader.
  */
 export function resumeMerge(memory: MergeMemory, _now: number): MergeMemory {
   return memory;
@@ -143,12 +212,14 @@ export function createMergeActor(): LocalActor {
     id: 'merge',
     step(_now: number, _inbox: Message[], _sensors: SensorReadings): Outgoing[] {
       // The order the real step will follow:
-      // 1. If there was a gap since memory.lastStepAt, call resumeMerge.
-      // 2. Update the holder with observeJunction, then free it if canReleaseJunction.
+      // 1. If wasSwitchedOff, call resumeMerge.
+      // 2. Update the zone with observeZone, and the holder with observeJunction. Free
+      //    the holder if canReleaseJunction.
       // 3. Add new requests with recordJunctionRequests, then dropSilentRequests.
       // 4. If canGrantJunction, grant nextForJunction with follow from followFor, over
-      //    short range, and set lastIntoExit to that train.
-      // 5. Send a lockRefuse to each train from queuedToAnswer, if the team agrees.
+      //    short range, and set lastIntoExit to that train. Pass `settling` from
+      //    stillSettling.
+      // 5. Send a lockRefuse to each train from queuedToAnswer, over short range.
       // 6. Set memory.lastStepAt to now.
       void memory;
       return [];
