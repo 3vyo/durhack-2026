@@ -38,6 +38,8 @@ export interface TrainView {
   speed: number;
   mode: TrainOutput['mode'];
   reason?: string;
+  /** Present and true once the train has broken down. It never moves again. */
+  brokenDown?: boolean;
   /** Seconds since a position report from this train's timetable leader arrived, or null if none has. */
   leaderAge: number | null;
   /** Seconds since a permit arrived, or null if none has. */
@@ -116,6 +118,7 @@ export class Engine {
   private closeCalls = 0;
   private readonly safetyActive = new Set<string>();
   private readonly switches: Switches = { ...ALL_ON };
+  private readonly broken = new Set<TrainId>();
   private readonly scriptedPresses: Press[];
   private readonly actors: LocalActor[];
   private readonly centre: ControlCentre | null;
@@ -137,14 +140,31 @@ export class Engine {
     Object.assign(this.switches, set);
   }
 
+  /**
+   * Break a train down: it stops where it is and never moves again. Its agent is still asked
+   * to decide each tick, so it can keep broadcasting its position. A train that has not
+   * entered yet breaks down as it enters, and blocks its entry track.
+   */
+  breakDown(id: TrainId): void {
+    this.broken.add(id);
+  }
+
   get now(): number {
     return this.tick * TICK;
+  }
+
+  /** True once every train in the timetable has left. Cheaper than result().finished. */
+  get finished(): boolean {
+    return this.exits.size === this.cfg.timetable.length;
   }
 
   step(): void {
     if (this.tick >= this.runTicks) return;
     this.applyScriptedPresses();
     this.spawnDueTrains();
+    for (const rt of this.active) {
+      if (this.broken.has(rt.id) && !rt.state.brokenDown) rt.state = { ...rt.state, speed: 0, brokenDown: true };
+    }
 
     const now = this.now;
     const bodies: Body[] = this.active.map((rt) => ({ state: rt.state, prev: rt.prev }));
@@ -213,7 +233,10 @@ export class Engine {
     const stillActive: Runtime[] = [];
     this.active.forEach((rt, i) => {
       const o = outputs[i];
-      const moved = advanceTrain(rt.state, o.accel, o.nextTrack);
+      // A broken-down train stays exactly where it is, whatever its agent asks for.
+      const moved = rt.state.brokenDown
+        ? { state: rt.state, exited: false, overrun: false }
+        : advanceTrain(rt.state, o.accel, o.nextTrack);
       if (moved.state.pos.track !== rt.state.pos.track) rt.prev = rt.state.pos.track;
       if (moved.overrun) this.overruns += 1;
       rt.state = moved.state;
@@ -246,6 +269,7 @@ export class Engine {
         speed: rt.state.speed,
         mode: rt.mode,
         ...(rt.reason !== undefined ? { reason: rt.reason } : {}),
+        ...(rt.state.brokenDown ? { brokenDown: true } : {}),
         leaderAge: rt.lastLeaderAt === null ? null : this.now - rt.lastLeaderAt,
         permitAge: rt.lastPermitAt === null ? null : this.now - rt.lastPermitAt,
         lastGrants: { ...rt.lastGrants },
@@ -256,7 +280,7 @@ export class Engine {
   result(): RunResult {
     return {
       runLength: this.cfg.runLength,
-      finished: this.exits.size === this.cfg.timetable.length,
+      finished: this.finished,
       exits: new Map(this.exits),
       collisions: this.collisions,
       closeCalls: this.closeCalls,
@@ -300,7 +324,9 @@ export class Engine {
   /** Applies scripted presses whose time has come, in time order. */
   private applyScriptedPresses(): void {
     while (this.scriptedPresses.length > 0 && this.scriptedPresses[0].at <= this.now + 1e-9) {
-      Object.assign(this.switches, this.scriptedPresses.shift()!.set);
+      const press = this.scriptedPresses.shift()!;
+      Object.assign(this.switches, press.set);
+      if (press.breakDown !== undefined) this.breakDown(press.breakDown);
     }
   }
 

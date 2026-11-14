@@ -3,7 +3,7 @@ import { DEFAULT_TIMETABLE } from './engine/timetable';
 import { LiveSession } from './runner/live';
 import type { RunResult } from './engine/engine';
 import { healthyReference, type ScenarioSummary } from './runner/run';
-import { stubBaseline, stubOurs } from './runner/stubs';
+import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
 import { scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
@@ -21,7 +21,7 @@ if (!app) throw new Error('missing #app');
 const session = new LiveSession({
   seed: SEED,
   scenario: SCENARIO,
-  programs: { baseline: stubBaseline, ours: stubOurs },
+  programs: { baseline: baselineProgram, ours: ourProgram },
   timetable: DEFAULT_TIMETABLE,
 });
 
@@ -31,7 +31,7 @@ const session = new LiveSession({
 let reference: RunResult | null = null;
 let referenceError: string | null = null;
 try {
-  reference = healthyReference(SEED, stubBaseline, DEFAULT_TIMETABLE);
+  reference = healthyReference(SEED, baselineProgram, DEFAULT_TIMETABLE);
 } catch (error) {
   referenceError = error instanceof Error ? error.message : String(error);
 }

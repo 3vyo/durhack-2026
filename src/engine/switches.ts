@@ -1,3 +1,5 @@
+import type { TrainId } from '../shared/types';
+
 /** The failure switches the demo can flip. All on, with no radio loss, is a healthy railway. */
 export interface Switches {
   /** The control centre is switched on. */
@@ -24,6 +26,8 @@ export const ALL_ON: Switches = {
 export interface Press {
   at: number;
   set: Partial<Switches>;
+  /** A train that breaks down at this time. It stops where it is and stays there. */
+  breakDown?: TrainId;
 }
 
 /** The switches at a given time: presses up to and including `now`, applied in time order. */

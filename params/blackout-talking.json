@@ -1,0 +1,9 @@
+{
+  "name": "blackout, trains talking",
+  "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 300, "centre": false, "station": false, "merge": false },
+    { "at": 900, "centre": true, "station": true, "merge": true }
+  ],
+  "runLength": 7200
+}
