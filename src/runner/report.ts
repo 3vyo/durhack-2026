@@ -4,8 +4,9 @@ function minutes(seconds: number): string {
   return (seconds / 60).toFixed(1);
 }
 
-function line(name: string, s: Stats): string {
-  const normal = s.meanTimeToNormal === null ? 'never' : `${minutes(s.meanTimeToNormal)} min`;
+function line(name: string, s: Stats, seeds: number): string {
+  const stuck = s.neverRecovered > 0 ? ` (${s.neverRecovered} of ${seeds} never recovered)` : '';
+  const normal = `${minutes(s.meanTimeToNormal)} min${stuck}`;
   return (
     `  ${name.padEnd(9)}` +
     `delay ${minutes(s.meanDelay)} min (spread ${minutes(s.spreadDelay)})  ` +
@@ -22,8 +23,8 @@ export function formatSummaries(summaries: ScenarioSummary[], elapsedSeconds: nu
   const lines: string[] = [];
   for (const s of summaries) {
     lines.push(`${s.scenario} (${s.seeds} seeds)`);
-    lines.push(line('baseline', s.baseline));
-    lines.push(line('ours', s.ours));
+    lines.push(line('baseline', s.baseline, s.seeds));
+    lines.push(line('ours', s.ours, s.seeds));
   }
   lines.push(`elapsed ${elapsedSeconds.toFixed(1)} s`);
   lines.push(hasCollisions(summaries) ? 'FAIL: collisions found' : 'OK: zero collisions');

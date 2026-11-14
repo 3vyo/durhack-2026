@@ -6,6 +6,7 @@ const base: Stats = {
   meanDelay: 600,
   spreadDelay: 60,
   meanTimeToNormal: 480,
+  neverRecovered: 0,
   collisions: 0,
   closeCalls: 2,
   overruns: 0,
@@ -30,9 +31,12 @@ describe('formatSummaries', () => {
     expect(text).toContain('overruns 0');
   });
 
-  it('says never when a seed did not get back on time', () => {
-    const text = formatSummaries([{ ...summary, baseline: { ...base, meanTimeToNormal: null } }], 1);
-    expect(text).toContain('time to normal never');
+  it('says how many seeds never recovered, and still shows the average of the rest', () => {
+    const text = formatSummaries(
+      [{ ...summary, baseline: { ...base, meanTimeToNormal: 480, neverRecovered: 3 } }],
+      1,
+    );
+    expect(text).toContain('time to normal 8.0 min (3 of 50 never recovered)');
   });
 
   it('reports the elapsed time', () => {

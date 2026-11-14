@@ -3,11 +3,14 @@ import type { TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE } from '../../src/engine/timetable';
 import {
   hasCollisions,
+  healthyReference,
   runBatch,
   runScenario,
+  statsFor,
   type ScenarioSummary,
   type Stats,
 } from '../../src/runner/run';
+import type { RunResult } from '../../src/engine/engine';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { SCENARIOS } from '../../src/scenarios/scenarios';
 import { ACCEL, BRAKE } from '../../src/shared/constants';
@@ -142,6 +145,7 @@ describe('hasCollisions', () => {
     meanDelay: 0,
     spreadDelay: 0,
     meanTimeToNormal: 0,
+    neverRecovered: 0,
     collisions: 0,
     closeCalls: 0,
     overruns: 0,
@@ -163,5 +167,42 @@ describe('hasCollisions', () => {
 
   it('is true for a collision in the baseline, which is a bug in the rig', () => {
     expect(hasCollisions([summary({ ...clean, collisions: 1 }, clean)])).toBe(true);
+  });
+});
+
+describe('healthyReference', () => {
+  it('is the finished healthy run of the baseline for a seed', () => {
+    const r = healthyReference(3, stubBaseline, DEFAULT_TIMETABLE);
+    expect(r.finished).toBe(true);
+    expect(r.collisions).toBe(0);
+  });
+
+  it('throws a clear message when the run is too short to finish', () => {
+    expect(() => healthyReference(3, stubBaseline, DEFAULT_TIMETABLE, 1)).toThrow(
+      /reference did not finish for seed 3/,
+    );
+  });
+});
+
+describe('statsFor', () => {
+  const run = (): RunResult => ({
+    runLength: 1000,
+    finished: true,
+    exits: new Map(),
+    collisions: 0,
+    closeCalls: 0,
+    overruns: 0,
+  });
+
+  it('counts a seed that never recovered at the run length instead of hiding every other seed', () => {
+    const s = statsFor([run(), run(), run()], [0, 0, 0], [60, null, 120], [300, 400, 500]);
+    expect(s.neverRecovered).toBe(1);
+    expect(s.meanTimeToNormal).toBeCloseTo((60 + 400 + 120) / 3, 9);
+  });
+
+  it('reports no stuck seeds when every seed recovered', () => {
+    const s = statsFor([run(), run()], [0, 0], [30, 90], [300, 400]);
+    expect(s.neverRecovered).toBe(0);
+    expect(s.meanTimeToNormal).toBe(60);
   });
 });
