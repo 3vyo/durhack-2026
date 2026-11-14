@@ -35,4 +35,4 @@ Never push to `main` directly. The repo is private on a free plan, so GitHub doe
 
 ## Stack
 
-TypeScript, Vite, a canvas, and Vitest. No server. Issue 1 adds the scaffold and the npm scripts.
+TypeScript, Vite, a canvas, and Vitest. No server. The engine issue adds the scaffold and the npm scripts.
