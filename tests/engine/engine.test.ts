@@ -4,7 +4,7 @@ import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
-import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK } from '../../src/shared/constants';
+import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, setConstants } from '../../src/shared/constants';
 import type { LocalActor, Message, Outgoing, TimetableEntry } from '../../src/shared/types';
 
 const one: TimetableEntry[] = [
@@ -241,6 +241,27 @@ describe('Engine messages', () => {
     for (let i = 0; i < 1300; i++) engine.step();
     expect(grants.get(1) ?? 0).toBeGreaterThan(0);
     expect(grants.get(2) ?? 0).toBe(0);
+  });
+});
+
+describe('Engine with changed constants', () => {
+  it('runs the once-a-second work every second after TICK changes', () => {
+    setConstants({ TICK: 0.5 });
+    try {
+      const calls: number[] = [];
+      const centre: ControlCentre = {
+        step: (now) => {
+          calls.push(now);
+          return [];
+        },
+      };
+      const program: TrainProgram = { ...stubOurs, makeCentre: () => centre };
+      const engine = new Engine(config(one, 60, program));
+      for (let i = 0; i < 6; i++) engine.step();
+      expect(calls).toEqual([0, 1, 2]);
+    } finally {
+      resetConstants();
+    }
   });
 });
 
