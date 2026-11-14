@@ -4,10 +4,6 @@ import type { TrainProgram } from '../../src/engine/ports';
 import { ACCEL, BRAKE } from '../../src/shared/constants';
 import type { SensorReadings, TimetableEntry } from '../../src/shared/types';
 
-// Placeholder tests pin the safe values the frame returns for now. When a rule lands,
-// delete its placeholder test and write real tests from its to-dos. Do not edit a
-// placeholder test to make it pass.
-
 const timetable: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
   { id: 2, entry: 'B', enterAt: 10, platform: 'P3', leader: null, dwell: 30 },
@@ -19,19 +15,21 @@ const clear: SensorReadings = {
   exitStartClear: true,
 };
 
+const trains = [{ id: 1, pos: { track: 'A' as const, offset: 100 }, speed: 20, brokenDown: false }];
+
 describe('makeCentre', () => {
   it('fits TrainProgram.makeCentre', () => {
     const fn: TrainProgram['makeCentre'] = makeCentre;
     expect(fn(timetable)).not.toBeNull();
   });
 
-  it('returns a centre whose step returns an empty list for now', () => {
+  it('returns a centre whose step sends a permit to each train', () => {
     const centre = makeCentre(timetable);
-    const trains = [
-      { id: 1, pos: { track: 'A' as const, offset: 100 }, speed: 20, brokenDown: false },
-    ];
-    expect(centre.step(0, trains, clear, { station: true, merge: true })).toEqual([]);
-    expect(centre.step(1, trains, clear, { station: true, merge: true })).toEqual([]);
+    for (const now of [0, 1]) {
+      const messages = centre.step(now, trains, clear, { station: true, merge: true });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ type: 'permit', to: 1, nextTrack: 'P1', sentAt: now });
+    }
   });
 });
 
@@ -58,12 +56,12 @@ describe('baselineProgram', () => {
     expect(baselineProgram.makeActors(timetable)).toEqual([]);
   });
 
-  it('builds a centre whose step returns an empty list for now', () => {
+  it('builds a centre that serves baseline trains, whose agent obeys its permits', () => {
     const centre = baselineProgram.makeCentre(timetable);
-    const trains = [
-      { id: 1, pos: { track: 'A' as const, offset: 100 }, speed: 20, brokenDown: false },
-    ];
-    expect(centre).not.toBeNull();
-    expect(centre?.step(0, trains, clear, { station: true, merge: true })).toEqual([]);
+    const permits = centre?.step(0, trains, clear, { station: true, merge: true }) ?? [];
+    expect(permits).toHaveLength(1);
+    const agent = baselineProgram.agentFactory(1, timetable);
+    const out = agent.decide({ now: 0.1, self: trains[0], inbox: permits, sightAhead: null });
+    expect(out).toEqual({ accel: ACCEL, nextTrack: 'P1', outbox: [], mode: 'central' });
   });
 });
