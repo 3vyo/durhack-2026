@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createBaselineAgent, makeCentre } from '../../src/baseline';
+import { baselineProgram, createBaselineAgent, makeCentre } from '../../src/baseline';
 import type { TrainProgram } from '../../src/engine/ports';
 import { ACCEL, BRAKE } from '../../src/shared/constants';
 import type { SensorReadings, TimetableEntry } from '../../src/shared/types';
+
+// Placeholder tests pin the safe values the frame returns for now. When a rule lands,
+// delete its placeholder test and write real tests from its to-dos. Do not edit a
+// placeholder test to make it pass.
 
 const timetable: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -44,5 +48,19 @@ describe('createBaselineAgent', () => {
     expect(out.accel).toBeGreaterThanOrEqual(-BRAKE);
     expect(out.accel).toBeLessThanOrEqual(ACCEL);
     expect(out).toEqual({ accel: -BRAKE, nextTrack: null, outbox: [], mode: 'blind' });
+  });
+});
+
+describe('baselineProgram', () => {
+  it('is named baseline, uses the baseline agent and has no local actors', () => {
+    expect(baselineProgram.name).toBe('baseline');
+    expect(baselineProgram.agentFactory).toBe(createBaselineAgent);
+    expect(baselineProgram.makeActors(timetable)).toEqual([]);
+  });
+
+  it('builds a centre whose step returns an empty list for now', () => {
+    const centre = baselineProgram.makeCentre(timetable);
+    expect(centre).not.toBeNull();
+    expect(centre?.step(0, [], clear, { station: true, merge: true })).toEqual([]);
   });
 });
