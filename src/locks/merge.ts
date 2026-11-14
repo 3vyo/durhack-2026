@@ -15,7 +15,9 @@ import { longerThan, stillSettling, wasSwitchedOff } from './resume';
  * It must stay shorter than RESUME_SETTLE, so that a train that left by clock slot while
  * the actor was off is out of the queue before the first grant after the actor is back.
  */
-export const MERGE_SILENCE = 2 * REQUEST_REPEAT;
+export function mergeSilence(): number {
+  return 2 * REQUEST_REPEAT;
+}
 
 /** One train waiting for the junction. */
 export interface JunctionRequest {
@@ -113,7 +115,7 @@ export function recordJunctionRequests(
  * "Leaving the station": drop a request whose train has stopped asking, for example one
  * that left by clock slot. Otherwise the actor could grant a train that is gone and hold a
  * lock nobody uses. A request goes once its train has not been heard for longer than
- * `silence`. The step passes MERGE_SILENCE.
+ * `silence`. The step passes mergeSilence().
  */
 export function dropSilentRequests(
   queue: JunctionRequest[],
@@ -338,7 +340,7 @@ export function stepMerge(
   memory = updateHolder(memory, sensors, now);
 
   const recorded = recordJunctionRequests(memory.queue, inbox, now, notQueued(memory));
-  memory = { ...memory, queue: dropSilentRequests(recorded, now, MERGE_SILENCE) };
+  memory = { ...memory, queue: dropSilentRequests(recorded, now, mergeSilence()) };
 
   const holderBefore = memory.holder;
   memory = grantNext(memory, sensors, settling, now);

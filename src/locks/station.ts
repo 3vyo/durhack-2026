@@ -24,7 +24,9 @@ import { longerThan, stillSettling, wasSwitchedOff } from './resume';
  * same reason: it covers a train getting from its stop at the end of A or B to the
  * platform sensor.
  */
-export const UNLOCKED_SETTLE = RESUME_SETTLE;
+export function unlockedSettle(): number {
+  return RESUME_SETTLE;
+}
 
 /** What the station has seen of the train holding a platform lock. */
 export interface PlatformLock {
@@ -100,10 +102,10 @@ export interface GrantCheck {
   sensors: SensorReadings;
 }
 
-/** True if the platform read occupied with no lock on it less than UNLOCKED_SETTLE ago. */
+/** True if the platform read occupied with no lock on it less than unlockedSettle() ago. */
 function unlockedTrainMayBeNear(memory: StationMemory, platform: PlatformId, now: number): boolean {
   const at = memory.unlockedOccupiedAt[platform];
-  return at !== null && !longerThan(now - at, UNLOCKED_SETTLE);
+  return at !== null && !longerThan(now - at, unlockedSettle());
 }
 
 /**
@@ -114,7 +116,7 @@ function unlockedTrainMayBeNear(memory: StationMemory, platform: PlatformId, now
  * One more guard. A platform that read occupied with no lock on it had a train that came
  * in by the fixed split, or a dead sensor. When that reading turns empty, the sensors may
  * have just come back while a creeping train is about to roll onto the platform. So the
- * platform must then read empty for UNLOCKED_SETTLE before it is granted.
+ * platform must then read empty for unlockedSettle() before it is granted.
  */
 export function canGrantPlatform(check: GrantCheck): boolean {
   const { now, train, platform, pair, memory, sensors } = check;

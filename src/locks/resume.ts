@@ -10,10 +10,14 @@ import { TICK } from '../shared/constants';
  * Time is a float built by adding TICK, so two times that should be equal can differ by a
  * hair. Every timer comparison in this folder allows half a tick. Local to src/locks/.
  */
-export const SLACK = TICK / 2;
+export function slack(): number {
+  return TICK / 2;
+}
 
 /** How far `now` may be past the last step before the actor counts as having been off. */
-const OFF_GAP = 1.5 * TICK;
+function offGap(): number {
+  return 1.5 * TICK;
+}
 
 /**
  * True if `elapsed` is clearly longer than `limit`. A time that lands on the limit, give
@@ -21,7 +25,7 @@ const OFF_GAP = 1.5 * TICK;
  * one tick early.
  */
 export function longerThan(elapsed: number, limit: number): boolean {
-  return elapsed > limit + SLACK;
+  return elapsed > limit + slack();
 }
 
 /**
@@ -33,7 +37,7 @@ export function longerThan(elapsed: number, limit: number): boolean {
  * off at the start of the run and has only now been turned on, so it resumes too.
  */
 export function wasSwitchedOff(lastStepAt: number | null, now: number): boolean {
-  return now - (lastStepAt ?? 0) > OFF_GAP;
+  return now - (lastStepAt ?? 0) > offGap();
 }
 
 /**
@@ -42,5 +46,5 @@ export function wasSwitchedOff(lastStepAt: number | null, now: number): boolean 
  */
 export function stillSettling(resumedAt: number | null, now: number, settle: number): boolean {
   if (resumedAt === null) return false;
-  return now < resumedAt + settle - SLACK;
+  return now < resumedAt + settle - slack();
 }

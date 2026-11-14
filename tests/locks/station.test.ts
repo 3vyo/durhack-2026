@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  UNLOCKED_SETTLE,
+  unlockedSettle,
   answerOrder,
   answerPlatformRequest,
   canGrantPlatform,
@@ -418,21 +418,21 @@ describe('Platform sensors switched off', () => {
     // P1 reads empty, but a creeping train may be about to roll onto it.
     const station = newStation();
     station.idle(20, allDead);
-    const out = station.repeat(UNLOCKED_SETTLE, ask(1, 'P1'));
+    const out = station.repeat(unlockedSettle(), ask(1, 'P1'));
     expect(out.length).toBeGreaterThan(0);
     expect(out.every((o) => o.msg.type === 'lockRefuse' && o.msg.alternative === null)).toBe(true);
     station.idle(2 * TICK);
     expect(station.step([ask(1, 'P1')])).toEqual([grant(1, 'P1')]);
   });
 
-  it('does not grant a platform that a train without a lock has just left until it has read empty for UNLOCKED_SETTLE', () => {
+  it('does not grant a platform that a train without a lock has just left until it has read empty for unlockedSettle()', () => {
     const memory: StationMemory = {
       ...initialStationMemory(),
       unlockedOccupiedAt: { P1: 100, P2: null, P3: null, P4: null },
     };
     const check = { train: 1, platform: 'P1' as const, pair: pairA, memory, sensors: allEmpty };
-    expect(canGrantPlatform({ ...check, now: 100 + UNLOCKED_SETTLE })).toBe(false);
-    expect(canGrantPlatform({ ...check, now: 100 + UNLOCKED_SETTLE + TICK })).toBe(true);
+    expect(canGrantPlatform({ ...check, now: 100 + unlockedSettle() })).toBe(false);
+    expect(canGrantPlatform({ ...check, now: 100 + unlockedSettle() + TICK })).toBe(true);
   });
 
   it('does not hold back a platform whose last train held its lock', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MERGE_SILENCE,
+  mergeSilence,
   canGrantJunction,
   canReleaseJunction,
   createMergeActor,
@@ -134,8 +134,8 @@ describe('merge frame', () => {
   });
 
   it('drops a silent request before the settle window ends, and not before a late repeat', () => {
-    expect(MERGE_SILENCE).toBeLessThan(RESUME_SETTLE);
-    expect(MERGE_SILENCE).toBeGreaterThan(REQUEST_REPEAT + TICK);
+    expect(mergeSilence()).toBeLessThan(RESUME_SETTLE);
+    expect(mergeSilence()).toBeGreaterThan(REQUEST_REPEAT + TICK);
   });
 });
 
@@ -198,20 +198,20 @@ describe('Leaving the station: the queue', () => {
   });
 
   it('drops a request whose train has not been heard for longer than silence, for example one that left by clock slot', () => {
-    expect(dropSilentRequests(queue, 9 + MERGE_SILENCE + TICK, MERGE_SILENCE)).toEqual([]);
+    expect(dropSilentRequests(queue, 9 + mergeSilence() + TICK, mergeSilence())).toEqual([]);
     const mixed = [queue[0], { ...queue[1], lastHeardAt: 12 }];
-    expect(dropSilentRequests(mixed, 9 + MERGE_SILENCE + TICK, MERGE_SILENCE)).toEqual([mixed[1]]);
+    expect(dropSilentRequests(mixed, 9 + mergeSilence() + TICK, mergeSilence())).toEqual([mixed[1]]);
   });
 
   it('keeps a request whose train was heard within silence', () => {
-    expect(dropSilentRequests(queue, 9 + REQUEST_REPEAT, MERGE_SILENCE)).toEqual(queue);
-    expect(dropSilentRequests(queue, 9 + MERGE_SILENCE, MERGE_SILENCE)).toEqual(queue);
+    expect(dropSilentRequests(queue, 9 + REQUEST_REPEAT, mergeSilence())).toEqual(queue);
+    expect(dropSilentRequests(queue, 9 + mergeSilence(), mergeSilence())).toEqual(queue);
   });
 
   it('never grants a train that stopped asking while it waited', () => {
     const merge = newMerge();
     merge.step([ask(1), ask(2)]);
-    // Train 2 stops asking. Train 1 runs through, which takes longer than MERGE_SILENCE.
+    // Train 2 stops asking. Train 1 runs through, which takes longer than mergeSilence().
     merge.passThrough();
     expect(merge.idle(30)).toEqual([]);
   });
