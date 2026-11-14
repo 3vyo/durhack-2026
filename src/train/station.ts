@@ -4,15 +4,15 @@ import { elapsed } from './follow';
 import { isStill, type TrainNumbers } from './numbers';
 
 // Rules from docs/design.md, "Train rules" > "Entering the station",
-// "Station switched off" and "Platform sensors switched off".
+// "Platform keeper switched off" and "Platform sensors switched off".
 
-/** A reply from the station actor to this train about a platform. */
-export type StationReply =
+/** A reply from the platform keeper to this train about a platform. */
+export type PlatformKeeperReply =
   | { kind: 'grant'; platform: PlatformId }
   | { kind: 'refuse'; platform: PlatformId; alternative: PlatformId | null };
 
 /** The last station reply the train heard, with the time it arrived. */
-export type HeardStationReply = StationReply & { at: number };
+export type HeardPlatformKeeperReply = PlatformKeeperReply & { at: number };
 
 /** The newest platformStatus heard from each platform. */
 export type PlatformStatusLog = Partial<Record<PlatformId, { occupied: boolean; sentAt: number }>>;
@@ -46,7 +46,7 @@ export interface CreepInput {
 }
 
 export interface RefusalInput {
-  lastReply: HeardStationReply | null; // the last station reply, however old
+  lastReply: HeardPlatformKeeperReply | null; // the last station reply, however old
   statuses: PlatformStatusLog;
   entry: 'A' | 'B';
   pos: Position;
@@ -58,12 +58,12 @@ function isEntryTrack(track: TrackId): track is 'A' | 'B' {
 }
 
 /**
- * "Entering the station". The station actor's reply to this train in this tick's inbox,
+ * "Entering the station". The platform keeper's reply to this train in this tick's inbox,
  * or null. Replies to other trains and junction replies are ignored. A grant wins over a
  * refusal in the same inbox.
  */
-export function stationReply(inbox: Message[], id: TrainId): StationReply | null {
-  let reply: StationReply | null = null;
+export function platformKeeperReply(inbox: Message[], id: TrainId): PlatformKeeperReply | null {
+  let reply: PlatformKeeperReply | null = null;
   for (const msg of inbox) {
     if (msg.type !== 'lockGrant' && msg.type !== 'lockRefuse') continue;
     if (msg.to !== id || msg.resource === 'JUNCTION') continue;
@@ -78,7 +78,7 @@ export function stationReply(inbox: Message[], id: TrainId): StationReply | null
  * leads to its own two platforms, so a grant for any other platform is dropped, and an
  * alternative outside the pair is read as no alternative.
  */
-export function ownPairOnly(reply: StationReply | null, pair: readonly PlatformId[]): StationReply | null {
+export function ownPairOnly(reply: PlatformKeeperReply | null, pair: readonly PlatformId[]): PlatformKeeperReply | null {
   if (reply === null || !pair.includes(reply.platform)) return null;
   if (reply.kind === 'grant' || reply.alternative === null) return reply;
   return pair.includes(reply.alternative) ? reply : { ...reply, alternative: null };
@@ -88,7 +88,7 @@ export function ownPairOnly(reply: StationReply | null, pair: readonly PlatformI
  * "Entering the station". Which platform to ask for: the last refusal's alternative if
  * there is one, else the default platform.
  */
-export function platformToAsk(defaultPlatform: PlatformId, lastReply: HeardStationReply | null): PlatformId {
+export function platformToAsk(defaultPlatform: PlatformId, lastReply: HeardPlatformKeeperReply | null): PlatformId {
   if (lastReply?.kind === 'refuse' && lastReply.alternative !== null) return lastReply.alternative;
   return defaultPlatform;
 }
@@ -120,8 +120,8 @@ export function dwellStart(prev: number | null, self: TrainState, now: number): 
 }
 
 /**
- * "Station switched off". True when the train is stopped at the end of its entry track,
- * within stopClose of it, and the station has given no reply that counts for stationTimeout
+ * "Platform keeper switched off". True when the train is stopped at the end of its entry track,
+ * within stopClose of it, and the station has given no reply that counts for platformKeeperTimeout
  * seconds, allowing `slack`.
  * The count runs from the later of the first request and the last reply. A refusal that
  * counts as silence is not a reply: the agent leaves it out of lastReplyAt.
@@ -132,20 +132,20 @@ export function dwellStart(prev: number | null, self: TrainState, now: number): 
  */
 export function shouldUseFallback(
   input: FallbackInput,
-  numbers: Pick<TrainNumbers, 'entryLength' | 'stopClose' | 'stationTimeout' | 'slack'>,
+  numbers: Pick<TrainNumbers, 'entryLength' | 'stopClose' | 'platformKeeperTimeout' | 'slack'>,
 ): boolean {
   const { self, now, firstAskedAt, lastReplyAt, usingFallback } = input;
   if (self.pos.track === 'EXIT') return false;
   if (!isEntryTrack(self.pos.track)) return usingFallback;
   if (firstAskedAt === null) return false;
   const since = Math.max(firstAskedAt, lastReplyAt ?? -Infinity);
-  if (!elapsed(since, now, numbers.stationTimeout, numbers.slack)) return false;
+  if (!elapsed(since, now, numbers.platformKeeperTimeout, numbers.slack)) return false;
   if (usingFallback) return true;
   return isStill(self.speed) && self.pos.offset >= numbers.entryLength - numbers.stopClose;
 }
 
 /**
- * "Station switched off". The fixed split: the first platform of the train's own pair
+ * "Platform keeper switched off". The fixed split: the first platform of the train's own pair
  * whose sensor says empty, from a fresh status, or null to wait.
  */
 export function fixedSplitPlatform(
@@ -163,7 +163,7 @@ export function fixedSplitPlatform(
 }
 
 /**
- * "Station switched off". With the sensors off too, look into the first platform of the
+ * "Platform keeper switched off". With the sensors off too, look into the first platform of the
  * pair, then the other, and take the first that sightAhead shows has no train. Wait if
  * both do, and keep looking at each in turn.
  *
@@ -180,7 +180,7 @@ export function creepStep(input: CreepInput, numbers: Pick<TrainNumbers, 'pairs'
 }
 
 /**
- * "Station switched off". The speed limit while entering a platform under the fallback:
+ * "Platform keeper switched off". The speed limit while entering a platform under the fallback:
  * SIGHT_SPEED or below. No limit when the train is not using the fallback.
  */
 export function fallbackLimit(usingFallback: boolean): number {
@@ -188,7 +188,7 @@ export function fallbackLimit(usingFallback: boolean): number {
 }
 
 /**
- * "Station switched off". True when this tick's nextTrack differs from last tick's. The
+ * "Platform keeper switched off". True when this tick's nextTrack differs from last tick's. The
  * train must not accelerate on that tick, because sightAhead still reports the old path.
  */
 export function pathJustChanged(prev: TrackId | null, next: TrackId | null): boolean {

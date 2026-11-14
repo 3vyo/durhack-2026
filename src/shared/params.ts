@@ -37,8 +37,8 @@ export interface TimerParams {
   permitInterval: number;
   positionInterval: number;
   requestRepeat: number;
-  mergeTimeout: number;
-  stationTimeout: number;
+  junctionKeeperTimeout: number;
+  platformKeeperTimeout: number;
   resumeSettle: number;
   radioWorkingDelay: number;
   radioReleaseGap: number;
@@ -58,8 +58,8 @@ export interface TimetableParams {
 /** What is switched on. radioDrop is the share of train-to-train messages lost, 0 to 1. */
 export interface SwitchParams {
   centre: boolean;
-  station: boolean;
-  merge: boolean;
+  platformKeeper: boolean;
+  junctionKeeper: boolean;
   sensors: boolean;
   radioDrop: number;
 }
@@ -103,8 +103,8 @@ export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
     permitInterval: DEFAULT_CONSTANTS.PERMIT_INTERVAL,
     positionInterval: DEFAULT_CONSTANTS.POSITION_INTERVAL,
     requestRepeat: DEFAULT_CONSTANTS.REQUEST_REPEAT,
-    mergeTimeout: DEFAULT_CONSTANTS.MERGE_TIMEOUT,
-    stationTimeout: DEFAULT_CONSTANTS.STATION_TIMEOUT,
+    junctionKeeperTimeout: DEFAULT_CONSTANTS.JUNCTION_KEEPER_TIMEOUT,
+    platformKeeperTimeout: DEFAULT_CONSTANTS.PLATFORM_KEEPER_TIMEOUT,
     resumeSettle: DEFAULT_CONSTANTS.RESUME_SETTLE,
     radioWorkingDelay: DEFAULT_CONSTANTS.RADIO_WORKING_DELAY,
     radioReleaseGap: DEFAULT_CONSTANTS.RADIO_RELEASE_GAP,
@@ -113,7 +113,7 @@ export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
     slotCount: DEFAULT_CONSTANTS.SLOT_COUNT,
   }),
   timetable: Object.freeze({ seed: 1, trains: 12, headway: 45, dwell: 30 }),
-  start: Object.freeze({ centre: true, station: true, merge: true, sensors: true, radioDrop: 0 }),
+  start: Object.freeze({ centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 }),
   failures: Object.freeze([]) as unknown as FailureEvent[],
   runLength: 3600,
 });
@@ -164,7 +164,7 @@ function readFailures(input: unknown, problems: string[]): FailureEvent[] {
     problems.push('failures must be a list');
     return [];
   }
-  const shape = { at: 0, centre: true, station: true, merge: true, sensors: true, radioDrop: 0, breakDown: 0 };
+  const shape = { at: 0, centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0, breakDown: 0 };
   const out: FailureEvent[] = [];
   input.forEach((item, i) => {
     const where = `failures[${i}]`;
@@ -225,8 +225,8 @@ function checkValues(p: SimParams, problems: string[]): void {
   if (t.permitFresh <= t.permitInterval) {
     problems.push(`timers.permitFresh (${t.permitFresh}) must be longer than timers.permitInterval (${t.permitInterval}), or every permit is stale when it arrives`);
   }
-  if (t.mergeTimeout <= t.requestRepeat) problems.push(`timers.mergeTimeout (${t.mergeTimeout}) must be longer than timers.requestRepeat (${t.requestRepeat})`);
-  if (t.stationTimeout <= t.requestRepeat) problems.push(`timers.stationTimeout (${t.stationTimeout}) must be longer than timers.requestRepeat (${t.requestRepeat})`);
+  if (t.junctionKeeperTimeout <= t.requestRepeat) problems.push(`timers.junctionKeeperTimeout (${t.junctionKeeperTimeout}) must be longer than timers.requestRepeat (${t.requestRepeat})`);
+  if (t.platformKeeperTimeout <= t.requestRepeat) problems.push(`timers.platformKeeperTimeout (${t.platformKeeperTimeout}) must be longer than timers.requestRepeat (${t.requestRepeat})`);
   if (t.resumeSettle < t.requestRepeat + 2 * ph.tick) {
     problems.push(`timers.resumeSettle (${t.resumeSettle}) must be at least timers.requestRepeat plus two ticks (${t.requestRepeat + 2 * ph.tick})`);
   }
@@ -296,8 +296,8 @@ export function constantsFor(p: SimParams): ConstantValues {
     PERMIT_INTERVAL: p.timers.permitInterval,
     POSITION_INTERVAL: p.timers.positionInterval,
     REQUEST_REPEAT: p.timers.requestRepeat,
-    MERGE_TIMEOUT: p.timers.mergeTimeout,
-    STATION_TIMEOUT: p.timers.stationTimeout,
+    JUNCTION_KEEPER_TIMEOUT: p.timers.junctionKeeperTimeout,
+    PLATFORM_KEEPER_TIMEOUT: p.timers.platformKeeperTimeout,
     RESUME_SETTLE: p.timers.resumeSettle,
     RADIO_WORKING_DELAY: p.timers.radioWorkingDelay,
     RADIO_RELEASE_GAP: p.timers.radioReleaseGap,

@@ -46,24 +46,24 @@ const outage = (set: Partial<Switches>, back: Partial<Switches>): Press[] => [
 const FAILURES: Scenario[] = [
   { name: 'centre off from the start', start: { centre: false } },
   { name: 'centre outage, then restored', presses: outage({ centre: false }, { centre: true }) },
-  { name: 'station actor off from the start', start: { station: false } },
-  { name: 'station actor killed mid-run', presses: [{ at: OFF_AT, set: { station: false } }] },
-  { name: 'station actor outage, then restored', presses: outage({ station: false }, { station: true }) },
-  { name: 'merge actor off from the start', start: { merge: false } },
-  { name: 'merge actor killed mid-run', presses: [{ at: OFF_AT, set: { merge: false } }] },
-  { name: 'merge actor outage, then restored', presses: outage({ merge: false }, { merge: true }) },
+  { name: 'platform keeper off from the start', start: { platformKeeper: false } },
+  { name: 'platform keeper killed mid-run', presses: [{ at: OFF_AT, set: { platformKeeper: false } }] },
+  { name: 'platform keeper outage, then restored', presses: outage({ platformKeeper: false }, { platformKeeper: true }) },
+  { name: 'junction keeper off from the start', start: { junctionKeeper: false } },
+  { name: 'junction keeper killed mid-run', presses: [{ at: OFF_AT, set: { junctionKeeper: false } }] },
+  { name: 'junction keeper outage, then restored', presses: outage({ junctionKeeper: false }, { junctionKeeper: true }) },
   { name: 'platform sensors off from the start', start: { sensors: false } },
   { name: 'platform sensors outage, then restored', presses: outage({ sensors: false }, { sensors: true }) },
   { name: 'radio at 50% loss', start: { radioDrop: 0.5 } },
   { name: 'radio at 100% loss', start: { radioDrop: 1 } },
-  { name: 'blackout, trains talking', start: { centre: false, station: false, merge: false } },
-  { name: 'blackout, trains silent', start: { centre: false, station: false, merge: false, radioDrop: 1 } },
+  { name: 'blackout, trains talking', start: { centre: false, platformKeeper: false, junctionKeeper: false } },
+  { name: 'blackout, trains silent', start: { centre: false, platformKeeper: false, junctionKeeper: false, radioDrop: 1 } },
   {
     name: 'blackout mid-run, then everything restored',
-    presses: outage({ centre: false, station: false, merge: false }, { centre: true, station: true, merge: true }),
+    presses: outage({ centre: false, platformKeeper: false, junctionKeeper: false }, { centre: true, platformKeeper: true, junctionKeeper: true }),
   },
-  { name: 'everything off, sensors too', start: { centre: false, station: false, merge: false, sensors: false, radioDrop: 1 } },
-  { name: 'station actor and sensors off', start: { station: false, sensors: false } },
+  { name: 'everything off, sensors too', start: { centre: false, platformKeeper: false, junctionKeeper: false, sensors: false, radioDrop: 1 } },
+  { name: 'platform keeper and sensors off', start: { platformKeeper: false, sensors: false } },
 ];
 
 function describeTrains(engine: Engine): string[] {
@@ -168,8 +168,8 @@ describe('our program, random presses at random times', () => {
       const pick = Math.floor(rng() * 5);
       const on = rng() < 0.5;
       if (pick === 0) presses.push({ at, set: { centre: on } });
-      if (pick === 1) presses.push({ at, set: { station: on } });
-      if (pick === 2) presses.push({ at, set: { merge: on } });
+      if (pick === 1) presses.push({ at, set: { platformKeeper: on } });
+      if (pick === 2) presses.push({ at, set: { junctionKeeper: on } });
       if (pick === 3) presses.push({ at, set: { sensors: on } });
       if (pick === 4) presses.push({ at, set: { radioDrop: on ? 0 : rng() } });
     }
@@ -208,7 +208,7 @@ describe('the baseline', () => {
     expectClean(run(baselineProgram, seed, { name: 'centre outage', presses: outage({ centre: false }, { centre: true }) }));
   });
 
-  it.each(['station', 'merge', 'sensors'] as const)('has no collision with the %s switched off', (device) => {
+  it.each(['platformKeeper', 'junctionKeeper', 'sensors'] as const)('has no collision with the %s switched off', (device) => {
     const o = run(baselineProgram, 1, { name: device, presses: [{ at: OFF_AT, set: { [device]: false } }] }, 2000);
     expect(o.firstProblem).toEqual([]);
     expect({ collisions: o.collisions, overruns: o.overruns }).toEqual({ collisions: 0, overruns: 0 });

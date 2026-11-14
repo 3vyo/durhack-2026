@@ -109,8 +109,8 @@ describe('Engine switches', () => {
     const engine = new Engine(config(one));
     expect(engine.snapshot().switches).toEqual({
       centre: true,
-      station: true,
-      merge: true,
+      platformKeeper: true,
+      junctionKeeper: true,
       sensors: true,
       radioDrop: 0,
     });
@@ -206,8 +206,8 @@ describe('Engine messages', () => {
 
   it('delivers a short-range reply only to a train inside the actor range', () => {
     const grants = new Map<number, number>();
-    const station: LocalActor = {
-      id: 'station',
+    const platformKeeper: LocalActor = {
+      id: 'platformKeeper',
       step: (_now, inbox) =>
         inbox.flatMap((m: Message): Outgoing[] =>
           m.type === 'lockRequest'
@@ -230,7 +230,7 @@ describe('Engine messages', () => {
           };
         },
       }),
-      makeActors: () => [station],
+      makeActors: () => [platformKeeper],
       makeCentre: () => null,
     };
     const tt: TimetableEntry[] = [
@@ -293,7 +293,7 @@ describe('Engine control centre', () => {
   it('gives the centre true platform readings, whatever the platform sensor switch says', () => {
     const calls: CentreCall[] = [];
     const engine = new Engine(config(one, 60, centreProgram(calls)));
-    engine.press({ sensors: false, station: false, merge: false });
+    engine.press({ sensors: false, platformKeeper: false, junctionKeeper: false });
     for (let i = 0; i < 11; i++) engine.step();
     expect(calls[calls.length - 1].sensors.platformOccupied).toEqual({ P1: false, P2: false, P3: false, P4: false });
   });
@@ -409,7 +409,7 @@ describe('Engine overlay facts', () => {
   });
 
   it('records the last grants a train heard and never clears them', () => {
-    const granting = (id: 'station' | 'merge'): LocalActor => ({
+    const granting = (id: 'platformKeeper' | 'junctionKeeper'): LocalActor => ({
       id,
       step: (_now, inbox) =>
         inbox.flatMap((m: Message): Outgoing[] =>
@@ -431,7 +431,7 @@ describe('Engine overlay facts', () => {
           mode: 'blind',
         }),
       }),
-      makeActors: () => [granting('station'), granting('merge')],
+      makeActors: () => [granting('platformKeeper'), granting('junctionKeeper')],
       makeCentre: () => null,
     };
     const engine = new Engine(config(one, 300, program));
@@ -450,10 +450,10 @@ describe('Engine overlay facts', () => {
 
 describe('Engine leader from a junction grant', () => {
   // Train 1 enters on A and broadcasts its position every tick. Train 2 enters on B, accelerates
-  // into merge range at about 146 s, and asks for the junction. The merge actor grants it.
+  // into the junction keeper's range at about 146 s, and asks for the junction. The junction keeper grants it.
   function program(follow: number | null): TrainProgram {
-    const merge: LocalActor = {
-      id: 'merge',
+    const junctionKeeper: LocalActor = {
+      id: 'junctionKeeper',
       step: (_now, inbox) =>
         inbox.flatMap((m: Message): Outgoing[] =>
           m.type === 'lockRequest' && m.resource === 'JUNCTION'
@@ -477,7 +477,7 @@ describe('Engine leader from a junction grant', () => {
           return { accel: id === 1 ? 0 : ACCEL, nextTrack: 'P3', outbox, mode: 'blind' };
         },
       }),
-      makeActors: () => [merge],
+      makeActors: () => [junctionKeeper],
       makeCentre: () => null,
     };
   }
@@ -487,7 +487,7 @@ describe('Engine leader from a junction grant', () => {
   ];
   const train2 = (e: Engine) => e.snapshot().trains.find((t) => t.id === 2)!;
 
-  it('follows the train the merge actor names, whatever the timetable said', () => {
+  it('follows the train the junction keeper names, whatever the timetable said', () => {
     const engine = new Engine(config(tt(null), 300, program(1)));
     while (engine.now < 140) engine.step();
     expect(train2(engine).leaderAge).toBeNull();
@@ -496,7 +496,7 @@ describe('Engine leader from a junction grant', () => {
     expect(train2(engine).leaderAge as number).toBeLessThan(0.5);
   });
 
-  it('stops showing the entry-track leader once the merge actor says there is no train ahead', () => {
+  it('stops showing the entry-track leader once the junction keeper says there is no train ahead', () => {
     const engine = new Engine(config(tt(1), 300, program(null)));
     while (engine.now < 140) engine.step();
     expect(train2(engine).leaderAge as number).toBeLessThan(0.5);

@@ -31,8 +31,8 @@ export let PERMIT_FRESH = 5;
 export let PERMIT_INTERVAL = 1; // the control centre sends each train a permit this often
 export let POSITION_INTERVAL = 1; // each train broadcasts its position this often
 export let REQUEST_REPEAT = 2; // a train repeats a lockRequest this often
-export let MERGE_TIMEOUT = 10; // with no reply from the merge actor for this long, a train uses clock slots
-export let STATION_TIMEOUT = 10; // with no reply from the station actor for this long, a train stopped at the end of its entry track uses the fixed split
+export let JUNCTION_KEEPER_TIMEOUT = 10; // with no reply from the junction keeper for this long, a train uses clock slots
+export let PLATFORM_KEEPER_TIMEOUT = 10; // with no reply from the platform keeper for this long, a train stopped at the end of its entry track uses the fixed split
 export let RESUME_SETTLE = 5; // a local actor that is switched back on grants nothing for this long
 
 // Radio working: today's fallback when the control centre is down. Staff move stopped
@@ -41,7 +41,7 @@ export let RESUME_SETTLE = 5; // a local actor that is switched back on grants n
 export let RADIO_WORKING_DELAY = 1200; // the centre is down this long before staff move the first train
 export let RADIO_RELEASE_GAP = 60; // staff release one stopped train this often
 
-// Clock slots, used while the merge actor is switched off.
+// Clock slots, used while the junction keeper is switched off.
 // slot = floor(now / SLOT_LENGTH) mod SLOT_COUNT. Platform Pk may start during the
 // first SLOT_WINDOW seconds of slot k - 1.
 export let SLOT_LENGTH = 60;
@@ -63,8 +63,8 @@ export interface ConstantValues {
   PERMIT_INTERVAL: number;
   POSITION_INTERVAL: number;
   REQUEST_REPEAT: number;
-  MERGE_TIMEOUT: number;
-  STATION_TIMEOUT: number;
+  JUNCTION_KEEPER_TIMEOUT: number;
+  PLATFORM_KEEPER_TIMEOUT: number;
   RESUME_SETTLE: number;
   RADIO_WORKING_DELAY: number;
   RADIO_RELEASE_GAP: number;
@@ -92,8 +92,8 @@ export function currentConstants(): ConstantValues {
     PERMIT_INTERVAL,
     POSITION_INTERVAL,
     REQUEST_REPEAT,
-    MERGE_TIMEOUT,
-    STATION_TIMEOUT,
+    JUNCTION_KEEPER_TIMEOUT,
+    PLATFORM_KEEPER_TIMEOUT,
     RESUME_SETTLE,
     RADIO_WORKING_DELAY,
     RADIO_RELEASE_GAP,
@@ -123,8 +123,8 @@ export function setConstants(values: Partial<ConstantValues>): void {
   PERMIT_INTERVAL = v.PERMIT_INTERVAL;
   POSITION_INTERVAL = v.POSITION_INTERVAL;
   REQUEST_REPEAT = v.REQUEST_REPEAT;
-  MERGE_TIMEOUT = v.MERGE_TIMEOUT;
-  STATION_TIMEOUT = v.STATION_TIMEOUT;
+  JUNCTION_KEEPER_TIMEOUT = v.JUNCTION_KEEPER_TIMEOUT;
+  PLATFORM_KEEPER_TIMEOUT = v.PLATFORM_KEEPER_TIMEOUT;
   RESUME_SETTLE = v.RESUME_SETTLE;
   RADIO_WORKING_DELAY = v.RADIO_WORKING_DELAY;
   RADIO_RELEASE_GAP = v.RADIO_RELEASE_GAP;

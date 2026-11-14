@@ -14,8 +14,8 @@ const allClear: SensorReadings = {
 };
 
 describe('makeActors', () => {
-  it('returns the station actor and the merge actor', () => {
-    expect(makeActors(timetable).map((a) => a.id)).toEqual(['station', 'merge']);
+  it('returns the platform keeper and the junction keeper', () => {
+    expect(makeActors(timetable).map((a) => a.id)).toEqual(['platformKeeper', 'junctionKeeper']);
   });
 
   it('builds fresh actors on each call, so two runs do not share memory', () => {
@@ -25,16 +25,16 @@ describe('makeActors', () => {
     expect(first[1]).not.toBe(second[1]);
   });
 
-  it('gives a station actor that answers platform requests and a merge actor that answers junction requests', () => {
-    const [station, merge] = makeActors(timetable);
+  it('gives a platform keeper that answers platform requests and a junction keeper that answers junction requests', () => {
+    const [platformKeeper, junctionKeeper] = makeActors(timetable);
     const inbox = [
       { type: 'lockRequest' as const, from: 1, resource: 'P1' as const },
       { type: 'lockRequest' as const, from: 2, resource: 'JUNCTION' as const },
     ];
-    expect(station.step(0, inbox, allClear)).toEqual([
+    expect(platformKeeper.step(0, inbox, allClear)).toEqual([
       { msg: { type: 'lockGrant', to: 1, resource: 'P1', follow: null }, range: 'short' },
     ]);
-    expect(merge.step(0, inbox, allClear)).toEqual([
+    expect(junctionKeeper.step(0, inbox, allClear)).toEqual([
       { msg: { type: 'lockGrant', to: 2, resource: 'JUNCTION', follow: null }, range: 'short' },
     ]);
   });

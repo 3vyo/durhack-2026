@@ -5,14 +5,14 @@ import type { Switches } from './switches';
 /** Who sent a message. The engine fills this in, since a message does not carry its sender's kind. */
 export type Sender =
   | { kind: 'train'; id: TrainId }
-  | { kind: 'actor'; id: 'station' | 'merge' }
+  | { kind: 'actor'; id: 'platformKeeper' | 'junctionKeeper' }
   | { kind: 'sensors' }
   | { kind: 'centre' }
   | { kind: 'radio' }; // staff moving trains by radio while the centre is down
 
 export type Recipient =
   | { kind: 'train'; id: TrainId }
-  | { kind: 'actor'; id: 'station' | 'merge' };
+  | { kind: 'actor'; id: 'platformKeeper' | 'junctionKeeper' };
 
 /** True if the slider drops this one delivery. Draws from rng only for partial rates. */
 function dropped(sw: Switches, rng: () => number): boolean {
@@ -28,8 +28,8 @@ function dropped(sw: Switches, rng: () => number): boolean {
  *   draw. A permit from the control centre goes to its train only, and the slider does not
  *   touch it: the centre is either on or off. A radio working permit also goes to its train
  *   only, but the slider drops it, because it travels by radio.
- * - Short range depends on where the train is. A train reaches the station actor from x 4300
- *   to 6400 and the merge actor from x 6000 to 6600, and hears the platform sensors from x
+ * - Short range depends on where the train is. A train reaches the platform keeper from x 4300
+ *   to 6400 and the junction keeper from x 6000 to 6600, and hears the platform sensors from x
  *   5500 to 6400. A local actor is either on or off, so there is no random loss here.
  */
 export function route(
@@ -61,14 +61,14 @@ export function route(
       const sender = trains.find((t) => t.id === msg.from);
       if (!sender) return [];
       if (msg.resource === 'JUNCTION') {
-        return sw.merge && inRange(sender.x, RANGE.merge) ? [{ kind: 'actor', id: 'merge' }] : [];
+        return sw.junctionKeeper && inRange(sender.x, RANGE.junctionKeeper) ? [{ kind: 'actor', id: 'junctionKeeper' }] : [];
       }
-      return sw.station && inRange(sender.x, RANGE.station) ? [{ kind: 'actor', id: 'station' }] : [];
+      return sw.platformKeeper && inRange(sender.x, RANGE.platformKeeper) ? [{ kind: 'actor', id: 'platformKeeper' }] : [];
     }
     case 'lockGrant':
     case 'lockRefuse': {
       if (from.kind !== 'actor') return [];
-      const range = from.id === 'station' ? RANGE.station : RANGE.merge;
+      const range = from.id === 'platformKeeper' ? RANGE.platformKeeper : RANGE.junctionKeeper;
       const target = trains.find((t) => t.id === msg.to);
       return target && inRange(target.x, range) ? [{ kind: 'train', id: msg.to }] : [];
     }

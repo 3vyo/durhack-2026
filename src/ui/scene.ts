@@ -42,13 +42,13 @@ const TRACK_COLOR: Record<TrackId, number> = {
   EXIT: 0x4a5a70,
 };
 
-type DeviceKey = 'centre' | 'station' | 'merge' | 'sensors';
+type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensors';
 
 /** Where each device sits, in metres along the track and scene z. They go dark when switched off. */
 const DEVICES: Array<{ key: DeviceKey; x: number; z: number }> = [
   { key: 'centre', x: 5500, z: -90 },
-  { key: 'station', x: 5200, z: -40 },
-  { key: 'merge', x: 6300, z: -40 },
+  { key: 'platformKeeper', x: 5200, z: -40 },
+  { key: 'junctionKeeper', x: 6300, z: -40 },
   { key: 'sensors', x: 5800, z: -40 },
 ];
 

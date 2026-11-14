@@ -1,9 +1,9 @@
-import { MERGE_TIMEOUT, REQUEST_REPEAT, RESUME_SETTLE } from '../shared/constants';
+import { JUNCTION_KEEPER_TIMEOUT, REQUEST_REPEAT, RESUME_SETTLE } from '../shared/constants';
 import type { LocalActor, Message, Outgoing, SensorReadings, TrainId } from '../shared/types';
 import { longerThan, stillSettling, wasSwitchedOff } from './resume';
 
-// The merge actor owns the junction zone and grants one lock at a time.
-// Rules: docs/design.md, "Leaving the station" and "Merge switched off". The
+// The junction keeper owns the junction zone and grants one lock at a time.
+// Rules: docs/design.md, "Leaving the station" and "Junction keeper switched off". The
 // switched-back-on rule is from the review on pull request #31.
 //
 // The actor uses only `now`, its inbox and the sensor readings. In any doubtful case it
@@ -15,7 +15,7 @@ import { longerThan, stillSettling, wasSwitchedOff } from './resume';
  * It must stay shorter than RESUME_SETTLE, so that a train that left by clock slot while
  * the actor was off is out of the queue before the first grant after the actor is back.
  */
-export function mergeSilence(): number {
+export function junctionKeeperSilence(): number {
   return 2 * REQUEST_REPEAT;
 }
 
@@ -38,8 +38,8 @@ export interface JunctionHolder {
   seenEnter: boolean;
 }
 
-/** The merge actor's memory. It survives the actor being switched off and on again. */
-export interface MergeMemory {
+/** The junction keeper's memory. It survives the actor being switched off and on again. */
+export interface JunctionKeeperMemory {
   holder: JunctionHolder | null;
   queue: JunctionRequest[];
   /** The last train this actor saw into EXIT. The next grant names it in `follow`. */
@@ -58,7 +58,7 @@ export interface MergeMemory {
   zoneOccupiedSinceResume: boolean;
 }
 
-export function initialMergeMemory(): MergeMemory {
+export function initialJunctionKeeperMemory(): JunctionKeeperMemory {
   return {
     holder: null,
     queue: [],
@@ -115,7 +115,7 @@ export function recordJunctionRequests(
  * "Leaving the station": drop a request whose train has stopped asking, for example one
  * that left by clock slot. Otherwise the actor could grant a train that is gone and hold a
  * lock nobody uses. A request goes once its train has not been heard for longer than
- * `silence`. The step passes mergeSilence().
+ * `silence`. The step passes junctionKeeperSilence().
  */
 export function dropSilentRequests(
   queue: JunctionRequest[],
@@ -126,7 +126,7 @@ export function dropSilentRequests(
 }
 
 /**
- * "Merge switched off": a train that hears no reply for 10 seconds starts using clock
+ * "Junction keeper switched off": a train that hears no reply for 10 seconds starts using clock
  * slots. A train waiting in the queue behind others could wait that long while this actor
  * is alive, start in its slot, and meet the train the actor just granted. So the actor
  * answers every JUNCTION lockRequest it does not grant with a lockRefuse, alternative
@@ -141,7 +141,7 @@ export function dropSilentRequests(
  * Returns the trains to refuse this tick. `memory` is after this tick's grant, if any.
  */
 export function queuedToAnswer(
-  memory: MergeMemory,
+  memory: JunctionKeeperMemory,
   inbox: Message[],
   settling: boolean,
 ): TrainId[] {
@@ -188,7 +188,7 @@ export function canGrantJunction(
  * `follow` is the one unsafe value in this file. The train would take a limit point
  * beyond a train it has never heard and run at MAX_SPEED.
  */
-export function followFor(memory: MergeMemory, train: TrainId): TrainId | null {
+export function followFor(memory: JunctionKeeperMemory, train: TrainId): TrainId | null {
   return memory.leaderUnknown ? train : memory.lastIntoExit;
 }
 
@@ -210,7 +210,7 @@ export function observeJunction(holder: JunctionHolder, sensors: SensorReadings)
  * - Otherwise the train came by clock slot, or the holder is from before a gap, and this
  *   actor does not know who it is. Set leaderUnknown.
  */
-export function observeZone(memory: MergeMemory, sensors: SensorReadings): MergeMemory {
+export function observeZone(memory: JunctionKeeperMemory, sensors: SensorReadings): JunctionKeeperMemory {
   if (!sensors.junctionOccupied) return memory;
   const seen = { ...memory, zoneOccupiedSinceResume: true };
   const holder = memory.holder;
@@ -224,12 +224,12 @@ export interface JunctionReleaseCheck {
   now: number;
   holder: JunctionHolder;
   sensors: SensorReadings;
-  /** From MergeMemory. */
+  /** From JunctionKeeperMemory. */
   resumedAt: number | null;
   zoneOccupiedSinceResume: boolean;
   /** RESUME_SETTLE. */
   settle: number;
-  /** MERGE_TIMEOUT. A grant not used within this long is released. */
+  /** JUNCTION_KEEPER_TIMEOUT. A grant not used within this long is released. */
   unused: number;
 }
 
@@ -264,7 +264,7 @@ export function canReleaseJunction(check: JunctionReleaseCheck): boolean {
  *   clears the trains that left by clock slot.
  * - Keep the holder. canReleaseJunction decides about it after the window.
  */
-export function resumeMerge(memory: MergeMemory, now: number): MergeMemory {
+export function resumeJunctionKeeper(memory: JunctionKeeperMemory, now: number): JunctionKeeperMemory {
   return {
     ...memory,
     queue: memory.queue.map((r) => ({ ...r, lastHeardAt: now })),
@@ -276,7 +276,7 @@ export function resumeMerge(memory: MergeMemory, now: number): MergeMemory {
 }
 
 /** Updates the holder from the sensors, then frees the lock if canReleaseJunction. */
-function updateHolder(memory: MergeMemory, sensors: SensorReadings, now: number): MergeMemory {
+function updateHolder(memory: JunctionKeeperMemory, sensors: SensorReadings, now: number): JunctionKeeperMemory {
   if (memory.holder === null) return memory;
   const holder = observeJunction(memory.holder, sensors);
   const release = canReleaseJunction({
@@ -286,13 +286,13 @@ function updateHolder(memory: MergeMemory, sensors: SensorReadings, now: number)
     resumedAt: memory.resumedAt,
     zoneOccupiedSinceResume: memory.zoneOccupiedSinceResume,
     settle: RESUME_SETTLE,
-    unused: MERGE_TIMEOUT,
+    unused: JUNCTION_KEEPER_TIMEOUT,
   });
   return { ...memory, holder: release ? null : holder };
 }
 
 /** The trains whose requests are not queued: the holder and the last train into EXIT. */
-function notQueued(memory: MergeMemory): TrainId[] {
+function notQueued(memory: JunctionKeeperMemory): TrainId[] {
   const skip: TrainId[] = [];
   if (memory.holder !== null) skip.push(memory.holder.train);
   if (memory.lastIntoExit !== null) skip.push(memory.lastIntoExit);
@@ -301,11 +301,11 @@ function notQueued(memory: MergeMemory): TrainId[] {
 
 /** Grants the next train in the queue, if canGrantJunction. */
 function grantNext(
-  memory: MergeMemory,
+  memory: JunctionKeeperMemory,
   sensors: SensorReadings,
   settling: boolean,
   now: number,
-): MergeMemory {
+): JunctionKeeperMemory {
   if (!canGrantJunction(memory.holder, sensors, settling)) return memory;
   const train = nextForJunction(memory.queue);
   if (train === null) return memory;
@@ -327,20 +327,20 @@ function refusalTo(train: TrainId): Outgoing {
   };
 }
 
-/** One step of the merge actor: the memory after the step and the replies to send. */
-export function stepMerge(
-  before: MergeMemory,
+/** One step of the junction keeper: the memory after the step and the replies to send. */
+export function stepJunctionKeeper(
+  before: JunctionKeeperMemory,
   now: number,
   inbox: Message[],
   sensors: SensorReadings,
-): { memory: MergeMemory; out: Outgoing[] } {
-  let memory = wasSwitchedOff(before.lastStepAt, now) ? resumeMerge(before, now) : before;
+): { memory: JunctionKeeperMemory; out: Outgoing[] } {
+  let memory = wasSwitchedOff(before.lastStepAt, now) ? resumeJunctionKeeper(before, now) : before;
   const settling = stillSettling(memory.resumedAt, now, RESUME_SETTLE);
   memory = observeZone(memory, sensors);
   memory = updateHolder(memory, sensors, now);
 
   const recorded = recordJunctionRequests(memory.queue, inbox, now, notQueued(memory));
-  memory = { ...memory, queue: dropSilentRequests(recorded, now, mergeSilence()) };
+  memory = { ...memory, queue: dropSilentRequests(recorded, now, junctionKeeperSilence()) };
 
   const holderBefore = memory.holder;
   memory = grantNext(memory, sensors, settling, now);
@@ -359,13 +359,13 @@ export function stepMerge(
   return { memory: { ...memory, lastStepAt: now }, out };
 }
 
-/** Builds the merge actor. Its memory lives in this closure. */
-export function createMergeActor(): LocalActor {
-  let memory = initialMergeMemory();
+/** Builds the junction keeper. Its memory lives in this closure. */
+export function createJunctionKeeper(): LocalActor {
+  let memory = initialJunctionKeeperMemory();
   return {
-    id: 'merge',
+    id: 'junctionKeeper',
     step(now: number, inbox: Message[], sensors: SensorReadings): Outgoing[] {
-      const result = stepMerge(memory, now, inbox, sensors);
+      const result = stepJunctionKeeper(memory, now, inbox, sensors);
       memory = result.memory;
       return result.out;
     },

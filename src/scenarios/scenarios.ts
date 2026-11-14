@@ -19,8 +19,8 @@ export interface Scenario {
   failure: { set: Partial<Switches>; restore: Partial<Switches> } | null;
 }
 
-const ALL_LOCAL_AND_CENTRE_OFF: Partial<Switches> = { centre: false, station: false, merge: false };
-const ALL_LOCAL_AND_CENTRE_ON: Partial<Switches> = { centre: true, station: true, merge: true };
+const ALL_LOCAL_AND_CENTRE_OFF: Partial<Switches> = { centre: false, platformKeeper: false, junctionKeeper: false };
+const ALL_LOCAL_AND_CENTRE_ON: Partial<Switches> = { centre: true, platformKeeper: true, junctionKeeper: true };
 
 export const SCENARIOS: Record<ScenarioId, Scenario> = {
   healthy: {
@@ -45,7 +45,7 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
     id: 'local-fault',
     title: 'Local fault',
     tier: 'should',
-    failure: { set: { merge: false }, restore: { merge: true } },
+    failure: { set: { junctionKeeper: false }, restore: { junctionKeeper: true } },
   },
   'blackout-silent': {
     id: 'blackout-silent',

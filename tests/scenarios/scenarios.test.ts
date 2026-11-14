@@ -15,8 +15,8 @@ describe('SCENARIOS', () => {
 
   it('cuts the centre and both local actors in the talking blackout, leaving the radio', () => {
     const f = SCENARIOS['blackout-talking'].failure!;
-    expect(f.set).toEqual({ centre: false, station: false, merge: false });
-    expect(f.restore).toEqual({ centre: true, station: true, merge: true });
+    expect(f.set).toEqual({ centre: false, platformKeeper: false, junctionKeeper: false });
+    expect(f.restore).toEqual({ centre: true, platformKeeper: true, junctionKeeper: true });
   });
 
   it('also silences the radio in the silent blackout and restores it', () => {
@@ -26,10 +26,10 @@ describe('SCENARIOS', () => {
     expect(f.set.centre).toBe(false);
   });
 
-  it('turns only the merge actor off in the local fault', () => {
+  it('turns only the junction keeper off in the local fault', () => {
     expect(SCENARIOS['local-fault'].failure).toEqual({
-      set: { merge: false },
-      restore: { merge: true },
+      set: { junctionKeeper: false },
+      restore: { junctionKeeper: true },
     });
   });
 

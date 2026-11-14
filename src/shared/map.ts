@@ -7,7 +7,7 @@ import type { PlatformId, Position, TimetableEntry, TrackId } from './types';
 
 type EntryTrack = TimetableEntry['entry'];
 
-/** The two platforms each entry track owns. From "Station switched off" in docs/design.md. */
+/** The two platforms each entry track owns. From "Platform keeper switched off" in docs/design.md. */
 export const PLATFORM_PAIRS: Record<'A' | 'B', readonly [PlatformId, PlatformId]> = {
   A: ['P1', 'P2'],
   B: ['P3', 'P4'],
@@ -61,11 +61,11 @@ export const EXIT_CLEAR_LENGTH = 300;
 
 /**
  * Where a train can hear each short-range actor, as [from x, to x]. Use with `inRange`.
- * station: the station actor. merge: the merge actor. sensors: the platform sensors.
+ * platformKeeper: the platform keeper. junctionKeeper: the junction keeper. sensors: the platform sensors.
  */
 export const RANGE = {
-  station: [4300, 6400],
-  merge: [6000, 6600],
+  platformKeeper: [4300, 6400],
+  junctionKeeper: [6000, 6600],
   sensors: [5500, 6400],
 } as const;
 

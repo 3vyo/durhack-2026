@@ -408,7 +408,7 @@ describe('isAvailable', () => {
     expect(isAvailable('JUNCTION', memory, { ...clear, junctionOccupied: true })).toBe(false);
   });
 
-  it('says the junction is unavailable while exitStartClear is false (borrowed from the merge actor in "Leaving the station")', () => {
+  it('says the junction is unavailable while exitStartClear is false (borrowed from the junction keeper in "Leaving the station")', () => {
     expect(isAvailable('JUNCTION', memory, { ...clear, exitStartClear: false })).toBe(false);
   });
 
@@ -511,7 +511,7 @@ describe('nextThroughJunction', () => {
     expect(nextThroughJunction(ready, waiting, { ...clear, junctionOccupied: true }, 100)).toBeNull();
   });
 
-  it('returns null while exitStartClear is false (borrowed from the merge actor in "Leaving the station")', () => {
+  it('returns null while exitStartClear is false (borrowed from the junction keeper in "Leaving the station")', () => {
     expect(nextThroughJunction(ready, waiting, { ...clear, exitStartClear: false }, 100)).toBeNull();
   });
 
@@ -525,7 +525,7 @@ describe('nextThroughJunction', () => {
     expect(nextThroughJunction({ ...ready, junctionOrder: [3, 1, 2] }, waiting, clear, 100)).toBe(3);
   });
 
-  it('puts the lowest ID first in junctionOrder when two trains become ready in the same step (borrowed from the merge actor in "Leaving the station")', () => {
+  it('puts the lowest ID first in junctionOrder when two trains become ready in the same step (borrowed from the junction keeper in "Leaving the station")', () => {
     const reversed = [...waiting].reverse();
     expect(seen(reversed, 100, seen(reversed, 0)).junctionOrder).toEqual([1, 2, 3]);
     // A train that was already waiting stays ahead of one that becomes ready later.
@@ -781,7 +781,7 @@ describe('leader in the permit (design: "The centre comes first")', () => {
 });
 
 describe('local failures', () => {
-  it('sends the same permits whatever the station actor, merge actor and platform sensors are doing', () => {
+  it('sends the same permits whatever the platform keeper, junction keeper and platform sensors are doing', () => {
     // step has no input for them: the engine passes the true occupancy, not our sensors.
     const two: TimetableEntry[] = [
       { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -807,7 +807,7 @@ describe('local failures', () => {
       return log;
     };
     const healthy = permitsWith([]);
-    const broken = permitsWith([{ at: 0, set: { station: false, merge: false, sensors: false } }]);
+    const broken = permitsWith([{ at: 0, set: { platformKeeper: false, junctionKeeper: false, sensors: false } }]);
     expect(broken).toEqual(healthy);
     expect(healthy.flat().some((msg) => msg.type === 'permit' && msg.nextTrack === 'EXIT')).toBe(true);
   });

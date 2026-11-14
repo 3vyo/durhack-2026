@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MERGE_TIMEOUT,
+  JUNCTION_KEEPER_TIMEOUT,
   PERMIT_FRESH,
   PERMIT_INTERVAL,
   POSITION_INTERVAL,
@@ -9,7 +9,7 @@ import {
   SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
-  STATION_TIMEOUT,
+  PLATFORM_KEEPER_TIMEOUT,
   TICK,
 } from '../../src/shared/constants';
 
@@ -32,8 +32,8 @@ describe('timers', () => {
     expect(REQUEST_REPEAT).toBe(2);
   });
 
-  it('waits 10 seconds for the merge actor ("After 10 seconds without a reply")', () => {
-    expect(MERGE_TIMEOUT).toBe(10);
+  it('waits 10 seconds for the junction keeper ("After 10 seconds without a reply")', () => {
+    expect(JUNCTION_KEEPER_TIMEOUT).toBe(10);
   });
 
   it('uses 60 second slots, 4 of them, with a 15 second start window', () => {
@@ -42,9 +42,9 @@ describe('timers', () => {
     expect(SLOT_WINDOW).toBe(15);
   });
 
-  it('waits as long for the station actor as for the merge actor before falling back', () => {
-    expect(STATION_TIMEOUT).toBe(10);
-    expect(STATION_TIMEOUT).toBe(MERGE_TIMEOUT);
+  it('waits as long for the platform keeper as for the junction keeper before falling back', () => {
+    expect(PLATFORM_KEEPER_TIMEOUT).toBe(10);
+    expect(PLATFORM_KEEPER_TIMEOUT).toBe(JUNCTION_KEEPER_TIMEOUT);
   });
 
   it('settles for at least one request repeat plus two ticks after an actor comes back', () => {

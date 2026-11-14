@@ -1,9 +1,9 @@
 import type { LocalActor, TimetableEntry } from '../shared/types';
-import { createMergeActor } from './merge';
-import { createStationActor } from './station';
+import { createJunctionKeeper } from './junction-keeper';
+import { createPlatformKeeper } from './platform-keeper';
 
 /**
- * Builds the station actor and the merge actor for our program. This is
+ * Builds the platform keeper and the junction keeper for our program. This is
  * TrainProgram.makeActors in src/engine/ports.ts. Their rules are in docs/design.md under
  * "Entering the station", "Platform sensors switched off" and "Leaving the station".
  *
@@ -11,5 +11,5 @@ import { createStationActor } from './station';
  * each actor's step.
  */
 export function makeActors(timetable: TimetableEntry[]): LocalActor[] {
-  return [createStationActor(timetable), createMergeActor()];
+  return [createPlatformKeeper(timetable), createJunctionKeeper()];
 }

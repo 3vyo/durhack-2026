@@ -170,7 +170,7 @@ describe('The centre comes first: obeying a fresh permit', () => {
     expect(requests(run)).toEqual([]);
   });
 
-  it('waits in its platform until the centre sends it on, and never asks the merge actor', () => {
+  it('waits in its platform until the centre sends it on, and never asks the junction keeper', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 299 }, 0);
     for (let i = 0; i < 600; i++) tick(run, [permitMsg(run.now - TICK, 6300, null)]);
     expect(run.state.pos.track).toBe('P1');
@@ -229,7 +229,7 @@ describe('The centre comes first: carrying on when the centre fails', () => {
     expect(committedPlatform(near, null, 'A', N)).toBeNull();
   });
 
-  it('a train that can no longer stop runs into the platform the centre gave it and asks the station for it', () => {
+  it('a train that can no longer stop runs into the platform the centre gave it and asks the platform keeper for it', () => {
     // The last permit is nearly 5 seconds old, so it goes stale on the next tick.
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5950 }, 21, 100);
     tick(run, [permitMsg(100 - PERMIT_FRESH + 0.2, 6300, 'P2')]);
@@ -250,7 +250,7 @@ describe('The centre comes first: carrying on when the centre fails', () => {
     expect(requests(run)[0]).toBe('P1');
   });
 
-  it('a train the centre let into the junction zone carries on out without asking the merge actor', () => {
+  it('a train the centre let into the junction zone carries on out without asking the junction keeper', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 310 }, 5);
     tick(run, [permitMsg(run.now - TICK, 12400, 'EXIT', 1, null)]);
     ticks(run, 600);
@@ -279,7 +279,7 @@ describe('The centre comes first: carrying on when the centre fails', () => {
     expect(speedAfterReport(null)).toBeGreaterThan(SIGHT_SPEED + 1);
   });
 
-  it('a train in its platform, not yet past the stop, waits and asks the merge actor as usual', () => {
+  it('a train in its platform, not yet past the stop, waits and asks the junction keeper as usual', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'P1', offset: 250 }, 0);
     tick(run, [permitMsg(run.now - TICK, 6300, null, 1, null)]);
     ticks(run, 500);

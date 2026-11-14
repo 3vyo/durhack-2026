@@ -55,7 +55,7 @@ function zoneEdgeDistance(track: TrackId, offset: number, nextTrack: TrackId | n
 /**
  * What the wired and platform sensors report. A platform reads occupied while any part of a
  * train is on it. A dead platform sensor reads occupied, never empty. The junction and the
- * start of EXIT are wired to the merge actor, so they do not depend on the platform sensors.
+ * start of EXIT are wired to the junction keeper, so they do not depend on the platform sensors.
  */
 export function readSensors(bodies: Body[], sw: Switches): SensorReadings {
   const segments = bodies.flatMap((b) => footprint(b));

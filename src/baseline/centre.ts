@@ -40,7 +40,7 @@ import type {
 // It is today's system, and both programs get the same permits from it. It decides
 // everything and uses no locks. untilX keeps a train behind the train ahead, at the end of
 // its entry track until it has a platform it may enter, and at the platform stop until it
-// holds the junction. It never depends on the station actor, the merge actor or our
+// holds the junction. It never depends on the platform keeper, the junction keeper or our
 // platform sensors, which only our trains use.
 //
 // untilX is freeRunX() when nothing limits the train. That x is far enough past the end

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MERGE_TIMEOUT,
+  JUNCTION_KEEPER_TIMEOUT,
   REQUEST_REPEAT,
   SIGHT_SPEED,
   SLOT_COUNT,
@@ -14,7 +14,7 @@ import {
   dwellDone,
   junctionRequest,
   mayStartInSlot,
-  mergeReply,
+  junctionKeeperReply,
   slotOpen,
   useClockSlots,
 } from '../../src/train/depart';
@@ -119,34 +119,34 @@ describe('Leaving the station: asking for the junction', () => {
   });
 });
 
-describe('Leaving the station: merge replies', () => {
+describe('Leaving the station: junction keeper replies', () => {
   it('reads a lockGrant for JUNCTION addressed to itself', () => {
-    expect(mergeReply([grant], 1)).toEqual({ kind: 'grant', follow: 7 });
+    expect(junctionKeeperReply([grant], 1)).toEqual({ kind: 'grant', follow: 7 });
   });
 
   it('reads a lockRefuse for JUNCTION addressed to itself', () => {
-    expect(mergeReply([refuse], 1)).toEqual({ kind: 'refuse' });
+    expect(junctionKeeperReply([refuse], 1)).toEqual({ kind: 'refuse' });
   });
 
   it('ignores junction replies addressed to other trains', () => {
-    expect(mergeReply([grant, refuse], 2)).toBeNull();
+    expect(junctionKeeperReply([grant, refuse], 2)).toBeNull();
   });
 
-  it('ignores platform grants and refusals when reading the merge reply', () => {
+  it('ignores platform grants and refusals when reading the junction keeper reply', () => {
     const inbox: Message[] = [
       { type: 'lockGrant', to: 1, resource: 'P1', follow: null },
       { type: 'lockRefuse', to: 1, resource: 'P1', alternative: 'P2' },
     ];
-    expect(mergeReply(inbox, 1)).toBeNull();
+    expect(junctionKeeperReply(inbox, 1)).toBeNull();
   });
 
   it('when one inbox holds a junction grant and a refusal for this train, the grant wins', () => {
-    expect(mergeReply([refuse, grant], 1)).toEqual({ kind: 'grant', follow: 7 });
-    expect(mergeReply([grant, refuse], 1)).toEqual({ kind: 'grant', follow: 7 });
+    expect(junctionKeeperReply([refuse, grant], 1)).toEqual({ kind: 'grant', follow: 7 });
+    expect(junctionKeeperReply([grant, refuse], 1)).toEqual({ kind: 'grant', follow: 7 });
   });
 
-  it('a JUNCTION refusal counts as a reply from the merge actor', () => {
-    // Refused every 2 seconds, the train never reaches the merge timeout, even in its slot.
+  it('a JUNCTION refusal counts as a reply from the junction keeper', () => {
+    // Refused every 2 seconds, the train never reaches the junction keeper timeout, even in its slot.
     const run = dwelling(1, 'P1', 4 * SLOT_LENGTH - 35);
     for (let i = 0; i < 600; i++) {
       tick(run, i % 20 === 0 ? [refuse] : []);
@@ -250,23 +250,23 @@ describe('Leaving the station: the grant', () => {
   });
 });
 
-describe('Merge switched off: when to use clock slots', () => {
+describe('Junction keeper switched off: when to use clock slots', () => {
   it('switches to clock slots after 10 seconds of asking with no reply', () => {
-    expect(useClockSlots(100, null, 100 + MERGE_TIMEOUT, N)).toBe(true);
+    expect(useClockSlots(100, null, 100 + JUNCTION_KEEPER_TIMEOUT, N)).toBe(true);
     expect(useClockSlots(100, null, 500, N)).toBe(true);
   });
 
-  it('keeps waiting for the merge actor before 10 seconds', () => {
+  it('keeps waiting for the junction keeper before 10 seconds', () => {
     expect(useClockSlots(100, null, 100, N)).toBe(false);
-    expect(useClockSlots(100, null, 100 + MERGE_TIMEOUT - TICK, N)).toBe(false);
+    expect(useClockSlots(100, null, 100 + JUNCTION_KEEPER_TIMEOUT - TICK, N)).toBe(false);
     expect(useClockSlots(null, null, 1000, N)).toBe(false);
   });
 
-  it('counts the 10 seconds from the later of its first junction request and the last merge reply', () => {
-    expect(useClockSlots(100, 104, 100 + MERGE_TIMEOUT, N)).toBe(false);
-    expect(useClockSlots(100, 104, 104 + MERGE_TIMEOUT, N)).toBe(true);
-    expect(useClockSlots(100, 90, 100 + MERGE_TIMEOUT - 1, N)).toBe(false);
-    expect(useClockSlots(100, 90, 100 + MERGE_TIMEOUT, N)).toBe(true);
+  it('counts the 10 seconds from the later of its first junction request and the last junction keeper reply', () => {
+    expect(useClockSlots(100, 104, 100 + JUNCTION_KEEPER_TIMEOUT, N)).toBe(false);
+    expect(useClockSlots(100, 104, 104 + JUNCTION_KEEPER_TIMEOUT, N)).toBe(true);
+    expect(useClockSlots(100, 90, 100 + JUNCTION_KEEPER_TIMEOUT - 1, N)).toBe(false);
+    expect(useClockSlots(100, 90, 100 + JUNCTION_KEEPER_TIMEOUT, N)).toBe(true);
   });
 
   it('does not use clock slots after a reply in the last 10 seconds', () => {
@@ -285,16 +285,16 @@ describe('Merge switched off: when to use clock slots', () => {
       if (tick(run).nextTrack === 'EXIT') lookedAt = run.now - TICK;
     }
     expect(lookedAt).not.toBeNull();
-    expect(lookedAt! - refusedAt).toBeCloseTo(MERGE_TIMEOUT, 6);
+    expect(lookedAt! - refusedAt).toBeCloseTo(JUNCTION_KEEPER_TIMEOUT, 6);
   });
 
   it('judges the 10 seconds with half a tick of slack', () => {
-    expect(useClockSlots(100, null, 100 + MERGE_TIMEOUT - 1e-9, N)).toBe(true);
-    expect(useClockSlots(100, null, 100 + MERGE_TIMEOUT - TICK + 1e-9, N)).toBe(false);
+    expect(useClockSlots(100, null, 100 + JUNCTION_KEEPER_TIMEOUT - 1e-9, N)).toBe(true);
+    expect(useClockSlots(100, null, 100 + JUNCTION_KEEPER_TIMEOUT - TICK + 1e-9, N)).toBe(false);
   });
 });
 
-describe('Merge switched off: the slots', () => {
+describe('Junction keeper switched off: the slots', () => {
   const platforms: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
 
   /** The platforms whose slot is open at `now`. */
@@ -354,7 +354,7 @@ describe('Merge switched off: the slots', () => {
   });
 });
 
-describe('Merge switched off: starting', () => {
+describe('Junction keeper switched off: starting', () => {
   /** Train 1 in P1, asking with no reply since about now 195. P1's slot opens at 240. */
   function waiting(): Run {
     const run = dwelling(1, 'P1', 4 * SLOT_LENGTH - 75);

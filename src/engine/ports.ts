@@ -23,7 +23,7 @@ import type {
  * `sensors` is the true occupancy of the track, from the centre's own train detection. It
  * does not depend on our platform sensors, which only our trains use. `routes` is the track
  * each train has set to take next, as the signalling shows it. The centre is today's
- * system, so it never depends on the station actor, the merge actor or our platform sensors.
+ * system, so it never depends on the platform keeper, the junction keeper or our platform sensors.
  */
 export interface ControlCentre {
   step(now: number, trains: TrainState[], sensors: SensorReadings, routes: Map<TrainId, TrackId | null>): Message[];

@@ -153,30 +153,30 @@ describe('inJunctionZone', () => {
 });
 
 describe('RANGE and inRange', () => {
-  it('lets a train reach the station actor from x 4300 to 6400', () => {
-    expect(RANGE.station).toEqual([4300, 6400]);
+  it('lets a train reach the platform keeper from x 4300 to 6400', () => {
+    expect(RANGE.platformKeeper).toEqual([4300, 6400]);
   });
 
-  it('lets a train reach the merge actor from x 6000 to 6600', () => {
-    expect(RANGE.merge).toEqual([6000, 6600]);
+  it('lets a train reach the junction keeper from x 6000 to 6600', () => {
+    expect(RANGE.junctionKeeper).toEqual([6000, 6600]);
   });
 
   it('lets a train hear platform sensors from x 5500 to 6400', () => {
     expect(RANGE.sensors).toEqual([5500, 6400]);
   });
 
-  it('counts both ends of the station range as inside', () => {
-    expect(inRange(4299, RANGE.station)).toBe(false);
-    expect(inRange(4300, RANGE.station)).toBe(true);
-    expect(inRange(6400, RANGE.station)).toBe(true);
-    expect(inRange(6401, RANGE.station)).toBe(false);
+  it('counts both ends of the platform keeper range as inside', () => {
+    expect(inRange(4299, RANGE.platformKeeper)).toBe(false);
+    expect(inRange(4300, RANGE.platformKeeper)).toBe(true);
+    expect(inRange(6400, RANGE.platformKeeper)).toBe(true);
+    expect(inRange(6401, RANGE.platformKeeper)).toBe(false);
   });
 
-  it('counts both ends of the merge range as inside', () => {
-    expect(inRange(5999, RANGE.merge)).toBe(false);
-    expect(inRange(6000, RANGE.merge)).toBe(true);
-    expect(inRange(6600, RANGE.merge)).toBe(true);
-    expect(inRange(6601, RANGE.merge)).toBe(false);
+  it('counts both ends of the junction keeper range as inside', () => {
+    expect(inRange(5999, RANGE.junctionKeeper)).toBe(false);
+    expect(inRange(6000, RANGE.junctionKeeper)).toBe(true);
+    expect(inRange(6600, RANGE.junctionKeeper)).toBe(true);
+    expect(inRange(6601, RANGE.junctionKeeper)).toBe(false);
   });
 
   it('counts both ends of the sensor range as inside', () => {
