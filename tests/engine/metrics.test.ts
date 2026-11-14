@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RunResult } from '../../src/engine/engine';
-import { ON_TIME_SLACK, timeToNormal, totalDelay } from '../../src/engine/metrics';
+import { ON_TIME_SLACK, delaySoFar, timeToNormal, totalDelay } from '../../src/engine/metrics';
 
 function run(exits: Record<number, number>, runLength = 1000): RunResult {
   return {
@@ -36,6 +36,29 @@ describe('totalDelay', () => {
 
   it('is zero for a run identical to its reference', () => {
     expect(totalDelay(reference, reference)).toBe(0);
+  });
+});
+
+describe('delaySoFar', () => {
+  it('counts a train that has not exited as overdue from its reference exit time', () => {
+    // Train 1 exited 50 s late. Train 2 is 50 s overdue at t = 250. Train 3 is not due yet.
+    const soFar = run({ 1: 150 }, 1000);
+    expect(delaySoFar(soFar, reference, 250)).toBe(50 + 50 + 0);
+  });
+
+  it('keeps growing while trains are stuck, which a delay counted only at exit would miss', () => {
+    const stuck = run({}, 1000);
+    expect(delaySoFar(stuck, reference, 250)).toBe(150 + 50);
+    expect(delaySoFar(stuck, reference, 400)).toBe(300 + 200 + 100);
+  });
+
+  it('agrees with totalDelay once every train has left', () => {
+    const done = run({ 1: 150, 2: 215, 3: 305 });
+    expect(delaySoFar(done, reference, 500)).toBe(totalDelay(done, reference));
+  });
+
+  it('adds nothing for a train that exited early', () => {
+    expect(delaySoFar(run({ 1: 90, 2: 200, 3: 300 }), reference, 500)).toBe(0);
   });
 });
 
