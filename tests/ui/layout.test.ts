@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
+  LANE_SPACING,
+  STATION_FRAME,
+  UNITS_PER_METRE,
   cameraPreset,
   isStopped,
   laneOf,
@@ -90,9 +93,29 @@ describe('cameraPreset', () => {
 });
 
 describe('modeColor', () => {
-  it('gives each of the four modes its own colour', () => {
-    const colours = (['central', 'full', 'stale', 'blind'] as const).map(modeColor);
-    expect(new Set(colours).size).toBe(4);
+  it('gives each of the five modes its own colour, from the palette', () => {
+    const colours = (['central', 'radio', 'full', 'stale', 'blind'] as const).map(modeColor);
+    expect(new Set(colours).size).toBe(5);
+    expect(modeColor('central')).toBe(0x3987e5);
+  });
+});
+
+describe('native units and the station frame', () => {
+  it('uses the kit units, 0.08 per metre, across the frame', () => {
+    expect(STATION_FRAME.width / (STATION_FRAME.xMax - STATION_FRAME.xMin)).toBeCloseTo(UNITS_PER_METRE, 9);
+    expect(STATION_FRAME).toMatchObject({ xMin: 5000, xMax: 6800 });
+  });
+
+  it('puts x 5900 in the middle of the frame', () => {
+    expect(toScreenX(5900, STATION_FRAME)).toBeCloseTo(72, 9);
+  });
+
+  it('draws a 100 m train 8 units long, its true length', () => {
+    expect(markersFor(snapshotWith(5900), STATION_FRAME)[0].lengthPx).toBeCloseTo(8, 9);
+  });
+
+  it('puts the lanes 4 units apart', () => {
+    expect(LANE_SPACING).toBe(4);
   });
 });
 

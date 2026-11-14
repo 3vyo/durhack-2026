@@ -23,7 +23,14 @@ const WIDTH = 1500;
 const HEIGHT = 950;
 
 /** Extra page text the screen must show, added as the screen grows. */
-const REQUIRED_TEXT = [];
+const REQUIRED_TEXT = [
+  'How each train is deciding',
+  'Obeys the control centre',
+  'Moved by staff over the radio, at caution speed',
+  'Hears the train ahead',
+  'The last report from the train ahead is old',
+  'No report from the train ahead',
+];
 
 const results = [];
 const problems = [];
@@ -248,7 +255,7 @@ async function main() {
     else fail('two scenes and two minimaps are drawn', `${canvases} canvases`);
     const text = await bodyText();
     for (const t of ['Centre outage', 'Trains through', ...REQUIRED_TEXT]) {
-      if (text.includes(t)) pass(`page shows "${t}"`);
+      if (text.toLowerCase().includes(t.toLowerCase())) pass(`page shows "${t}"`);
       else fail(`page shows "${t}"`);
     }
 
