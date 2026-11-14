@@ -251,14 +251,14 @@ A switched-off platform sensor does two things.
 
 With every sensor off and the station actor alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the station-off rule and creeps.
 
-The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The station actor keeps a lock while it hears those requests.
+The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The station actor keeps a lock while it hears those requests. It answers each one with the grant again, never a refusal, even when the train's own front makes the sensor read occupied. A train that holds a platform grant ignores a later refusal for that platform.
 
 ### Leaving the station
 
 1. After its dwell time a train sends a `lockRequest` for `JUNCTION` and repeats it every 2 seconds.
 2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
-3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted.
-4. On a grant the train sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
+3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted. The merge actor never refuses the train that holds the lock, and a train that holds the grant ignores any later `JUNCTION` refusal.
+4. On a grant the train stops asking, sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
 5. The merge actor releases the lock when its sensor shows the junction zone is empty again.
 
 ### Merge switched off
