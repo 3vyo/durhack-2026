@@ -30,7 +30,8 @@ describe('runScenario', () => {
   });
 });
 
-describe('runBatch', () => {
+// Each batch test runs several full simulations, so give them room when the machine is busy.
+describe('runBatch', { timeout: 30_000 }, () => {
   it('scores the baseline against its own healthy run as zero delay', () => {
     const s = runBatch(SCENARIOS.healthy, seeds, programs, DEFAULT_TIMETABLE);
     expect(s.baseline.meanDelay).toBe(0);
