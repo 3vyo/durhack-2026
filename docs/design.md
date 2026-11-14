@@ -212,11 +212,11 @@ When permits return, the train follows them again on the next tick. It keeps any
 
 1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
 2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for the platform its permit suggests, or for its default platform if it has no fresh permit.
-3. On a `lockGrant` it sets `nextTrack` to that platform and runs in.
+3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
 
-The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave.
+The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave. If two trains ask for the same free platform on the same tick, the train with the earlier `enterAt` gets it.
 
 The train counts its own dwell time from the moment it stops in the platform.
 
@@ -251,18 +251,19 @@ A switched-off platform sensor does two things.
 
 With every sensor off and the station actor alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the station-off rule and creeps.
 
-The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. How it guards that is the station actor's own choice. One way is for a train to repeat its request until it is in the platform, and for the actor to keep the lock while it hears those requests.
+The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The station actor keeps a lock while it hears those requests. It answers each one with the grant again, never a refusal, even when the train's own front makes the sensor read occupied. A train that holds a platform grant ignores a later refusal for that platform.
 
 ### Leaving the station
 
 1. After its dwell time a train sends a `lockRequest` for `JUNCTION` and repeats it every 2 seconds.
 2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
-3. On a grant the train sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
-4. The merge actor releases the lock when its sensor shows the junction zone is empty again.
+3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted. The merge actor never refuses the train that holds the lock, and a train that holds the grant ignores any later `JUNCTION` refusal.
+4. On a grant the train stops asking, sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
+5. The merge actor releases the lock when its sensor shows the junction zone is empty again.
 
 ### Merge switched off
 
-After 10 seconds without a reply, a train uses clock slots. Every train has an accurate clock, so no messages are needed.
+After 10 seconds without a reply, a train uses clock slots. The 10 seconds count from the later of its first `JUNCTION` request and the last reply it heard from the merge actor. Every train has an accurate clock, so no messages are needed.
 
 ```
 slot = floor(now / 60) mod 4
@@ -282,12 +283,19 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 
 A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
 
-The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats permits as hints.
+When its permits stop, a baseline train keeps two things from its last permit.
+
+- It keeps its last `nextTrack` while it waits. A train still braking can cross onto its platform, and a null `nextTrack` would end its path at the end of its entry track.
+- The `untilX` of its last permit still applies after the permit is stale. A baseline train never goes faster than `safeSpeed` of the distance to that `untilX`, so full braking always stops it at or before that x.
+
+There is one control centre, and it lives in `src/baseline/`. Both train programs get their permits from it. The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats the same permits as hints.
 
 The baseline's centre uses no locks, so a local fault needs its own rule.
 
 - A dead platform sensor means the centre cannot tell if that platform is clear. It treats the platform as occupied and permits no train into it.
 - A dead station actor or merge actor means the centre treats that piece of track as unavailable. It permits no train through it.
+
+The team has not yet decided whether the dead actor rule also applies to the permits the centre sends our trains.
 
 ## Metrics
 
@@ -304,7 +312,7 @@ The baseline's centre uses no locks, so a local fault needs its own rule.
 | `src/engine/` | Clock, physics, map, radio, timetable, failure switches, metrics |
 | `src/train/` | The train agent |
 | `src/locks/` | Station actor, merge actor, platform sensors |
-| `src/baseline/` | Central controller and the baseline train agent |
+| `src/baseline/` | The control centre, used by both train programs, and the baseline train agent |
 | `src/ui/` | Canvas, controls, metrics panel |
 
 Stack: TypeScript, Vite, a canvas, and Vitest for tests. No server.
