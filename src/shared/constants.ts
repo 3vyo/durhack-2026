@@ -26,6 +26,8 @@ export const PERMIT_INTERVAL = 1; // the control centre sends each train a permi
 export const POSITION_INTERVAL = 1; // each train broadcasts its position this often
 export const REQUEST_REPEAT = 2; // a train repeats a lockRequest this often
 export const MERGE_TIMEOUT = 10; // with no reply from the merge actor for this long, a train uses clock slots
+export const STATION_TIMEOUT = 10; // with no reply from the station actor for this long, a train stopped at the end of its entry track uses the fixed split
+export const RESUME_SETTLE = 5; // a local actor that is switched back on grants nothing for this long
 
 // Clock slots, used while the merge actor is switched off.
 // slot = floor(now / SLOT_LENGTH) mod SLOT_COUNT. Platform Pk may start during the

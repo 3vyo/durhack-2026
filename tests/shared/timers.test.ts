@@ -5,9 +5,12 @@ import {
   PERMIT_INTERVAL,
   POSITION_INTERVAL,
   REQUEST_REPEAT,
+  RESUME_SETTLE,
   SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
+  STATION_TIMEOUT,
+  TICK,
 } from '../../src/shared/constants';
 
 // Each value is checked against the line in docs/design.md that states it.
@@ -37,5 +40,15 @@ describe('timers', () => {
     expect(SLOT_LENGTH).toBe(60);
     expect(SLOT_COUNT).toBe(4);
     expect(SLOT_WINDOW).toBe(15);
+  });
+
+  it('waits as long for the station actor as for the merge actor before falling back', () => {
+    expect(STATION_TIMEOUT).toBe(10);
+    expect(STATION_TIMEOUT).toBe(MERGE_TIMEOUT);
+  });
+
+  it('settles for at least one request repeat plus two ticks after an actor comes back', () => {
+    expect(RESUME_SETTLE).toBe(5);
+    expect(RESUME_SETTLE).toBeGreaterThanOrEqual(REQUEST_REPEAT + 2 * TICK);
   });
 });
