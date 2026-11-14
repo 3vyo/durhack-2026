@@ -9,7 +9,7 @@ describe('switchesAt', () => {
 
   it('starts with everything on and no radio loss', () => {
     expect(switchesAt([], 0)).toEqual(ALL_ON);
-    expect(ALL_ON).toEqual({ centre: true, station: true, merge: true, sensors: true, radioDrop: 0 });
+    expect(ALL_ON).toEqual({ centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 });
   });
 
   it('applies a press from its own time onward', () => {

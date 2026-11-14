@@ -1,13 +1,13 @@
 import {
   FRESH,
-  MERGE_TIMEOUT,
+  JUNCTION_KEEPER_TIMEOUT,
   PERMIT_FRESH,
   POSITION_INTERVAL,
   REQUEST_REPEAT,
   SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
-  STATION_TIMEOUT,
+  PLATFORM_KEEPER_TIMEOUT,
   TICK,
 } from '../shared/constants';
 import { ASK_POINT, PLATFORMS, PLATFORM_PAIRS, PLATFORM_STOP, RANGE, TRACK_LENGTH, xOf } from '../shared/map';
@@ -28,8 +28,8 @@ export interface TrainNumbers {
   requestRepeat: number; // repeat interval for lock requests
   fresh: number; // a position report or platformStatus under this age is fresh
   permitFresh: number; // a permit under this age is fresh
-  stationTimeout: number; // silence from the station actor before the fixed split
-  mergeTimeout: number; // silence from the merge actor before clock slots
+  platformKeeperTimeout: number; // silence from the platform keeper before the fixed split
+  junctionKeeperTimeout: number; // silence from the junction keeper before clock slots
   grantLife: number; // a junction grant must be used within this long, or the train drops it
   slotLength: number;
   slotWindow: number; // a platform may start during the first slotWindow seconds of its slot
@@ -85,11 +85,11 @@ export function trainNumbers(): TrainNumbers {
     requestRepeat: REQUEST_REPEAT,
     fresh: FRESH,
     permitFresh: PERMIT_FRESH,
-    stationTimeout: STATION_TIMEOUT,
-    mergeTimeout: MERGE_TIMEOUT,
-    // The merge actor releases a grant the zone has not filled within MERGE_TIMEOUT. The
+    platformKeeperTimeout: PLATFORM_KEEPER_TIMEOUT,
+    junctionKeeperTimeout: JUNCTION_KEEPER_TIMEOUT,
+    // The junction keeper releases a grant the zone has not filled within JUNCTION_KEEPER_TIMEOUT. The
     // train gives up one REQUEST_REPEAT sooner, so the two never disagree.
-    grantLife: MERGE_TIMEOUT - REQUEST_REPEAT,
+    grantLife: JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT,
     slotLength: SLOT_LENGTH,
     slotWindow: SLOT_WINDOW,
     slotCount: SLOT_COUNT,

@@ -11,7 +11,7 @@ import type {
 } from '../shared/types';
 import { longerThan, stillSettling, wasSwitchedOff } from './resume';
 
-// The station actor owns the four platforms and grants one lock per platform.
+// The platform keeper owns the four platforms and grants one lock per platform.
 // Rules: docs/design.md, "Entering the station" and "Platform sensors switched off".
 // The switched-back-on rule is from the review on pull request #31.
 //
@@ -28,7 +28,7 @@ export function unlockedSettle(): number {
   return RESUME_SETTLE;
 }
 
-/** What the station has seen of the train holding a platform lock. */
+/** What the platform keeper has seen of the train holding a platform lock. */
 export interface PlatformLock {
   holder: TrainId;
   grantedAt: number;
@@ -38,8 +38,8 @@ export interface PlatformLock {
   lastRequestAt: number;
 }
 
-/** The station's memory. It survives the actor being switched off and on again. */
-export interface StationMemory {
+/** The platform keeper's memory. It survives the actor being switched off and on again. */
+export interface PlatformKeeperMemory {
   locks: Record<PlatformId, PlatformLock | null>;
   /**
    * The last time each platform read occupied while nobody held its lock. That reading is
@@ -58,11 +58,11 @@ export interface StationMemory {
 }
 
 /** The answer to one lockRequest for a platform. */
-export type StationReply =
+export type PlatformKeeperReply =
   | { kind: 'grant'; platform: PlatformId }
   | { kind: 'refuse'; alternative: PlatformId | null };
 
-export function initialStationMemory(): StationMemory {
+export function initialPlatformKeeperMemory(): PlatformKeeperMemory {
   return {
     locks: { P1: null, P2: null, P3: null, P4: null },
     unlockedOccupiedAt: { P1: null, P2: null, P3: null, P4: null },
@@ -95,7 +95,7 @@ export function answerOrder(trains: TrainId[], timetable: TimetableEntry[]): Tra
 
 /** The platform this train holds the lock on, or null. */
 /**
- * How long a train without a lock may be silent before the station stops counting it as
+ * How long a train without a lock may be silent before the platform keeper stops counting it as
  * waiting. Two repeats, so one late request does not lose a train its place.
  */
 export function waitingSilence(): number {
@@ -103,7 +103,7 @@ export function waitingSilence(): number {
 }
 
 /** Note every train that asked this tick and holds no lock, and forget the ones gone quiet. */
-export function recordWaiting(memory: StationMemory, inbox: Message[], now: number): StationMemory {
+export function recordWaiting(memory: PlatformKeeperMemory, inbox: Message[], now: number): PlatformKeeperMemory {
   const waiting: Record<TrainId, number> = {};
   for (const [id, at] of Object.entries(memory.waiting ?? {})) {
     const train = Number(id);
@@ -121,7 +121,7 @@ export function recordWaiting(memory: StationMemory, inbox: Message[], now: numb
  * platform and has none. Trains on one entry track stand in a queue, so a platform given to
  * a train further back could never be reached, and the queue would never move.
  */
-export function trainAheadIsWaiting(memory: StationMemory, timetable: TimetableEntry[], train: TrainId): boolean {
+export function trainAheadIsWaiting(memory: PlatformKeeperMemory, timetable: TimetableEntry[], train: TrainId): boolean {
   const mine = timetable.find((e) => e.id === train);
   if (!mine) return false;
   return Object.keys(memory.waiting ?? {}).some((id) => {
@@ -131,7 +131,7 @@ export function trainAheadIsWaiting(memory: StationMemory, timetable: TimetableE
   });
 }
 
-export function heldBy(memory: StationMemory, train: TrainId): PlatformId | null {
+export function heldBy(memory: PlatformKeeperMemory, train: TrainId): PlatformId | null {
   return PLATFORMS.find((p) => memory.locks[p]?.holder === train) ?? null;
 }
 
@@ -140,12 +140,12 @@ export interface GrantCheck {
   train: TrainId;
   platform: PlatformId;
   pair: PlatformId[];
-  memory: StationMemory;
+  memory: PlatformKeeperMemory;
   sensors: SensorReadings;
 }
 
 /** True if the platform read occupied with no lock on it less than unlockedSettle() ago. */
-function unlockedTrainMayBeNear(memory: StationMemory, platform: PlatformId, now: number): boolean {
+function unlockedTrainMayBeNear(memory: PlatformKeeperMemory, platform: PlatformId, now: number): boolean {
   const at = memory.unlockedOccupiedAt[platform];
   return at !== null && !longerThan(now - at, unlockedSettle());
 }
@@ -174,7 +174,7 @@ export interface AlternativeCheck {
   train: TrainId;
   requested: PlatformId;
   pair: PlatformId[];
-  memory: StationMemory;
+  memory: PlatformKeeperMemory;
   sensors: SensorReadings;
 }
 
@@ -193,13 +193,13 @@ export interface PlatformRequest {
   train: TrainId;
   platform: PlatformId;
   pair: PlatformId[];
-  memory: StationMemory;
+  memory: PlatformKeeperMemory;
   sensors: SensorReadings;
   /** From stillSettling. While true, refuse with alternative null. */
   settling: boolean;
 }
 
-const REFUSE: StationReply = { kind: 'refuse', alternative: null };
+const REFUSE: PlatformKeeperReply = { kind: 'refuse', alternative: null };
 
 /** True if this lock was granted before the actor was last switched off. */
 function grantedBeforeResume(lock: PlatformLock, resumedAt: number | null): boolean {
@@ -216,7 +216,7 @@ function grantedBeforeResume(lock: PlatformLock, resumedAt: number | null): bool
  * is refused until the platform reads empty, and keeps its lock. A holder that did hear
  * its grant ignores the refusal.
  */
-function answerHolder(request: PlatformRequest, held: PlatformId): StationReply {
+function answerHolder(request: PlatformRequest, held: PlatformId): PlatformKeeperReply {
   const lock = request.memory.locks[held] as PlatformLock;
   const stale = grantedBeforeResume(lock, request.memory.resumedAt);
   if (stale && request.sensors.platformOccupied[held]) return REFUSE;
@@ -231,7 +231,7 @@ function answerHolder(request: PlatformRequest, held: PlatformId): StationReply 
  * null, so waiting trains stop falling back to the fixed split. This goes for lock
  * holders too. They keep their locks, and a train that holds a grant ignores the refusal.
  */
-export function answerPlatformRequest(request: PlatformRequest): StationReply {
+export function answerPlatformRequest(request: PlatformRequest): PlatformKeeperReply {
   const { now, train, platform, pair, memory, sensors, settling } = request;
   if (settling) return REFUSE;
   const held = heldBy(memory, train);
@@ -248,11 +248,11 @@ export function answerPlatformRequest(request: PlatformRequest): StationReply {
  * second request on the same tick sees the platform as taken.
  */
 export function recordGrant(
-  memory: StationMemory,
+  memory: PlatformKeeperMemory,
   train: TrainId,
   platform: PlatformId,
   now: number,
-): StationMemory {
+): PlatformKeeperMemory {
   const lock: PlatformLock = { holder: train, grantedAt: now, seenArrive: false, lastRequestAt: now };
   return { ...memory, locks: { ...memory.locks, [platform]: lock } };
 }
@@ -263,10 +263,10 @@ export function recordGrant(
  * in canReleasePlatform uses this.
  */
 export function recordHolderRequests(
-  memory: StationMemory,
+  memory: PlatformKeeperMemory,
   inbox: Message[],
   now: number,
-): StationMemory {
+): PlatformKeeperMemory {
   const locks = { ...memory.locks };
   for (const msg of inbox) {
     if (msg.type !== 'lockRequest' || msg.resource === 'JUNCTION') continue;
@@ -288,7 +288,7 @@ export interface ReleaseCheck {
   now: number;
   lock: PlatformLock;
   occupied: boolean;
-  /** From StationMemory. */
+  /** From PlatformKeeperMemory. */
   resumedAt: number | null;
   /** RESUME_SETTLE. */
   settle: number;
@@ -314,7 +314,7 @@ export interface ReleaseCheck {
  * Switched back on: a lock with `seenArrive` true releases by the rule above. A lock with
  * `seenArrive` false releases only after the window `resumedAt + settle` is over, if its
  * sensor reads empty and the holder was not heard during the whole window. A holder still
- * on its way in is in the station's radio range, and short range drops nothing. A holder
+ * on its way in is in the platform keeper's radio range, and short range drops nothing. A holder
  * in the platform shows on the sensor. A dead sensor reads occupied.
  */
 export function canReleasePlatform(check: ReleaseCheck): boolean {
@@ -332,12 +332,12 @@ export function canReleasePlatform(check: ReleaseCheck): boolean {
  * Switched back on: set `resumedAt` to now and keep every lock. The gap itself releases
  * nothing.
  */
-export function resumeStation(memory: StationMemory, now: number): StationMemory {
+export function resumePlatformKeeper(memory: PlatformKeeperMemory, now: number): PlatformKeeperMemory {
   return { ...memory, resumedAt: now };
 }
 
 /** Updates every lock from the sensors, then frees the ones that canReleasePlatform. */
-function updateLocks(memory: StationMemory, sensors: SensorReadings, now: number): StationMemory {
+function updateLocks(memory: PlatformKeeperMemory, sensors: SensorReadings, now: number): PlatformKeeperMemory {
   const locks = { ...memory.locks };
   for (const platform of PLATFORMS) {
     const held = locks[platform];
@@ -359,10 +359,10 @@ function updateLocks(memory: StationMemory, sensors: SensorReadings, now: number
 
 /** Notes each platform that reads occupied while nobody holds its lock. */
 function noteUnlockedOccupied(
-  memory: StationMemory,
+  memory: PlatformKeeperMemory,
   sensors: SensorReadings,
   now: number,
-): StationMemory {
+): PlatformKeeperMemory {
   const unlockedOccupiedAt = { ...memory.unlockedOccupiedAt };
   for (const platform of PLATFORMS) {
     if (sensors.platformOccupied[platform] && memory.locks[platform] === null) {
@@ -389,7 +389,7 @@ function platformRequests(inbox: Message[], timetable: TimetableEntry[]): Asked[
   return order.flatMap((train) => asked.filter((a) => a.train === train));
 }
 
-function toOutgoing(train: TrainId, asked: PlatformId, reply: StationReply): Outgoing {
+function toOutgoing(train: TrainId, asked: PlatformId, reply: PlatformKeeperReply): Outgoing {
   const msg: Message =
     reply.kind === 'grant'
       ? { type: 'lockGrant', to: train, resource: reply.platform, follow: null }
@@ -397,15 +397,15 @@ function toOutgoing(train: TrainId, asked: PlatformId, reply: StationReply): Out
   return { msg, range: 'short' };
 }
 
-/** One step of the station actor: the memory after the step and the replies to send. */
-export function stepStation(
-  before: StationMemory,
+/** One step of the platform keeper: the memory after the step and the replies to send. */
+export function stepPlatformKeeper(
+  before: PlatformKeeperMemory,
   timetable: TimetableEntry[],
   now: number,
   inbox: Message[],
   sensors: SensorReadings,
-): { memory: StationMemory; out: Outgoing[] } {
-  let memory = wasSwitchedOff(before.lastStepAt, now) ? resumeStation(before, now) : before;
+): { memory: PlatformKeeperMemory; out: Outgoing[] } {
+  let memory = wasSwitchedOff(before.lastStepAt, now) ? resumePlatformKeeper(before, now) : before;
   const settling = stillSettling(memory.resumedAt, now, RESUME_SETTLE);
   memory = recordHolderRequests(memory, inbox, now);
   memory = updateLocks(memory, sensors, now);
@@ -417,7 +417,7 @@ export function stepStation(
     const pair = ownPair(timetable, train);
     // Only the front train on each entry track may be granted. A train with a lock keeps it.
     const queuedBehind = heldBy(memory, train) === null && trainAheadIsWaiting(memory, timetable, train);
-    const reply: StationReply = queuedBehind
+    const reply: PlatformKeeperReply = queuedBehind
       ? { kind: 'refuse', alternative: null }
       : answerPlatformRequest({ now, train, platform, pair, memory, sensors, settling });
     if (reply.kind === 'grant' && memory.locks[reply.platform] === null) {
@@ -429,13 +429,13 @@ export function stepStation(
   return { memory: { ...memory, lastStepAt: now }, out };
 }
 
-/** Builds the station actor. Its memory lives in this closure. */
-export function createStationActor(timetable: TimetableEntry[]): LocalActor {
-  let memory = initialStationMemory();
+/** Builds the platform keeper. Its memory lives in this closure. */
+export function createPlatformKeeper(timetable: TimetableEntry[]): LocalActor {
+  let memory = initialPlatformKeeperMemory();
   return {
-    id: 'station',
+    id: 'platformKeeper',
     step(now: number, inbox: Message[], sensors: SensorReadings): Outgoing[] {
-      const result = stepStation(memory, timetable, now, inbox, sensors);
+      const result = stepPlatformKeeper(memory, timetable, now, inbox, sensors);
       memory = result.memory;
       return result.out;
     },

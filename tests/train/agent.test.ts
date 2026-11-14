@@ -4,7 +4,7 @@ import {
   BRAKE,
   MARGIN,
   MAX_SPEED,
-  MERGE_TIMEOUT,
+  JUNCTION_KEEPER_TIMEOUT,
   POSITION_INTERVAL,
   REQUEST_REPEAT,
   SIGHT_SPEED,
@@ -122,9 +122,9 @@ describe('initialMemory', () => {
     expect(m.platformStatus).toEqual({});
     expect(m.lastNextTrack).toBeNull();
     expect(m.usingFallback).toBe(false);
-    expect(m.lastStationReply).toBeNull();
-    expect(m.stationHeardAt).toBeNull();
-    expect(m.lastMergeReplyAt).toBeNull();
+    expect(m.lastPlatformKeeperReply).toBeNull();
+    expect(m.platformKeeperHeardAt).toBeNull();
+    expect(m.lastJunctionKeeperReplyAt).toBeNull();
     expect(m.junctionGrantAt).toBeNull();
     expect(m.slotStarted).toBe(false);
   });
@@ -173,7 +173,7 @@ describe('exitLeader', () => {
     expect(exitLeader(7, 2)).toBe(7);
   });
 
-  it("reads the train's own ID as leader unknown, which is how the merge actor says it does not know", () => {
+  it("reads the train's own ID as leader unknown, which is how the junction keeper says it does not know", () => {
     expect(exitLeader(2, 2)).toBe('unknown');
   });
 });
@@ -191,7 +191,7 @@ describe('remember', () => {
     remember(m, 4, onA, { kind: 'grant', platform: 'P2' }, null);
     expect(m.platform).toBe('P2');
     expect(m.locks).toEqual(['P2']);
-    expect(m.lastStationReply).toEqual({ kind: 'grant', platform: 'P2', at: 4 });
+    expect(m.lastPlatformKeeperReply).toEqual({ kind: 'grant', platform: 'P2', at: 4 });
   });
 
   it('goes to the platform the grant names, even when it asked for the other one', () => {
@@ -205,16 +205,16 @@ describe('remember', () => {
   it('stores a refusal with its alternative and time, and takes no lock', () => {
     const m = initialMemory(2, timetable);
     remember(m, 4, onA, { kind: 'refuse', platform: 'P2', alternative: 'P1' }, null);
-    expect(m.lastStationReply).toEqual({ kind: 'refuse', platform: 'P2', alternative: 'P1', at: 4 });
+    expect(m.lastPlatformKeeperReply).toEqual({ kind: 'refuse', platform: 'P2', alternative: 'P1', at: 4 });
     expect(m.locks).toEqual([]);
     expect(m.platform).toBeNull();
   });
 
-  it('keeps the last station reply on ticks with no reply', () => {
+  it('keeps the last platform keeper reply on ticks with no reply', () => {
     const m = initialMemory(2, timetable);
     remember(m, 4, onA, { kind: 'refuse', platform: 'P2', alternative: null }, null);
     remember(m, 5, onA, null, null);
-    expect(m.lastStationReply).toEqual({ kind: 'refuse', platform: 'P2', alternative: null, at: 4 });
+    expect(m.lastPlatformKeeperReply).toEqual({ kind: 'refuse', platform: 'P2', alternative: null, at: 4 });
   });
 
   it('ignores a platform grant once the front has left the entry track, and does not store it as a reply', () => {
@@ -223,7 +223,7 @@ describe('remember', () => {
     remember(m, 4, inP1, { kind: 'grant', platform: 'P2' }, null);
     expect(m.platform).toBe('P1');
     expect(m.locks).toEqual([]);
-    expect(m.lastStationReply).toBeNull();
+    expect(m.lastPlatformKeeperReply).toBeNull();
   });
 
   it('once it has a platform, ignores a refusal and a grant for another platform', () => {
@@ -233,7 +233,7 @@ describe('remember', () => {
     remember(m, 6, onA, { kind: 'grant', platform: 'P1' }, null);
     expect(m.platform).toBe('P2');
     expect(m.locks).toEqual(['P2']);
-    expect(m.lastStationReply).toEqual({ kind: 'grant', platform: 'P2', at: 4 });
+    expect(m.lastPlatformKeeperReply).toEqual({ kind: 'grant', platform: 'P2', at: 4 });
   });
 
   it('stores a junction grant as a lock, a reply time, a grant time and its follow train as the new leader', () => {
@@ -243,7 +243,7 @@ describe('remember', () => {
     remember(m, 4, inP1, null, { kind: 'grant', follow: 7 });
     expect(m.locks).toEqual(['JUNCTION']);
     expect(m.leader).toBe(7);
-    expect(m.lastMergeReplyAt).toBe(4);
+    expect(m.lastJunctionKeeperReplyAt).toBe(4);
     expect(m.junctionGrantAt).toBe(4);
     expect(m.reports[7]).toBe(report);
   });
@@ -251,7 +251,7 @@ describe('remember', () => {
   it('stores a junction refusal as a reply time only', () => {
     const m = asked();
     remember(m, 4, inP1, null, { kind: 'refuse' });
-    expect(m.lastMergeReplyAt).toBe(4);
+    expect(m.lastJunctionKeeperReplyAt).toBe(4);
     expect(m.locks).toEqual([]);
     expect(m.leader).toBe(1);
   });
@@ -341,7 +341,7 @@ describe('noteSent', () => {
 });
 
 describe('the junction grant runs out', () => {
-  const life = MERGE_TIMEOUT - REQUEST_REPEAT;
+  const life = JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT;
 
   /** Train 2 in P2 holding a junction grant first heard at now 100. */
   function granted() {
@@ -361,7 +361,7 @@ describe('the junction grant runs out', () => {
     expect(isLeaving(m)).toBe(true);
   });
 
-  it('drops a grant it has not used within MERGE_TIMEOUT less one REQUEST_REPEAT, and never enters on it', () => {
+  it('drops a grant it has not used within JUNCTION_KEEPER_TIMEOUT less one REQUEST_REPEAT, and never enters on it', () => {
     const m = granted();
     expireJunctionGrant(m, at(100 + life, 299.99, 0), N);
     expect(isLeaving(m)).toBe(false);
@@ -384,7 +384,7 @@ describe('the junction grant runs out', () => {
     expect(isLeaving(onExit)).toBe(true);
   });
 
-  it('a grant heard again within MERGE_TIMEOUT of the first is the same grant, and is dropped again', () => {
+  it('a grant heard again within JUNCTION_KEEPER_TIMEOUT of the first is the same grant, and is dropped again', () => {
     const m = granted();
     expireJunctionGrant(m, at(100 + life, 299.99, 0), N);
     remember(m, 100 + life + 0.5, { track: 'P2', offset: 299.99 }, null, { kind: 'grant', follow: null });
@@ -393,15 +393,15 @@ describe('the junction grant runs out', () => {
     expect(isLeaving(m)).toBe(false);
   });
 
-  it('a grant heard after MERGE_TIMEOUT is a new grant', () => {
+  it('a grant heard after JUNCTION_KEEPER_TIMEOUT is a new grant', () => {
     const m = granted();
     expireJunctionGrant(m, at(100 + life, 299.99, 0), N);
-    expireJunctionGrant(m, at(100 + MERGE_TIMEOUT, 299.99, 0), N);
+    expireJunctionGrant(m, at(100 + JUNCTION_KEEPER_TIMEOUT, 299.99, 0), N);
     expect(m.junctionGrantAt).toBeNull();
-    remember(m, 100 + MERGE_TIMEOUT + 1, { track: 'P2', offset: 299.99 }, null, { kind: 'grant', follow: null });
-    expireJunctionGrant(m, at(100 + MERGE_TIMEOUT + 1, 299.99, 0), N);
+    remember(m, 100 + JUNCTION_KEEPER_TIMEOUT + 1, { track: 'P2', offset: 299.99 }, null, { kind: 'grant', follow: null });
+    expireJunctionGrant(m, at(100 + JUNCTION_KEEPER_TIMEOUT + 1, 299.99, 0), N);
     expect(isLeaving(m)).toBe(true);
-    expect(m.junctionGrantAt).toBe(100 + MERGE_TIMEOUT + 1);
+    expect(m.junctionGrantAt).toBe(100 + JUNCTION_KEEPER_TIMEOUT + 1);
   });
 
   it('a train held at its stop point drops the grant, stays out of the zone and asks again', () => {
@@ -599,8 +599,8 @@ describe('Train rules: the agent as a whole', () => {
     expect(N.slack).toBe(TICK / 2);
     expect(N.positionEvery).toBe(POSITION_INTERVAL);
     expect(N.requestRepeat).toBe(REQUEST_REPEAT);
-    expect(N.mergeTimeout).toBe(MERGE_TIMEOUT);
-    expect(N.grantLife).toBe(MERGE_TIMEOUT - REQUEST_REPEAT);
+    expect(N.junctionKeeperTimeout).toBe(JUNCTION_KEEPER_TIMEOUT);
+    expect(N.grantLife).toBe(JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT);
   });
 });
 
@@ -621,7 +621,7 @@ describe('End to end, with the engine physics in a small loop', () => {
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 4000 }, MAX_SPEED);
     let granted = false;
     for (let i = 0; i < 3000 && !(run.state.pos.track === 'P1' && run.state.speed === 0); i++) {
-      // The station grants on the tick after the first request.
+      // The platform keeper grants on the tick after the first request.
       const inbox: Message[] = !granted && requests(run).length > 0 ? [{ type: 'lockGrant', to: 1, resource: 'P1', follow: null }] : [];
       granted ||= inbox.length > 0;
       tick(run, inbox);

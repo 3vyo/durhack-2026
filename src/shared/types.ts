@@ -70,6 +70,6 @@ export interface SensorReadings {
 }
 
 export interface LocalActor {
-  id: 'station' | 'merge';
+  id: 'platformKeeper' | 'junctionKeeper';
   step(now: number, inbox: Message[], sensors: SensorReadings): Outgoing[];
 }

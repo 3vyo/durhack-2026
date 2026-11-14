@@ -20,7 +20,7 @@ The common causes, and how each maps to a failure switch in the demo:
 |---|---|---|---|
 | Train detection | Track circuits fail through corrosion, contamination or flooding. Some axle counters respond poorly to heat, and restart without detecting trains after a power failure. | The system can't tell if a section is clear, so the signal stays red until staff check and reset. | Platform sensors off |
 | Points | Debris, ice, drive mechanism failure, or heat expansion. | The protecting signal turns red. Points can sometimes be secured in one position. | Not modelled |
-| Power | Loss of the main supply or ageing cable, often in places where cables are older or stolen. | Signals go dark. A power failure can affect systems over a very large area. | Station or merge actor off |
+| Power | Loss of the main supply or ageing cable, often in places where cables are older or stolen. | Signals go dark. A power failure can affect systems over a very large area. | Platform or junction keeper off |
 | Telecoms links | Failure of base stations or communication links. | Signals show red with no train present, or no movement authority reaches trains. | Train-to-train radio slider |
 | Control centre | The centre loses power or its links, as at Manchester in 2026. | No permits reach any train. | Control centre off |
 | Cable theft | Thieves target signalling, telecoms and power cables for scrap. | Any of the above, depending on which cable. | Any |
@@ -44,7 +44,7 @@ We pitch it as a layer underneath the central system. It does not replace the co
 The model is a ladder of fallbacks, so each step down stays safe and throughput falls gradually.
 
 1. **Healthy.** The control centre sends every train a permit each second, and trains follow them. Each train still runs its own rules and holds its own locks underneath.
-2. **Centre lost, local actors alive.** Trains carry on under their own rules with the station and merge locks. This is the best fallback.
+2. **Centre lost, local actors alive.** Trains carry on under their own rules with the platform keeper's and junction keeper's locks. This is the best fallback.
 3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. The spec caps this at about 60 trains an hour through the junction.
 4. **Sensors dead as well.** Trains creep towards a platform they can't see a train in. This only works if a dead sensor reads as occupied.
 
@@ -58,16 +58,16 @@ The model is a ladder of fallbacks, so each step down stays safe and throughput 
 
 Run four scenarios against the baseline, where every train waits for the control centre.
 
-| Scenario | Control centre | Station and merge actors | Train-to-train radio |
+| Scenario | Control centre | Platform and junction keepers | Train-to-train radio |
 |---|---|---|---|
 | Local fault | On | One device off | On |
 | Centre outage | Off | On | On |
 | Blackout, trains talking | Off | Off | On |
 | Blackout, trains silent | Off | Off | Off |
 
-- **Local fault.** One trackside device stops working. That is the station actor, the merge actor or the platform sensors.
+- **Local fault.** One trackside device stops working. That is the platform keeper, the junction keeper or the platform sensors.
 - **Centre outage.** The control centre is off and the local actors are alive. This is the Manchester case, and it uses the best fallback.
-- **Blackout.** The control centre, the station actor and the merge actor are all off. Train-to-train radio is a separate setting, so the blackout has two versions.
+- **Blackout.** The control centre, the platform keeper and the junction keeper are all off. Train-to-train radio is a separate setting, so the blackout has two versions.
 
 "Train-to-train radio off" is the radio slider at 100%, not a second control. With trains silent, every train runs at `SIGHT_SPEED` or below, which is the slowest case the demo shows.
 
@@ -81,7 +81,7 @@ For each, report throughput, average delay per train and collisions, using the m
 
 ## When nothing has failed
 
-Ours is the same as the baseline when nothing has failed. While the control centre works, our trains obey its permits exactly as today's trains do, and our own rules stay out of the way. The same holds for any failure that leaves the centre working: the train-to-train radio, the station actor, the merge actor or the platform sensors. The claim of lower delay covers the failures where the centre is down.
+Ours is the same as the baseline when nothing has failed. While the control centre works, our trains obey its permits exactly as today's trains do, and our own rules stay out of the way. The same holds for any failure that leaves the centre working: the train-to-train radio, the platform keeper, the junction keeper or the platform sensors. The claim of lower delay covers the failures where the centre is down.
 
 ## What the demo does not prove
 
@@ -99,7 +99,7 @@ A browser simulation shows the logic works under its own assumptions. It says no
 
 The baseline in the sim is an idealised central controller that knows the true state of every train and stops all trains five seconds after it loses contact. Real lineside signalling works in fixed blocks and lets trains run on to the next signal. The comparison is a model of today's behaviour, not a measurement of it, and any numbers from it should be presented that way.
 
-The controller does not use the station actor, the merge actor or our platform sensors. Those are part of our fallback, so switching them off changes nothing for the baseline. The controller's own train detection is assumed to keep working. A failure of that detection is not modelled.
+The controller does not use the platform keeper, the junction keeper or our platform sensors. Those are part of our fallback, so switching them off changes nothing for the baseline. The controller's own train detection is assumed to keep working. A failure of that detection is not modelled.
 
 The baseline and ours are two train programs. Both obey the controller's permits while they come. The baseline stops when they stop. Ours carries on with its own rules, its locks and the local actors.
 

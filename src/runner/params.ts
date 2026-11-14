@@ -84,7 +84,7 @@ export interface ParamsReport {
 export function compareParams(params: SimParams, programs: { baseline: TrainProgram; ours: TrainProgram }): ParamsReport {
   const healthy: SimParams = {
     ...params,
-    start: { centre: true, station: true, merge: true, sensors: true, radioDrop: 0 },
+    start: { centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 },
     failures: [],
   };
   const reference = runParams(healthy, programs.baseline);

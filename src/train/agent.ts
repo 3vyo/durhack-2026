@@ -16,10 +16,10 @@ import {
   grantExpired,
   junctionRequest,
   mayStartInSlot,
-  mergeReply,
+  junctionKeeperReply,
   slotOpen,
   useClockSlots,
-  type MergeReply,
+  type JunctionKeeperReply,
 } from './depart';
 import {
   isPastPlatformStop,
@@ -57,10 +57,10 @@ import {
   refusalMeansSilence,
   sensorsSilent,
   shouldUseFallback,
-  stationReply,
-  type HeardStationReply,
+  platformKeeperReply,
+  type HeardPlatformKeeperReply,
   type PlatformStatusLog,
-  type StationReply,
+  type PlatformKeeperReply,
 } from './station';
 
 // The agent for one of our trains. It keeps the train's memory, calls the rule files each
@@ -78,21 +78,21 @@ export interface TrainMemory {
   leader: Leader; // from the timetable on A and B, from the junction grant on EXIT
   reports: ReportLog; // the newest position report from every train, the leader's included
   permit: HeldPermit | null; // the last permit from the control centre
-  locks: ResourceId[]; // locks the station and merge actors have granted this train
+  locks: ResourceId[]; // locks the platform and junction keepers have granted this train
   platform: PlatformId | null; // the platform this train has chosen
   dwellStartedAt: number | null; // when the train stopped in its platform
 
   // Timers and fallback state.
   lastPositionSentAt: number | null;
-  asking: PlatformId | null; // the platform the train is asking the station for
+  asking: PlatformId | null; // the platform the train is asking the platform keeper for
   firstPlatformRequestAt: number | null;
   lastPlatformRequestAt: number | null;
-  lastStationReply: HeardStationReply | null; // what the station last said, and when
-  stationHeardAt: number | null; // when the station last gave a reply that does not count as silence
-  usingFallback: boolean; // using the station-off rule, from shouldUseFallback
+  lastPlatformKeeperReply: HeardPlatformKeeperReply | null; // what the platform keeper last said, and when
+  platformKeeperHeardAt: number | null; // when the platform keeper last gave a reply that does not count as silence
+  usingFallback: boolean; // using the rule for a switched-off platform keeper, from shouldUseFallback
   firstJunctionRequestAt: number | null;
   lastJunctionRequestAt: number | null;
-  lastMergeReplyAt: number | null; // when the merge actor last granted or refused
+  lastJunctionKeeperReplyAt: number | null; // when the junction keeper last granted or refused
   junctionGrantAt: number | null; // when the train first heard the junction grant it holds or last held
   slotStarted: boolean; // true once the train has started in its clock slot
   platformStatus: PlatformStatusLog;
@@ -124,12 +124,12 @@ export function initialMemory(id: TrainId, timetable: TimetableEntry[]): TrainMe
     asking: null,
     firstPlatformRequestAt: null,
     lastPlatformRequestAt: null,
-    lastStationReply: null,
-    stationHeardAt: null,
+    lastPlatformKeeperReply: null,
+    platformKeeperHeardAt: null,
     usingFallback: false,
     firstJunctionRequestAt: null,
     lastJunctionRequestAt: null,
-    lastMergeReplyAt: null,
+    lastJunctionKeeperReplyAt: null,
     junctionGrantAt: null,
     slotStarted: false,
     platformStatus: {},
@@ -177,8 +177,8 @@ export function isLeaving(memory: TrainMemory): boolean {
 }
 
 /**
- * "Entering the station", "Station switched off", "Leaving the station" and "Merge switched
- * off". The route for this tick. On A or B, nextTrack is the chosen platform, or the one
+ * "Entering the station", "Platform keeper switched off", "Leaving the station" and
+ * "Junction keeper switched off". The route for this tick. On A or B, nextTrack is the chosen platform, or the one
  * the creep rule is looking into. In a platform it is EXIT once the train holds the
  * junction lock or is using its clock slot. Null otherwise. A chosen platform never
  * changes, so nextTrack cannot change after the front has crossed the end of the track.
@@ -210,7 +210,7 @@ function entryRoute(memory: TrainMemory, input: TrainInput, numbers: TrainNumber
 }
 
 /**
- * The route in a platform. EXIT once the train is leaving. With the merge actor silent
+ * The route in a platform. EXIT once the train is leaving. With the junction keeper silent
  * and the train's slot open, a train at its stop point first points nextTrack at EXIT so that the next tick's
  * sightAhead looks through the junction zone, and starts on a later tick if that shows the
  * zone empty. Pointing at EXIT does not move the train: the platform stop point holds it
@@ -231,7 +231,7 @@ function platformRoute(
   if (input.self.brokenDown) return route(null);
 
   const { now, self } = input;
-  const silent = useClockSlots(memory.firstJunctionRequestAt, memory.lastMergeReplyAt, now, numbers);
+  const silent = useClockSlots(memory.firstJunctionRequestAt, memory.lastJunctionKeeperReplyAt, now, numbers);
   if (!silent || !slotOpen(platform, now, numbers)) return route(null);
   // Only from the stop point, so the junction sensor shows the train soon after it starts.
   if (self.pos.offset < numbers.platformStop - numbers.stopClose) return route(null);
@@ -241,7 +241,7 @@ function platformRoute(
 
 /**
  * The leader on EXIT named by a junction grant. Null means no train ahead. The train's
- * own ID is how the merge actor says "I was just switched back on and do not know who is
+ * own ID is how the junction keeper says "I was just switched back on and do not know who is
  * ahead", so it reads as unknown and the train stays at SIGHT_SPEED or below.
  */
 export function exitLeader(follow: TrainId | null, self: TrainId): Leader {
@@ -257,23 +257,23 @@ export function remember(
   memory: TrainMemory,
   now: number,
   pos: Position,
-  station: StationReply | null,
-  merge: MergeReply | null,
+  platformKeeper: PlatformKeeperReply | null,
+  junctionKeeper: JunctionKeeperReply | null,
 ): void {
-  if (station) rememberStation(memory, now, pos, station);
-  if (merge) rememberMerge(memory, now, pos, merge);
+  if (platformKeeper) rememberPlatformKeeper(memory, now, pos, platformKeeper);
+  if (junctionKeeper) rememberJunctionKeeper(memory, now, pos, junctionKeeper);
 }
 
 /**
- * A station reply counts only while the front is on the entry track, so a late grant
+ * A platform keeper reply counts only while the front is on the entry track, so a late grant
  * cannot move a train that is already in a platform. Once the train has chosen a platform
  * it keeps it: a refusal, or a grant for another platform, is ignored and not stored.
  */
-function rememberStation(memory: TrainMemory, now: number, pos: Position, reply: StationReply): void {
+function rememberPlatformKeeper(memory: TrainMemory, now: number, pos: Position, reply: PlatformKeeperReply): void {
   if (pos.track !== 'A' && pos.track !== 'B') return;
   const chosen = memory.platform;
   if (chosen !== null && (reply.kind === 'refuse' || reply.platform !== chosen)) return;
-  memory.lastStationReply = { ...reply, at: now };
+  memory.lastPlatformKeeperReply = { ...reply, at: now };
   if (reply.kind === 'grant') {
     memory.platform = reply.platform;
     addLock(memory, reply.platform);
@@ -281,14 +281,14 @@ function rememberStation(memory: TrainMemory, now: number, pos: Position, reply:
 }
 
 /**
- * A merge reply counts only in a platform. Any reply resets the merge timeout. A grant is
+ * A junction keeper reply counts only in a platform. Any reply resets the junction keeper timeout. A grant is
  * taken only if the train has asked and has not already left on a clock slot. A train
  * that left on a slot stays leader unknown, because the grant's follow may not be the
  * train directly ahead. A refusal never takes back a grant.
  */
-function rememberMerge(memory: TrainMemory, now: number, pos: Position, reply: MergeReply): void {
+function rememberJunctionKeeper(memory: TrainMemory, now: number, pos: Position, reply: JunctionKeeperReply): void {
   if (pos.track === 'A' || pos.track === 'B' || pos.track === 'EXIT') return;
-  memory.lastMergeReplyAt = now;
+  memory.lastJunctionKeeperReplyAt = now;
   if (reply.kind !== 'grant' || memory.firstJunctionRequestAt === null) return;
   if (isLeaving(memory)) return;
   addLock(memory, 'JUNCTION');
@@ -315,9 +315,9 @@ function addLock(memory: TrainMemory, resource: ResourceId): void {
 }
 
 /**
- * "Leaving the station". The merge actor releases a junction grant that is not used within
- * mergeTimeout. So the train drops a grant it can no longer use in time and asks again,
- * and it never enters the zone on an old grant. A grant heard again within mergeTimeout of
+ * "Leaving the station". The junction keeper releases a junction grant that is not used within
+ * junctionKeeperTimeout. So the train drops a grant it can no longer use in time and asks again,
+ * and it never enters the zone on an old grant. A grant heard again within junctionKeeperTimeout of
  * the first is the same grant, with the same clock.
  */
 export function expireJunctionGrant(memory: TrainMemory, input: TrainInput, numbers: TrainNumbers): void {
@@ -329,7 +329,7 @@ export function expireJunctionGrant(memory: TrainMemory, input: TrainInput, numb
   const distance = inPlatform ? numbers.platformStop - self.pos.offset : 0;
   if (held && grantExpired({ now, grantedAt, distance, speed: self.speed }, numbers)) {
     memory.locks = memory.locks.filter((lock) => lock !== 'JUNCTION');
-  } else if (!held && now - grantedAt >= numbers.mergeTimeout - numbers.slack) {
+  } else if (!held && now - grantedAt >= numbers.junctionKeeperTimeout - numbers.slack) {
     memory.junctionGrantAt = null;
   }
 }
@@ -346,8 +346,8 @@ export function dropPlatformLocks(memory: TrainMemory, pos: Position): void {
 function readInbox(memory: TrainMemory, entry: TimetableEntry, input: TrainInput, numbers: TrainNumbers): void {
   const { now, self, inbox } = input;
   if (!memory.central) {
-    const station = ownPairOnly(stationReply(inbox, memory.id), numbers.pairs[entry.entry]);
-    remember(memory, now, self.pos, station, mergeReply(inbox, memory.id));
+    const platformKeeper = ownPairOnly(platformKeeperReply(inbox, memory.id), numbers.pairs[entry.entry]);
+    remember(memory, now, self.pos, platformKeeper, junctionKeeperReply(inbox, memory.id));
   }
   dropPlatformLocks(memory, self.pos);
   expireJunctionGrant(memory, input, numbers);
@@ -355,7 +355,7 @@ function readInbox(memory: TrainMemory, entry: TimetableEntry, input: TrainInput
   memory.permit = latestPermit(memory.permit, inbox, memory.id);
   memory.platformStatus = recordPlatformStatus(memory.platformStatus, inbox);
   memory.dwellStartedAt = dwellStart(memory.dwellStartedAt, self, now);
-  memory.asking = platformToAsk(entry.platform, memory.lastStationReply);
+  memory.asking = platformToAsk(entry.platform, memory.lastPlatformKeeperReply);
 }
 
 /**
@@ -367,12 +367,12 @@ function readInbox(memory: TrainMemory, entry: TimetableEntry, input: TrainInput
 export function enterCentral(memory: TrainMemory): void {
   memory.firstPlatformRequestAt = null;
   memory.lastPlatformRequestAt = null;
-  memory.lastStationReply = null;
-  memory.stationHeardAt = null;
+  memory.lastPlatformKeeperReply = null;
+  memory.platformKeeperHeardAt = null;
   memory.usingFallback = false;
   memory.firstJunctionRequestAt = null;
   memory.lastJunctionRequestAt = null;
-  memory.lastMergeReplyAt = null;
+  memory.lastJunctionKeeperReplyAt = null;
   memory.junctionGrantAt = null;
   memory.locks = memory.locks.filter((lock) => lock !== 'JUNCTION');
   memory.cleared = false;
@@ -384,7 +384,7 @@ export function enterCentral(memory: TrainMemory): void {
  * - On EXIT, or past its platform stop and so in the junction zone, it follows the train
  *   its last permit named. The centre let it through, so it carries on out.
  * - On A or B, if it can no longer stop before the end of its entry track, it keeps the
- *   platform its last permit sent it to, and asks the station for it.
+ *   platform its last permit sent it to, and asks the platform keeper for it.
  * - Anywhere else it stops where its own rules say and asks for what it needs.
  */
 export function enterLocal(
@@ -425,8 +425,8 @@ function centralDecide(memory: TrainMemory, input: TrainInput, permit: HeldPermi
 }
 
 /**
- * "Station switched off". Works out whether the train is on the fallback this tick. A
- * reply heard this tick resets the station timeout, unless it is a refusal that counts as
+ * "Platform keeper switched off". Works out whether the train is on the fallback this tick. A
+ * reply heard this tick resets the platform keeper timeout, unless it is a refusal that counts as
  * silence.
  */
 function updateFallback(
@@ -437,16 +437,16 @@ function updateFallback(
 ): void {
   const { now, self } = input;
   const refusalIsSilence = refusalMeansSilence(
-    { lastReply: memory.lastStationReply, statuses: memory.platformStatus, entry: entry.entry, pos: self.pos, now },
+    { lastReply: memory.lastPlatformKeeperReply, statuses: memory.platformStatus, entry: entry.entry, pos: self.pos, now },
     numbers,
   );
-  if (memory.lastStationReply?.at === now && !refusalIsSilence) memory.stationHeardAt = now;
+  if (memory.lastPlatformKeeperReply?.at === now && !refusalIsSilence) memory.platformKeeperHeardAt = now;
   memory.usingFallback = shouldUseFallback(
     {
       self,
       now,
       firstAskedAt: memory.firstPlatformRequestAt,
-      lastReplyAt: memory.stationHeardAt,
+      lastReplyAt: memory.platformKeeperHeardAt,
       usingFallback: memory.usingFallback,
     },
     numbers,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRESH, REQUEST_REPEAT, SIGHT_SPEED, STATION_TIMEOUT, TICK } from '../../src/shared/constants';
+import { FRESH, REQUEST_REPEAT, SIGHT_SPEED, PLATFORM_KEEPER_TIMEOUT, TICK } from '../../src/shared/constants';
 import { ASK_POINT, PLATFORM_PAIRS } from '../../src/shared/map';
 import type { Message, PlatformId, TrainState } from '../../src/shared/types';
 import { createAgent } from '../../src/train/agent';
@@ -18,8 +18,8 @@ import {
   refusalMeansSilence,
   sensorsSilent,
   shouldUseFallback,
-  stationReply,
-  type HeardStationReply,
+  platformKeeperReply,
+  type HeardPlatformKeeperReply,
   type PlatformStatusLog,
 } from '../../src/train/station';
 import { requests, sightTo, startRun, tick, ticks, timetable, type Run } from './sim';
@@ -31,7 +31,7 @@ const inPlatform: TrainState = { id: 1, pos: { track: 'P1', offset: 299.99 }, sp
 const grant: Message = { type: 'lockGrant', to: 1, resource: 'P1', follow: null };
 const refuse: Message = { type: 'lockRefuse', to: 1, resource: 'P1', alternative: null };
 const status: Message = { type: 'platformStatus', platform: 'P1', occupied: false, sentAt: 9 };
-const refused: HeardStationReply = { kind: 'refuse', platform: 'P1', alternative: null, at: 90 };
+const refused: HeardPlatformKeeperReply = { kind: 'refuse', platform: 'P1', alternative: null, at: 90 };
 
 function request(over: Partial<Parameters<typeof platformRequest>[0]> = {}) {
   return platformRequest(
@@ -74,7 +74,7 @@ describe('Entering the station: no platform, no entry', () => {
   it('a train with no platform stops at or before the end of A or B', () => {
     for (const [id, track] of [[1, 'A'], [3, 'B']] as const) {
       const run = startRun(createAgent(id, timetable), id, { track, offset: 5200 }, 35);
-      // The station refuses every 2 seconds and the sensors say occupied, so the train must wait.
+      // The platform keeper refuses every 2 seconds and the sensors say occupied, so the train must wait.
       for (let i = 0; i < 2000; i++) {
         const inbox = sensors(run, i, { P1: true, P2: true, P3: true, P4: true });
         if (i % 20 === 0) inbox.push({ type: 'lockRefuse', to: id, resource: id === 1 ? 'P1' : 'P3', alternative: null });
@@ -177,12 +177,12 @@ describe('Entering the station: asking', () => {
 
 describe('Entering the station: replies', () => {
   it('reads a lockGrant for a platform addressed to itself', () => {
-    expect(stationReply([grant], 1)).toEqual({ kind: 'grant', platform: 'P1' });
+    expect(platformKeeperReply([grant], 1)).toEqual({ kind: 'grant', platform: 'P1' });
   });
 
   it('reads a lockRefuse for a platform addressed to itself', () => {
-    expect(stationReply([refuse], 1)).toEqual({ kind: 'refuse', platform: 'P1', alternative: null });
-    expect(stationReply([{ ...refuse, alternative: 'P2' }], 1)).toEqual({
+    expect(platformKeeperReply([refuse], 1)).toEqual({ kind: 'refuse', platform: 'P1', alternative: null });
+    expect(platformKeeperReply([{ ...refuse, alternative: 'P2' }], 1)).toEqual({
       kind: 'refuse',
       platform: 'P1',
       alternative: 'P2',
@@ -190,20 +190,20 @@ describe('Entering the station: replies', () => {
   });
 
   it('ignores grants and refusals addressed to other trains', () => {
-    expect(stationReply([grant, refuse], 2)).toBeNull();
+    expect(platformKeeperReply([grant, refuse], 2)).toBeNull();
   });
 
-  it('ignores a JUNCTION grant or refusal when reading station replies', () => {
+  it('ignores a JUNCTION grant or refusal when reading platform keeper replies', () => {
     const inbox: Message[] = [
       { type: 'lockGrant', to: 1, resource: 'JUNCTION', follow: null },
       { type: 'lockRefuse', to: 1, resource: 'JUNCTION', alternative: null },
     ];
-    expect(stationReply(inbox, 1)).toBeNull();
+    expect(platformKeeperReply(inbox, 1)).toBeNull();
   });
 
   it('when one inbox holds a grant and a refusal for this train, the grant wins', () => {
-    expect(stationReply([refuse, grant], 1)).toEqual({ kind: 'grant', platform: 'P1' });
-    expect(stationReply([grant, refuse], 1)).toEqual({ kind: 'grant', platform: 'P1' });
+    expect(platformKeeperReply([refuse, grant], 1)).toEqual({ kind: 'grant', platform: 'P1' });
+    expect(platformKeeperReply([grant, refuse], 1)).toEqual({ kind: 'grant', platform: 'P1' });
   });
 
   it('drops a grant for a platform outside its own pair, and an alternative outside it', () => {
@@ -304,7 +304,7 @@ describe('Entering the station: dwell', () => {
   });
 });
 
-describe('Station switched off: when to use the fallback', () => {
+describe('Platform keeper switched off: when to use the fallback', () => {
   it('uses the fallback when stopped at the end of its entry track with no reply', () => {
     expect(fallback()).toBe(true);
     expect(fallback({ self: { ...stopped, pos: { track: 'B', offset: 5999.99 } } })).toBe(true);
@@ -326,12 +326,12 @@ describe('Station switched off: when to use the fallback', () => {
     expect(fallback({ firstAskedAt: null })).toBe(false);
   });
 
-  it('does not use the fallback after a station reply, unless the stored refusal counts as silence', () => {
+  it('does not use the fallback after a platform keeper reply, unless the stored refusal counts as silence', () => {
     // The agent leaves a refusal that counts as silence out of lastReplyAt.
     expect(fallback({ lastReplyAt: 99 })).toBe(false);
     const run = atEnd();
     for (let i = 0; i < 600; i++) {
-      // Sensors on, station refusing: a real reply every 2 seconds.
+      // Sensors on, platform keeper refusing: a real reply every 2 seconds.
       tick(run, [...sensors(run, i, { P1: true, P2: true }), ...(i % 20 === 1 ? [refuse] : [])]);
       expect(run.out?.nextTrack).toBeNull();
     }
@@ -340,18 +340,18 @@ describe('Station switched off: when to use the fallback', () => {
 
   it('uses the fallback after a refusal that counts as silence, on the ticks after the refusal too', () => {
     const run = atEnd();
-    // Sensors off, station refusing. The refusals do not reset the station timeout.
+    // Sensors off, platform keeper refusing. The refusals do not reset the platform keeper timeout.
     for (let i = 0; i < 200; i++) tick(run, i % 20 === 1 ? [refuse] : []);
     expect(run.state.pos.track).toBe('P1');
   });
 
-  it('counts as no reply when the station has not replied for STATION_TIMEOUT, even after an earlier reply, with half a tick of slack', () => {
-    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - STATION_TIMEOUT })).toBe(true);
-    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - STATION_TIMEOUT + 1e-9 })).toBe(true);
-    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - STATION_TIMEOUT + TICK })).toBe(false);
+  it('counts as no reply when the platform keeper has not replied for PLATFORM_KEEPER_TIMEOUT, even after an earlier reply, with half a tick of slack', () => {
+    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - PLATFORM_KEEPER_TIMEOUT })).toBe(true);
+    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - PLATFORM_KEEPER_TIMEOUT + 1e-9 })).toBe(true);
+    expect(fallback({ firstAskedAt: 50, lastReplyAt: 100 - PLATFORM_KEEPER_TIMEOUT + TICK })).toBe(false);
     // The count runs from the later of the first request and the last reply.
-    expect(fallback({ firstAskedAt: 100 - STATION_TIMEOUT + 1, lastReplyAt: null })).toBe(false);
-    expect(fallback({ firstAskedAt: 100 - STATION_TIMEOUT + 1, lastReplyAt: 20 })).toBe(false);
+    expect(fallback({ firstAskedAt: 100 - PLATFORM_KEEPER_TIMEOUT + 1, lastReplyAt: null })).toBe(false);
+    expect(fallback({ firstAskedAt: 100 - PLATFORM_KEEPER_TIMEOUT + 1, lastReplyAt: 20 })).toBe(false);
   });
 
   it('keeps using the fallback while it moves into the platform it picked', () => {
@@ -370,7 +370,7 @@ describe('Station switched off: when to use the fallback', () => {
   });
 });
 
-describe('Station switched off: fixed split', () => {
+describe('Platform keeper switched off: fixed split', () => {
   const fresh = (occupied: boolean) => ({ occupied, sentAt: 9 });
 
   it('track A owns P1 and P2', () => {
@@ -431,13 +431,13 @@ describe('Station switched off: fixed split', () => {
     expect(run.topSpeed).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
   });
 
-  it('waits the full STATION_TIMEOUT from its first request before it takes a platform', () => {
+  it('waits the full PLATFORM_KEEPER_TIMEOUT from its first request before it takes a platform', () => {
     const run = atEnd();
     let tookAt: number | null = null;
     for (let i = 0; i < 300 && tookAt === null; i++) {
       if (tick(run, sensors(run, i, { P1: false, P2: false })).nextTrack !== null) tookAt = run.now - TICK;
     }
-    expect(tookAt).toBeCloseTo(STATION_TIMEOUT, 6);
+    expect(tookAt).toBeCloseTo(PLATFORM_KEEPER_TIMEOUT, 6);
   });
 
   it('a grant while it waits on the fallback wins over the fixed split', () => {
@@ -448,11 +448,11 @@ describe('Station switched off: fixed split', () => {
   });
 });
 
-describe('Station switched off: creeping with the sensors off too', () => {
-  /** Train 1 at the end of A, past the station timeout, with the sensors silent. */
+describe('Platform keeper switched off: creeping with the sensors off too', () => {
+  /** Train 1 at the end of A, past the platform keeper timeout, with the sensors silent. */
   function creeping(): Run {
     const run = atEnd();
-    while (run.now < STATION_TIMEOUT - TICK / 2) tick(run);
+    while (run.now < PLATFORM_KEEPER_TIMEOUT - TICK / 2) tick(run);
     return run;
   }
 
@@ -600,7 +600,7 @@ describe('Platform sensors switched off', () => {
   });
 
   it('a refusal with an alternative never counts as silence', () => {
-    expect(silence({ lastReply: { ...refused, alternative: 'P2' } as HeardStationReply })).toBe(false);
+    expect(silence({ lastReply: { ...refused, alternative: 'P2' } as HeardPlatformKeeperReply })).toBe(false);
   });
 
   it('a last reply that is a grant never counts as silence', () => {
@@ -612,8 +612,8 @@ describe('Platform sensors switched off', () => {
     expect(silence({ statuses: { P3: { occupied: false, sentAt: 99 }, P4: { occupied: true, sentAt: 99 } } })).toBe(true);
   });
 
-  it('after a refusal that counts as silence, uses the station-off rule and creeps', () => {
-    // Station alive and refusing everything, sensors off. P1 has a train in it, P2 is empty.
+  it('after a refusal that counts as silence, uses the rule for a switched-off platform keeper and creeps', () => {
+    // Platform keeper alive and refusing everything, sensors off. P1 has a train in it, P2 is empty.
     const run = startRun(createAgent(1, timetable), 1, { track: 'A', offset: 5700 }, 20);
     let fastestIn = 0;
     for (let i = 0; i < 1500; i++) {
@@ -628,9 +628,9 @@ describe('Platform sensors switched off', () => {
     expect(run.overruns).toBe(0);
   });
 
-  it('when the sensors die while the station keeps refusing, falls back STATION_TIMEOUT after the last reply that counted', () => {
+  it('when the sensors die while the platform keeper keeps refusing, falls back PLATFORM_KEEPER_TIMEOUT after the last reply that counted', () => {
     const run = atEnd();
-    // 30 seconds with the sensors on and the station refusing, then the sensors go quiet.
+    // 30 seconds with the sensors on and the platform keeper refusing, then the sensors go quiet.
     for (let i = 0; i < 300; i++) tick(run, [...sensors(run, i, { P1: true, P2: true }), ...(i % 20 === 1 ? [refuse] : [])]);
     expect(run.out?.nextTrack).toBeNull();
     let lookedAt: number | null = null;
@@ -638,7 +638,7 @@ describe('Platform sensors switched off', () => {
       if (tick(run, i % 20 === 1 ? [refuse] : []).nextTrack !== null) lookedAt = run.now - TICK;
     }
     // The last status was sent at 29.0 and the last refusal that counted arrived at 32.1,
-    // while a status was still fresh. The fallback starts STATION_TIMEOUT after that.
-    expect(lookedAt).toBeCloseTo(32.1 + STATION_TIMEOUT, 6);
+    // while a status was still fresh. The fallback starts PLATFORM_KEEPER_TIMEOUT after that.
+    expect(lookedAt).toBeCloseTo(32.1 + PLATFORM_KEEPER_TIMEOUT, 6);
   });
 });

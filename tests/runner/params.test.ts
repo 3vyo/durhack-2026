@@ -34,14 +34,14 @@ describe('a run built from a parameter file', () => {
 
   it('turns the starting switches and the failures into presses in time order', () => {
     const params = parseParams({
-      start: { merge: false },
+      start: { junctionKeeper: false },
       failures: [
         { at: 200, breakDown: 3 },
         { at: 100, centre: false, radioDrop: 0.5 },
       ],
     });
     expect(pressesFromParams(params)).toEqual([
-      { at: 0, set: { centre: true, station: true, merge: false, sensors: true, radioDrop: 0 } },
+      { at: 0, set: { centre: true, platformKeeper: true, junctionKeeper: false, sensors: true, radioDrop: 0 } },
       { at: 100, set: { centre: false, radioDrop: 0.5 } },
       { at: 200, set: {}, breakDown: 3 },
     ]);
@@ -52,7 +52,7 @@ describe('a run built from a parameter file', () => {
   it('starts with the switches the file sets', () => {
     const engine = engineFromParams(parseParams({ start: { sensors: false, radioDrop: 0.25 } }), baselineProgram);
     engine.step();
-    expect(engine.snapshot().switches).toEqual({ centre: true, station: true, merge: true, sensors: false, radioDrop: 0.25 });
+    expect(engine.snapshot().switches).toEqual({ centre: true, platformKeeper: true, junctionKeeper: true, sensors: false, radioDrop: 0.25 });
   });
 
   it('makes the engine use the physics in the file', () => {

@@ -67,32 +67,32 @@ describe('route short range', () => {
     resource,
   });
 
-  it('reaches the station actor only from x 4300 to 6400', () => {
+  it('reaches the platform keeper only from x 4300 to 6400', () => {
     const at = (x: number) =>
       route(out(request(1, 'P1'), 'short'), fromTrain1, [{ id: 1, x }], ALL_ON, never);
     expect(at(4299)).toEqual([]);
-    expect(at(4300)).toEqual([{ kind: 'actor', id: 'station' }]);
-    expect(at(6400)).toEqual([{ kind: 'actor', id: 'station' }]);
+    expect(at(4300)).toEqual([{ kind: 'actor', id: 'platformKeeper' }]);
+    expect(at(6400)).toEqual([{ kind: 'actor', id: 'platformKeeper' }]);
     expect(at(6401)).toEqual([]);
   });
 
-  it('does not reach the station actor when it is switched off', () => {
-    const sw: Switches = { ...ALL_ON, station: false };
+  it('does not reach the platform keeper when it is switched off', () => {
+    const sw: Switches = { ...ALL_ON, platformKeeper: false };
     expect(route(out(request(1, 'P1'), 'short'), fromTrain1, [{ id: 1, x: 5000 }], sw, never)).toEqual([]);
   });
 
-  it('sends a junction request to the merge actor from x 6000 to 6600', () => {
+  it('sends a junction request to the junction keeper from x 6000 to 6600', () => {
     const at = (x: number) =>
       route(out(request(1, 'JUNCTION'), 'short'), fromTrain1, [{ id: 1, x }], ALL_ON, never);
     expect(at(5999)).toEqual([]);
-    expect(at(6000)).toEqual([{ kind: 'actor', id: 'merge' }]);
-    expect(at(6600)).toEqual([{ kind: 'actor', id: 'merge' }]);
+    expect(at(6000)).toEqual([{ kind: 'actor', id: 'junctionKeeper' }]);
+    expect(at(6600)).toEqual([{ kind: 'actor', id: 'junctionKeeper' }]);
     expect(at(6601)).toEqual([]);
   });
 
   it('delivers an actor reply only to a train inside that actor range', () => {
     const grant: Message = { type: 'lockGrant', to: 1, resource: 'P1', follow: null };
-    const from: Sender = { kind: 'actor', id: 'station' };
+    const from: Sender = { kind: 'actor', id: 'platformKeeper' };
     expect(route(out(grant, 'short'), from, [{ id: 1, x: 6500 }], ALL_ON, never)).toEqual([]);
     expect(ids(route(out(grant, 'short'), from, [{ id: 1, x: 6400 }], ALL_ON, never))).toEqual([1]);
   });

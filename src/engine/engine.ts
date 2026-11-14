@@ -124,7 +124,7 @@ export class Engine {
   private readonly centre: ControlCentre | null;
   private readonly rng: () => number;
   private trainInboxes = new Map<TrainId, Message[]>();
-  private actorInboxes = new Map<'station' | 'merge', Message[]>();
+  private actorInboxes = new Map<'platformKeeper' | 'junctionKeeper', Message[]>();
 
   constructor(private readonly cfg: EngineConfig) {
     this.runTicks = Math.ceil(cfg.runLength / TICK - 1e-9);
@@ -309,7 +309,7 @@ export class Engine {
       } else if (m.type === 'lockGrant') {
         if (m.resource === 'JUNCTION') {
           rt.lastGrants.junction = true;
-          // On EXIT the merge actor names the train ahead, or says there is none. That replaces
+          // On EXIT the junction keeper names the train ahead, or says there is none. That replaces
           // the entry-track leader from the timetable, which is no longer the train in front.
           rt.leaderId = m.follow;
           rt.lastLeaderAt = null;

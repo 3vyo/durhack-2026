@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   FRESH,
-  MERGE_TIMEOUT,
+  JUNCTION_KEEPER_TIMEOUT,
   PERMIT_FRESH,
   POSITION_INTERVAL,
   REQUEST_REPEAT,
@@ -9,7 +9,7 @@ import {
   SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
-  STATION_TIMEOUT,
+  PLATFORM_KEEPER_TIMEOUT,
   TICK,
   resetConstants,
   setConstants,
@@ -30,15 +30,15 @@ describe('trainNumbers', () => {
     expect(n.requestRepeat).toBe(REQUEST_REPEAT);
     expect(n.fresh).toBe(FRESH);
     expect(n.permitFresh).toBe(PERMIT_FRESH);
-    expect(n.stationTimeout).toBe(STATION_TIMEOUT);
-    expect(n.mergeTimeout).toBe(MERGE_TIMEOUT);
+    expect(n.platformKeeperTimeout).toBe(PLATFORM_KEEPER_TIMEOUT);
+    expect(n.junctionKeeperTimeout).toBe(JUNCTION_KEEPER_TIMEOUT);
     expect(n.slotLength).toBe(SLOT_LENGTH);
     expect(n.slotWindow).toBe(SLOT_WINDOW);
     expect(n.slotCount).toBe(SLOT_COUNT);
   });
 
-  it('gives a junction grant one REQUEST_REPEAT less than MERGE_TIMEOUT to be used', () => {
-    expect(trainNumbers().grantLife).toBe(MERGE_TIMEOUT - REQUEST_REPEAT);
+  it('gives a junction grant one REQUEST_REPEAT less than JUNCTION_KEEPER_TIMEOUT to be used', () => {
+    expect(trainNumbers().grantLife).toBe(JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT);
   });
 
   it('takes every map number from src/shared/map.ts', () => {
@@ -69,10 +69,10 @@ describe('a parameter file changes the constants before a run', () => {
   afterEach(() => resetConstants());
 
   it('reads the constants afresh on each call, never a copy made when the file loaded', () => {
-    setConstants({ REQUEST_REPEAT: 3, MERGE_TIMEOUT: 20, TICK: 0.2 });
+    setConstants({ REQUEST_REPEAT: 3, JUNCTION_KEEPER_TIMEOUT: 20, TICK: 0.2 });
     const n = trainNumbers();
     expect(n.requestRepeat).toBe(3);
-    expect(n.mergeTimeout).toBe(20);
+    expect(n.junctionKeeperTimeout).toBe(20);
     expect(n.grantLife).toBe(17);
     expect(n.slack).toBe(0.1);
     resetConstants();

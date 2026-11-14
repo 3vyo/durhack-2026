@@ -7,7 +7,7 @@ import { createTrainAgent } from '../train';
 // the engine itself.
 
 /**
- * Our program: our train agent, the station and merge actors, and the one control centre.
+ * Our program: our train agent, the platform and junction keepers, and the one control centre.
  * While the centre is on, our trains obey its permits like today's trains. When it fails
  * they carry on with their own rules and the local actors.
  */

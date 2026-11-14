@@ -4,10 +4,10 @@ import type { TrainId } from '../shared/types';
 export interface Switches {
   /** The control centre is switched on. */
   centre: boolean;
-  /** The station actor is switched on. */
-  station: boolean;
-  /** The merge actor is switched on. */
-  merge: boolean;
+  /** The platform keeper is switched on. */
+  platformKeeper: boolean;
+  /** The junction keeper is switched on. */
+  junctionKeeper: boolean;
   /** The platform sensors are switched on. */
   sensors: boolean;
   /** Share of train-to-train messages the radio drops, from 0 to 1. */
@@ -16,8 +16,8 @@ export interface Switches {
 
 export const ALL_ON: Switches = {
   centre: true,
-  station: true,
-  merge: true,
+  platformKeeper: true,
+  junctionKeeper: true,
   sensors: true,
   radioDrop: 0,
 };

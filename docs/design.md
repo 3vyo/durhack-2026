@@ -68,8 +68,8 @@ The timers the rules use are constants too.
 | `PERMIT_INTERVAL` | 1 | How often the control centre sends permits |
 | `POSITION_INTERVAL` | 1 | How often a train broadcasts its position |
 | `REQUEST_REPEAT` | 2 | How often a train repeats a lock request |
-| `MERGE_TIMEOUT` | 10 | Silence from the merge actor before a train uses clock slots |
-| `STATION_TIMEOUT` | 10 | Silence from the station actor before a stopped train uses the fixed split |
+| `JUNCTION_KEEPER_TIMEOUT` | 10 | Silence from the junction keeper before a train uses clock slots |
+| `PLATFORM_KEEPER_TIMEOUT` | 10 | Silence from the platform keeper before a stopped train uses the fixed split |
 | `RESUME_SETTLE` | 5 | How long a local actor grants nothing after it is switched back on |
 | `SLOT_LENGTH`, `SLOT_WINDOW`, `SLOT_COUNT` | 60, 15, 4 | The clock slots |
 | `RADIO_WORKING_DELAY` | 1200 | How long the centre is down before staff move the first train by radio |
@@ -83,7 +83,7 @@ These values are the defaults. A parameter file can change them for one run. It 
 {
   "name": "centre outage",
   "physics": { "maxSpeed": 45, "brake": 0.9, "sensorRange": 300 },
-  "timers": { "mergeTimeout": 10 },
+  "timers": { "junctionKeeperTimeout": 10 },
   "timetable": { "seed": 1, "trains": 12, "headway": 45, "dwell": 30 },
   "start": { "centre": true, "radioDrop": 0 },
   "failures": [
@@ -103,12 +103,12 @@ These values are the defaults. A parameter file can change them for one run. It 
 ## The actors
 
 - A train knows its own state, the timetable, and whatever messages it has received. It never reads another train's state directly.
-- The merge actor owns the junction zone and grants one lock at a time.
-- The station actor owns the four platforms and grants one lock per platform.
+- The junction keeper owns the junction zone and grants one lock at a time.
+- The platform keeper owns the four platforms and grants one lock per platform.
 - Each platform has a sensor that broadcasts empty or occupied.
-- The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second. It is today's system. It does not use the station actor, the merge actor or the platform sensors.
+- The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second. It is today's system. It does not use the platform keeper, the junction keeper or the platform sensors.
 
-The merge and station actors have wired sensors, so they see their own track without radio.
+The junction and platform keepers have wired sensors, so they see their own track without radio.
 
 ## The radio
 
@@ -117,8 +117,8 @@ Every message goes through one function in the engine.
 - Long range reaches every train. A slider sets the share of train-to-train messages the engine drops.
 - The slider does not affect the control centre's permits. The centre is either on or switched off.
 - Short range does not drop messages at random. A local actor is either alive or switched off.
-- A train reaches the station actor when its x is between 4300 and 6400.
-- A train reaches the merge actor when its x is between 6000 and 6600.
+- A train reaches the platform keeper when its x is between 4300 and 6400.
+- A train reaches the junction keeper when its x is between 6000 and 6600.
 - A train hears platform sensors when its x is between 5500 and 6400.
 
 ## Shared types
@@ -189,7 +189,7 @@ export interface SensorReadings {
 }
 
 export interface LocalActor {
-  id: 'station' | 'merge';
+  id: 'platformKeeper' | 'junctionKeeper';
   step(now: number, inbox: Message[], sensors: SensorReadings): Outgoing[];
 }
 ```
@@ -218,12 +218,12 @@ While a train holds a permit under 5 seconds old, it obeys the control centre li
 - It sends no lock requests and ignores the local actors' replies.
 - It still broadcasts its position every second, so the trains behind it can follow it if the centre fails.
 
-It needs nothing from the train-to-train radio, the station actor, the merge actor or the platform sensors. A failure of any of those, with the centre still working, costs it nothing.
+It needs nothing from the train-to-train radio, the platform keeper, the junction keeper or the platform sensors. A failure of any of those, with the centre still working, costs it nothing.
 
 When its permit goes stale, the train runs on the rules in the rest of this section. It starts from where the centre left it.
 
-- On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the merge actor.
-- On A or B, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the station actor for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
+- On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the junction keeper.
+- On A or B, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the platform keeper for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
 - Anywhere else it stops where its own rules say and asks for what it needs.
 
 When permits return, the train obeys them again on the next tick. It forgets its request timers and drops a junction grant, because the centre now orders the junction. The centre takes over from where the trains are.
@@ -237,12 +237,12 @@ The centre sees each train's set route as the signalling shows it. The engine pa
 
 Each train broadcasts a `position` message every second over long range.
 
-A train knows who its leader is. On A and B the timetable names it. On EXIT the merge actor names it in the `follow` field of the grant.
+A train knows who its leader is. On A and B the timetable names it. On EXIT the junction keeper names it in the `follow` field of the grant.
 
 "No leader" and "leader unknown" are different.
 
 - **No leader.** The timetable gives `leader: null` for the first train on an entry track, and a junction grant gives `follow: null` when no train has entered EXIT. The line ahead is clear. The train has no limit point, so only `MAX_SPEED`, `sightAhead` and stop points limit it. It shows `full`.
-- **Leader unknown.** A train that left on a clock slot does not know who is ahead. Nor does a train whose junction grant names its own ID in `follow`, which is how a merge actor that was just switched back on says it does not know. The train stays at `SIGHT_SPEED` or below and shows `blind`.
+- **Leader unknown.** A train that left on a clock slot does not know who is ahead. Nor does a train whose junction grant names its own ID in `follow`, which is how a junction keeper that was just switched back on says it does not know. The train stays at `SIGHT_SPEED` or below and shows `blind`.
 
 The limit point is the leader's last reported rear minus `MARGIN`, however old that report is. The leader cannot have moved backwards, so the track up to that point is clear.
 
@@ -289,15 +289,15 @@ The display labels each train with a mode.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
 6. A broken-down train brakes, keeps broadcasting its position and sends no lock requests.
 
-The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave. If two trains ask for the same free platform on the same tick, the train with the earlier `enterAt` gets it.
+The platform keeper grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave. If two trains ask for the same free platform on the same tick, the train with the earlier `enterAt` gets it.
 
-The station actor grants only to the front train on each entry track. Trains on one entry track stand in a queue and cannot pass each other. A platform given to a train further back could never be reached, and the queue would stop for good. So while a train with no lock is still asking, the actor refuses every train that entered the same entry track after it.
+The platform keeper grants only to the front train on each entry track. Trains on one entry track stand in a queue and cannot pass each other. A platform given to a train further back could never be reached, and the queue would stop for good. So while a train with no lock is still asking, the actor refuses every train that entered the same entry track after it.
 
 The train counts its own dwell time from the moment it stops in the platform.
 
-### Station switched off
+### Platform keeper switched off
 
-A train stopped at the end of its entry track with no reply for `STATION_TIMEOUT` uses the fixed split. The time counts from the later of its first request and the last reply it heard. Track A owns P1 and P2. Track B owns P3 and P4.
+A train stopped at the end of its entry track with no reply for `PLATFORM_KEEPER_TIMEOUT` uses the fixed split. The time counts from the later of its first request and the last reply it heard. Track A owns P1 and P2. Track B owns P3 and P4.
 
 ```
 for each platform my entry track owns, lowest number first:
@@ -322,33 +322,33 @@ This is safe because trains on one entry track arrive in a queue, and trains on 
 A switched-off platform sensor does two things.
 
 - It stops sending `platformStatus`. A train whose x is between 5500 and 6400 should hear the sensors. If it has no `platformStatus` from a platform newer than `FRESH`, it treats that platform as having no sensor. Further back, hearing no status is normal.
-- It reads as occupied in `SensorReadings.platformOccupied`. The station actor never grants that platform. If the other platform of the pair is free, the actor offers it as the alternative.
+- It reads as occupied in `SensorReadings.platformOccupied`. The platform keeper never grants that platform. If the other platform of the pair is free, the actor offers it as the alternative.
 
-With every sensor off and the station actor alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the station-off rule and creeps.
+With every sensor off and the platform keeper alive, the actor refuses every request. A refusal is a reply, so a train would wait forever. So a train that is refused with no alternative, and has no fresh `platformStatus` from the platforms of its pair, treats the refusal as silence. It uses the rule for a switched-off platform keeper and creeps.
 
-The station actor cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The station actor keeps a lock while it hears those requests. It answers each one with the grant again, never a refusal, even when the train's own front makes the sensor read occupied. A train that holds a platform grant ignores a later refusal for that platform.
+The platform keeper cannot tell a dead sensor from a train arriving, or the sensor's return from a train leaving. It must never release a lock while the lock's train could still be on its way in. So a train repeats its platform request after the grant until its front is in the platform, as step 3 of "Entering the station" says. The platform keeper keeps a lock while it hears those requests. It answers each one with the grant again, never a refusal, even when the train's own front makes the sensor read occupied. A train that holds a platform grant ignores a later refusal for that platform.
 
 ### Leaving the station
 
 1. After its dwell time a train sends a `lockRequest` for `JUNCTION` and repeats it every 2 seconds.
-2. The merge actor grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
-3. The merge actor answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the merge actor has just granted. The merge actor never refuses the train that holds the lock, and a train that holds the grant ignores any later `JUNCTION` refusal.
+2. The junction keeper grants one train at a time, oldest request first, lowest ID on a tie. It grants only when `junctionOccupied` is false and `exitStartClear` is true. That stops a train entering the junction when it cannot clear the far side.
+3. The junction keeper answers every `JUNCTION` request it cannot grant with a `lockRefuse`, on the tick it hears the request, over short range. A refusal is a reply. A train that gets one keeps waiting and keeps asking. Without the refusal, a train waiting behind others would hear nothing for 10 seconds, leave on a clock slot, and could be in the junction zone with a train the junction keeper has just granted. The junction keeper never refuses the train that holds the lock, and a train that holds the grant ignores any later `JUNCTION` refusal.
 4. On a grant the train stops asking, sets `nextTrack` to `EXIT`, departs, and treats the `follow` train as its leader.
-5. The merge actor releases the lock when its sensor shows the junction zone is empty again.
-6. A grant that is not used runs out. If the junction zone has not become occupied within `MERGE_TIMEOUT` of a grant, the merge actor releases it. This covers a train that breaks down in its platform after being granted. A train that cannot enter the zone within `MERGE_TIMEOUT - REQUEST_REPEAT` of its grant drops the grant and asks again, so it never enters on a grant the actor has released.
+5. The junction keeper releases the lock when its sensor shows the junction zone is empty again.
+6. A grant that is not used runs out. If the junction zone has not become occupied within `JUNCTION_KEEPER_TIMEOUT` of a grant, the junction keeper releases it. This covers a train that breaks down in its platform after being granted. A train that cannot enter the zone within `JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT` of its grant drops the grant and asks again, so it never enters on a grant the actor has released.
 
 ### A local actor switched back on
 
 The engine steps a local actor only while its switch is on, so an actor that comes back still has the memory it had when it went off. Trains may have used the fixed split or clock slots in between.
 
 - For `RESUME_SETTLE` seconds after it comes back, an actor grants nothing and refuses every request. A waiting train hears a reply, so it stops falling back.
-- The station actor keeps every lock it had. It releases a lock whose train it never saw arrive only if the platform reads empty and the holder stayed silent for the whole settle time.
-- The merge actor does not know who last entered EXIT. Its first grant after coming back names the granted train's own ID in `follow`, which the train reads as "leader unknown".
+- The platform keeper keeps every lock it had. It releases a lock whose train it never saw arrive only if the platform reads empty and the holder stayed silent for the whole settle time.
+- The junction keeper does not know who last entered EXIT. Its first grant after coming back names the granted train's own ID in `follow`, which the train reads as "leader unknown".
 - A platform that read occupied with no lock on it must read empty for `RESUME_SETTLE` before it is granted. A train on the fixed split may still be near it.
 
-### Merge switched off
+### Junction keeper switched off
 
-After 10 seconds without a reply, a train uses clock slots. The 10 seconds count from the later of its first `JUNCTION` request and the last reply it heard from the merge actor. Every train has an accurate clock, so no messages are needed.
+After 10 seconds without a reply, a train uses clock slots. The 10 seconds count from the later of its first `JUNCTION` request and the last reply it heard from the junction keeper. Every train has an accurate clock, so no messages are needed.
 
 ```
 slot = floor(now / 60) mod 4
@@ -361,7 +361,7 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 
 - A switch for the control centre.
 - A slider for the share of train-to-train messages dropped. At 100% no train hears another.
-- Switches for the station actor, the merge actor and the platform sensors.
+- Switches for the platform keeper, the junction keeper and the platform sensors.
 - A button to break down a chosen train, which stops it where it is.
 
 ## Today's rule, for comparison
@@ -386,7 +386,7 @@ When its permits stop, a baseline train keeps two things from its last permit.
 
 There is one control centre, and it lives in `src/baseline/`. Both train programs get the same permits from it. The baseline is a second train program. It holds no locks, obeys its permits, and stops when they stop. Ours obeys the same permits while they come, and runs on its own rules when they stop.
 
-The centre is today's system, so it never depends on the station actor, the merge actor or our platform sensors. Switching those off changes nothing for the baseline. The centre knows where every train is from its own train detection, which the engine gives it as true sensor readings.
+The centre is today's system, so it never depends on the platform keeper, the junction keeper or our platform sensors. Switching those off changes nothing for the baseline. The centre knows where every train is from its own train detection, which the engine gives it as true sensor readings.
 
 The baseline train also brakes for `sightAhead`, as a driver would. The centre is safe without it.
 
@@ -406,7 +406,7 @@ The baseline train also brakes for `sightAhead`, as a driver would. The centre i
 | `src/scenarios/` | The demo's scenarios, as data only |
 | `src/runner/` | Live and batch runs, parameter file runs, and the two programs |
 | `src/train/` | The train agent |
-| `src/locks/` | Station actor, merge actor, platform sensors |
+| `src/locks/` | Platform keeper, junction keeper, platform sensors |
 | `src/baseline/` | The control centre, used by both train programs, and the baseline train agent |
 | `src/ui/` | The three.js view, controls, metrics panel |
 | `params/` | Example parameter files |
@@ -417,8 +417,8 @@ Stack: TypeScript, Vite, three.js for the view, and Vitest for tests. No server.
 
 Build these only after the five issues are done.
 
-- Early booking. A train asks the station for a platform over long range before the ask point and adjusts its speed to arrive as the platform frees.
-- Borrowing. When the station is off and nearby trains can hear each other, the lowest ID picks first and may take a free platform from the other pair.
+- Early booking. A train asks the platform keeper for a platform over long range before the ask point and adjusts its speed to arrive as the platform frees.
+- Borrowing. When the platform keeper is off and nearby trains can hear each other, the lowest ID picks first and may take a free platform from the other pair.
 - Hazard broadcast. A train that spots a problem tells nearby trains, and only trains heading towards it stop.
 - Junction order hints. The control centre suggests a better junction order through its permits.
 - A radio kill for one train. Its long-range radio dies and its short-range radio keeps working.

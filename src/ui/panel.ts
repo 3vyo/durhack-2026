@@ -52,7 +52,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const legend = el(
     'div',
     'font-size:12px;color:#7d8da1;margin-top:2px;',
-    'Boxes above the track, left to right: station actor, control centre (back), platform sensors, merge actor. Green is on, dull red is off. Click a train to see how it is deciding.',
+    'Boxes above the track, left to right: platform keeper, control centre (back), platform sensors, junction keeper. Green is on, dull red is off. Click a train to see how it is deciding.',
   );
   banner.append(title, status, legend);
 

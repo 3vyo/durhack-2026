@@ -43,7 +43,7 @@ describe('constants that a parameter file can change', () => {
   });
 
   it('go back to the design values on reset', () => {
-    setConstants({ MAX_SPEED: 30, MERGE_TIMEOUT: 99 });
+    setConstants({ MAX_SPEED: 30, JUNCTION_KEEPER_TIMEOUT: 99 });
     resetConstants();
     expect(currentConstants()).toEqual(DEFAULT_CONSTANTS);
     expect(MAX_SPEED).toBe(45);
@@ -68,7 +68,7 @@ describe('the default parameters', () => {
   });
 
   it('start with everything switched on and no failures', () => {
-    expect(DEFAULT_PARAMS.start).toEqual({ centre: true, station: true, merge: true, sensors: true, radioDrop: 0 });
+    expect(DEFAULT_PARAMS.start).toEqual({ centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 });
     expect(DEFAULT_PARAMS.failures).toEqual([]);
   });
 });
@@ -94,7 +94,7 @@ describe('reading a parameter file', () => {
   });
 
   it('keeps the design sightSpeed when the file has no physics section', () => {
-    expect(parseParams({ timers: { mergeTimeout: 20 } }).physics.sightSpeed).toBe(21);
+    expect(parseParams({ timers: { junctionKeeperTimeout: 20 } }).physics.sightSpeed).toBe(21);
   });
 
   it('reads failures and puts them in time order', () => {
@@ -113,7 +113,7 @@ describe('reading a parameter file', () => {
   });
 
   it('does not change the defaults or the input', () => {
-    const input = { physics: { maxSpeed: 30 }, failures: [{ at: 5, merge: false }] };
+    const input = { physics: { maxSpeed: 30 }, failures: [{ at: 5, junctionKeeper: false }] };
     const copy = JSON.parse(JSON.stringify(input));
     parseParams(input);
     expect(input).toEqual(copy);
@@ -146,7 +146,7 @@ describe('a parameter file with mistakes', () => {
 
   it('rejects zero and negative physics and timer values', () => {
     expect(problemsOf({ physics: { brake: 0 } }).join('\n')).toContain('physics.brake must be more than 0');
-    expect(problemsOf({ timers: { mergeTimeout: -1 } }).join('\n')).toContain('timers.mergeTimeout must be more than 0');
+    expect(problemsOf({ timers: { junctionKeeperTimeout: -1 } }).join('\n')).toContain('timers.junctionKeeperTimeout must be more than 0');
   });
 
   it('rejects a sight speed that cannot stop within what the train sees', () => {
@@ -164,8 +164,8 @@ describe('a parameter file with mistakes', () => {
 
   it('rejects timers that cannot work together', () => {
     expect(problemsOf({ timers: { permitFresh: 1 } }).join('\n')).toContain('timers.permitFresh (1) must be longer than timers.permitInterval (1)');
-    expect(problemsOf({ timers: { mergeTimeout: 2 } }).join('\n')).toContain('timers.mergeTimeout (2) must be longer than timers.requestRepeat (2)');
-    expect(problemsOf({ timers: { stationTimeout: 1 } }).join('\n')).toContain('timers.stationTimeout (1) must be longer than timers.requestRepeat (2)');
+    expect(problemsOf({ timers: { junctionKeeperTimeout: 2 } }).join('\n')).toContain('timers.junctionKeeperTimeout (2) must be longer than timers.requestRepeat (2)');
+    expect(problemsOf({ timers: { platformKeeperTimeout: 1 } }).join('\n')).toContain('timers.platformKeeperTimeout (1) must be longer than timers.requestRepeat (2)');
     expect(problemsOf({ timers: { resumeSettle: 2 } }).join('\n')).toContain('timers.resumeSettle (2) must be at least');
     expect(problemsOf({ timers: { slotWindow: 90 } }).join('\n')).toContain('timers.slotWindow (90) must not be longer than timers.slotLength (60)');
     expect(problemsOf({ timers: { requestRepeat: 0.05 } }).join('\n')).toContain('timers.requestRepeat (0.05) must not be shorter than physics.tick (0.1)');
@@ -185,7 +185,7 @@ describe('a parameter file with mistakes', () => {
     expect(problemsOf({ failures: [{ centre: false }] }).join('\n')).toContain('failures[0].at is missing');
     expect(problemsOf({ failures: [{ at: 10 }] }).join('\n')).toContain('failures[0] changes nothing');
     expect(problemsOf({ failures: [{ at: 10, center: false }] }).join('\n')).toContain('failures[0].center is not a known setting');
-    expect(problemsOf({ failures: [{ at: -5, merge: false }] }).join('\n')).toContain('failures[0].at must not be negative');
+    expect(problemsOf({ failures: [{ at: -5, junctionKeeper: false }] }).join('\n')).toContain('failures[0].at must not be negative');
     expect(problemsOf({ failures: [{ at: 10, breakDown: 99 }] }).join('\n')).toContain('failures[0].breakDown must be a train number from 1 to 12');
     expect(problemsOf({ failures: 'none' })).toEqual(['failures must be a list']);
   });
@@ -199,10 +199,10 @@ describe('a parameter file with mistakes', () => {
 
 describe('applying parameters', () => {
   it('makes the constants hold the values from the file', () => {
-    applyParams(parseParams({ physics: { maxSpeed: 30, sightSpeed: 12 }, timers: { mergeTimeout: 20, slotCount: 2 } }));
+    applyParams(parseParams({ physics: { maxSpeed: 30, sightSpeed: 12 }, timers: { junctionKeeperTimeout: 20, slotCount: 2 } }));
     expect(MAX_SPEED).toBe(30);
     expect(SIGHT_SPEED).toBe(12);
-    expect(constants.MERGE_TIMEOUT).toBe(20);
+    expect(constants.JUNCTION_KEEPER_TIMEOUT).toBe(20);
     expect(constants.SLOT_COUNT).toBe(2);
     expect(constants.ACCEL).toBe(0.5);
   });
