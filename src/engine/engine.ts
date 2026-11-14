@@ -17,6 +17,7 @@ import { xOf } from './map';
 import { advanceTrain } from './physics';
 import type { ControlCentre, TrainProgram } from './ports';
 import { route, type Recipient, type Sender } from './radio';
+import { checkSafety } from './safety';
 import { readSensors, sightAhead } from './sensing';
 import { ALL_ON, type Press, type Switches } from './switches';
 import { makeRng } from './timetable';
@@ -101,6 +102,9 @@ export class Engine {
   private active: Runtime[] = [];
   private readonly exits = new Map<TrainId, number>();
   private overruns = 0;
+  private collisions = 0;
+  private closeCalls = 0;
+  private readonly safetyActive = new Set<string>();
   private readonly switches: Switches = { ...ALL_ON };
   private readonly scriptedPresses: Press[];
   private readonly actors: LocalActor[];
@@ -209,6 +213,14 @@ export class Engine {
       else stillActive.push(rt);
     });
     this.active = stillActive;
+
+    // Check the bodies where the trains now are, so a rear on the previous track counts.
+    const after = checkSafety(
+      this.active.map((rt) => ({ state: rt.state, prev: rt.prev })),
+      this.safetyActive,
+    );
+    this.collisions += after.collisions;
+    this.closeCalls += after.closeCalls;
     this.tick += 1;
   }
 
@@ -232,8 +244,8 @@ export class Engine {
       runLength: this.cfg.runLength,
       finished: this.exits.size === this.cfg.timetable.length,
       exits: new Map(this.exits),
-      collisions: 0,
-      closeCalls: 0,
+      collisions: this.collisions,
+      closeCalls: this.closeCalls,
       overruns: this.overruns,
     };
   }

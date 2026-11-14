@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
-import { DEFAULT_TIMETABLE, generateTimetable } from '../../src/engine/timetable';
+import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { ACCEL, BRAKE, MAX_SPEED } from '../../src/shared/constants';
 import type { LocalActor, Message, Outgoing, TimetableEntry } from '../../src/shared/types';
@@ -298,6 +298,27 @@ describe('stubBaseline', () => {
 
     while (engine.now < 130) engine.step();
     expect(engine.snapshot().trains[0].speed).toBeGreaterThan(0);
+  });
+});
+
+describe('Engine safety', () => {
+  it('counts one collision when two trains drive through each other', () => {
+    const tt: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const engine = new Engine(config(tt, 600));
+    runUntilDone(engine);
+    expect(engine.result().collisions).toBe(1);
+  });
+
+  it('counts no collision when trains are spaced out in a healthy timetable', () => {
+    for (let seed = 1; seed <= 5; seed++) {
+      const tt = generateTimetable(seed, DEFAULT_TIMETABLE);
+      const engine = new Engine(config(tt, runLengthFor(tt)));
+      runUntilDone(engine);
+      expect(engine.result().collisions, `seed ${seed}`).toBe(0);
+    }
   });
 });
 
