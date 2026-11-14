@@ -1,6 +1,7 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
 import type { TrackId, TrainId, TrainOutput } from '../shared/types';
+import { MODE_STYLE } from './palette';
 
 /**
  * A window onto the track. xMin and xMax are metres along the shared x axis, and width is
@@ -12,11 +13,23 @@ export interface Frame {
   width: number;
 }
 
-/** The station area, where everything that matters happens. */
-export const STATION_FRAME: Frame = { xMin: 4000, xMax: 7000, width: 1500 };
+/**
+ * Scene units per metre. These are the Kenney Train Kit's own units, so a 100 m train is
+ * 8 units long and the models need almost no scaling. Never scale a train up to make it easier
+ * to see: collisions are judged on true lengths, and a bigger train would look as if it
+ * overlapped one it does not.
+ */
+export const UNITS_PER_METRE = 0.08;
+
+/**
+ * The stretch of line each scene shows: the braking approach, the platforms, the junction and
+ * the start of EXIT. 1,800 m, so a train is about 5.5 percent of the width. The minimap shows
+ * the whole line.
+ */
+export const STATION_FRAME: Frame = { xMin: 5000, xMax: 6800, width: 1800 * UNITS_PER_METRE };
 
 /** Distance between lanes in scene units. Lanes run across the track, along z. */
-export const LANE_SPACING = 40;
+export const LANE_SPACING = 4;
 
 export function toScreenX(x: number, f: Frame): number {
   return ((x - f.xMin) / (f.xMax - f.xMin)) * f.width;
@@ -62,20 +75,9 @@ export function markersFor(s: Snapshot, f: Frame): Marker[] {
   }));
 }
 
-/** One colour per display mode, so a judge can read how each train is deciding. */
+/** One colour per display mode, from the palette. Each mode also has its own marker shape. */
 export function modeColor(mode: TrainOutput['mode']): number {
-  switch (mode) {
-    case 'central':
-      return 0x4da3ff;
-    case 'radio':
-      return 0x9b7bff;
-    case 'full':
-      return 0x45c27a;
-    case 'stale':
-      return 0xe0b040;
-    case 'blind':
-      return 0xe05555;
-  }
+  return MODE_STYLE[mode].hex;
 }
 
 /** A train this slow reads as stopped. The picture dims it so stopped against moving shows at a glance. */

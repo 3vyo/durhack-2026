@@ -2,6 +2,8 @@ import type { Switches } from '../engine/switches';
 import type { TrainId } from '../shared/types';
 import { radioLabel, SWITCH_KEYS, switchLabel, type SwitchKey } from './controls';
 import type { Row } from './hud';
+import { legendItems, shapePath } from './markers';
+import { TEXT } from './palette';
 
 export interface PanelHandlers {
   /** Flip one on/off switch. The page reads the new state back from the engines. */
@@ -33,6 +35,44 @@ export interface Panel {
 }
 
 const SPEEDS = [1, 4, 8, 16];
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** A small inline SVG of a mode's marker shape, for the legend. */
+function shapeIcon(shape: Parameters<typeof shapePath>[0], fill: string, size = 18, opacity = 1): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('viewBox', '-10 -10 20 20');
+  svg.style.flex = 'none';
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', shapePath(shape, 7.5));
+  path.setAttribute('fill', fill);
+  path.setAttribute('stroke', '#0b0f14');
+  path.setAttribute('stroke-width', '1.6');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', String(opacity));
+  svg.append(path);
+  return svg;
+}
+
+/** "How each train is deciding": one entry per mode, its shape, colour and meaning, plus stopped. */
+function legendBox(): HTMLElement {
+  const box = el('div', `flex:1;min-width:0;padding:8px 12px;border:1px solid #26303c;border-radius:6px;`);
+  box.append(el('div', `font-size:12px;color:${TEXT.muted};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;`, 'How each train is deciding'));
+  const grid = el('div', 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px;');
+  const entry = (icon: Element, label: string, meaning: string): HTMLElement => {
+    const row = el('div', 'display:flex;gap:8px;align-items:flex-start;');
+    const words = el('div', 'min-width:0;');
+    words.append(el('div', `font-size:14px;color:${TEXT.primary};`, label), el('div', `font-size:12px;color:${TEXT.secondary};`, meaning));
+    row.append(icon, words);
+    return row;
+  };
+  for (const item of legendItems()) grid.append(entry(shapeIcon(item.shape, item.css), item.label, item.meaning));
+  grid.append(entry(shapeIcon('square', '#8b96a5', 18, 0.55), 'Stopped', 'Dimmed, with a STOPPED tag'));
+  box.append(grid);
+  return box;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -84,9 +124,11 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   right.stage.append(cards.ours);
   columns.append(left.wrap, right.wrap);
 
-  const table = el('table', 'border-collapse:collapse;margin:0 16px;font-size:15px;');
-  const scoreboard = el('div', 'padding:4px 0 8px 0;');
-  scoreboard.append(table);
+  const table = el('table', 'border-collapse:collapse;font-size:15px;');
+  const scoreboard = el('div', 'display:flex;gap:16px;align-items:flex-start;padding:4px 16px 8px 16px;');
+  const tableBox = el('div', 'flex:1;min-width:0;');
+  tableBox.append(table);
+  scoreboard.append(tableBox, legendBox());
 
   const controls = el('div', 'display:flex;flex-wrap:wrap;gap:16px;padding:10px 16px;border-top:1px solid #26303c;');
   const groupStyle = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 10px;border:1px solid #26303c;border-radius:6px;';
