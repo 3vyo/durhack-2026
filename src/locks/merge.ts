@@ -54,6 +54,29 @@ export function recordJunctionRequests(
 }
 
 /**
+ * "Leaving the station": drop a request whose train has stopped asking, for example one
+ * that left by clock slot. Otherwise the actor could grant a train that is gone and hold a
+ * lock nobody uses. How long to wait is not decided. Trains repeat every 2 seconds.
+ *
+ * Placeholder: drops nobody.
+ */
+export function dropSilentRequests(queue: JunctionRequest[], _now: number): JunctionRequest[] {
+  return queue;
+}
+
+/**
+ * "Merge switched off": a train that hears no reply for 10 seconds starts using clock
+ * slots. A train waiting in the queue behind others could wait that long while this actor
+ * is alive. This picks the queued trains to answer with a lockRefuse, so they keep
+ * waiting. Whether to do this is not decided, and the design does not cover it yet.
+ *
+ * Placeholder: answers nobody.
+ */
+export function queuedToAnswer(_memory: MergeMemory, _now: number): TrainId[] {
+  return [];
+}
+
+/**
  * "Leaving the station": oldest request first, lowest ID on a tie.
  *
  * Placeholder: nobody is next.
@@ -122,9 +145,11 @@ export function createMergeActor(): LocalActor {
       // The order the real step will follow:
       // 1. If there was a gap since memory.lastStepAt, call resumeMerge.
       // 2. Update the holder with observeJunction, then free it if canReleaseJunction.
-      // 3. Add new requests with recordJunctionRequests.
+      // 3. Add new requests with recordJunctionRequests, then dropSilentRequests.
       // 4. If canGrantJunction, grant nextForJunction with follow from followFor, over
       //    short range, and set lastIntoExit to that train.
+      // 5. Send a lockRefuse to each train from queuedToAnswer, if the team agrees.
+      // 6. Set memory.lastStepAt to now.
       void memory;
       return [];
     },

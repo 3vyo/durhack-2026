@@ -118,6 +118,35 @@ export function answerPlatformRequest(_request: PlatformRequest): StationReply |
 }
 
 /**
+ * "Entering the station": after a grant, write the new lock into the lock table, so a
+ * second request on the same tick sees the platform as taken.
+ *
+ * Placeholder: records nothing. This is safe only because nothing is granted yet.
+ */
+export function recordGrant(
+  memory: StationMemory,
+  _train: TrainId,
+  _platform: PlatformId,
+  _now: number,
+): StationMemory {
+  return memory;
+}
+
+/**
+ * "Platform sensors switched off": note each lockRequest from a train that already holds
+ * that platform in its lock's lastRequestAt. The release guard uses this.
+ *
+ * Placeholder: records nothing.
+ */
+export function recordHolderRequests(
+  memory: StationMemory,
+  _inbox: Message[],
+  _now: number,
+): StationMemory {
+  return memory;
+}
+
+/**
  * "Entering the station": the actor releases a lock after the sensor has shown the train
  * arrive and then leave. This updates what the actor has seen, from one sensor reading.
  *
@@ -163,10 +192,12 @@ export function createStationActor(timetable: TimetableEntry[]): LocalActor {
     step(_now: number, _inbox: Message[], _sensors: SensorReadings): Outgoing[] {
       // The order the real step will follow:
       // 1. If there was a gap since memory.lastStepAt, call resumeStation.
-      // 2. Update each lock with observePlatform, then free it if canReleasePlatform.
-      // 3. Note repeat requests from lock holders in lastRequestAt.
+      // 2. Note repeat requests from lock holders with recordHolderRequests.
+      // 3. Update each lock with observePlatform, then free it if canReleasePlatform.
       // 4. Answer each platform lockRequest with answerPlatformRequest, over short range.
+      //    After each grant, call recordGrant before answering the next request.
       //    Ignore JUNCTION requests and every other message type.
+      // 5. Set memory.lastStepAt to now.
       void memory;
       return [];
     },
