@@ -64,20 +64,20 @@ describe('scoreboardRows', () => {
     expect(rows().some((x) => x.label.startsWith('Average'))).toBe(false);
   });
 
-  it('adds an average row naming the number of runs once the averages arrive', () => {
+  it('adds an average row naming the runs and their scripted failure once the averages arrive', () => {
     const r = rows({ avg });
     const row = r.find((x) => x.label.startsWith('Average'))!;
-    expect(row.label).toBe('Average delay per train over 50 runs (min)');
+    expect(row.label).toBe('Average delay per train (min), 50 runs with a scripted 2 min centre outage');
     expect(row.baseline).toBe('10.4');
     expect(row.ours).toBe('0.1');
   });
 
   it('adds the average time to normal, counting stuck seeds, and the collisions over all runs', () => {
     const r = rows({ avg });
-    const ttn = r.find((x) => x.label === 'Average time to normal over 50 runs (min)')!;
+    const ttn = r.find((x) => x.label === 'Average time to normal (min), same 50 runs')!;
     expect(ttn.baseline).toBe('5.0 (2 never recovered)');
     expect(ttn.ours).toBe('0.0');
-    const collisions = r.find((x) => x.label === 'Collisions over 50 runs')!;
+    const collisions = r.find((x) => x.label === 'Collisions, same 50 runs')!;
     expect(collisions).toMatchObject({ baseline: '4', ours: '0' });
   });
 

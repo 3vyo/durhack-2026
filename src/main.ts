@@ -5,6 +5,7 @@ import type { RunResult } from './engine/engine';
 import { healthyReference, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
+import { switchesLine, trainChoices } from './ui/controls';
 import { scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
 import { STATION_FRAME, type CameraMode } from './ui/layout';
@@ -44,16 +45,19 @@ const cameraLabel = (): string =>
   cameraMode === 'angled' ? 'Camera: angled (switch to overhead)' : 'Camera: overhead (switch to angled)';
 
 const panel = createPanel(app, {
-  onCutCentre: () => {
-    session.press({ centre: false });
-    restoredAt = null;
+  // Every failure control goes to both engines at the same simulated time.
+  onToggle: (key) => {
+    const on = !session.ours.snapshot().switches[key];
+    session.press({ [key]: on });
+    // Time to normal counts from the moment the control centre comes back.
+    if (key === 'centre') restoredAt = on ? session.ours.now : null;
   },
-  onRestoreCentre: () => {
-    session.press({ centre: true });
-    restoredAt = session.ours.now;
+  onRadioDrop: (drop) => session.press({ radioDrop: drop }),
+  onBreakDown: (id) => {
+    // A train that has already left one side is gone there, so this does nothing to that side.
+    session.baseline.breakDown(id);
+    session.ours.breakDown(id);
   },
-  onCutRadio: () => session.press({ radioDrop: 1 }),
-  onRestoreRadio: () => session.press({ radioDrop: 0 }),
   onSpeed: (speed) => {
     session.speed = speed;
   },
@@ -119,6 +123,8 @@ function draw(): void {
   const b = session.baseline.result();
   const o = session.ours.result();
   const sw = ours.switches;
+  panel.setSwitches(sw);
+  panel.setTrains(trainChoices(base.trains, ours.trains));
   if (referenceError !== null || reference === null) {
     panel.setBanner(`${SCENARIO.title}: today's system against our fallback`, `Cannot score this run: ${referenceError}`);
     panel.setRows([]);
@@ -138,7 +144,7 @@ function draw(): void {
   const stuck = (run: RunResult): number => reference!.exits.size - [...reference!.exits.keys()].filter((id) => run.exits.has(id)).length;
   panel.setBanner(
     `${SCENARIO.title}: today's system against our fallback`,
-    `Control centre ${sw.centre ? 'ON' : 'OFF'}  |  Radio loss ${Math.round(sw.radioDrop * 100)}%  |  Time ${clock(ours.now)}${ended ? '  |  Run ended' : ''}`,
+    `${switchesLine(sw)}  |  Time ${clock(ours.now)}${ended ? '  |  Run ended' : ''}`,
   );
   panel.setRows(
     scoreboardRows({
