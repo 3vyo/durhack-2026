@@ -33,6 +33,18 @@ describe('SCENARIOS', () => {
     });
   });
 
+  it('has one scenario for each thing the design says can fail', () => {
+    expect(SCENARIOS['radio-off'].failure?.set).toEqual({ radioDrop: 1 });
+    expect(SCENARIOS['platform-keeper-fault'].failure?.set).toEqual({ platformKeeper: false });
+    expect(SCENARIOS['sensors-off'].failure?.set).toEqual({ sensors: false });
+    expect(SCENARIOS['long-outage'].failure?.set).toEqual({ centre: false });
+  });
+
+  it('makes the long outage 30 minutes and leaves every other failure at the default length', () => {
+    expect(SCENARIOS['long-outage'].length).toBe(1800);
+    for (const s of Object.values(SCENARIOS)) if (s.id !== 'long-outage') expect(s.length).toBeUndefined();
+  });
+
   it('tiers the scenarios must, should and could', () => {
     expect(SCENARIOS.healthy.tier).toBe('must');
     expect(SCENARIOS['centre-outage'].tier).toBe('must');

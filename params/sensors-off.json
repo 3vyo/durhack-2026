@@ -1,0 +1,9 @@
+{
+  "name": "platform sensors off",
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 480, "sensors": false },
+    { "at": 600, "sensors": true }
+  ],
+  "runLength": 7200
+}

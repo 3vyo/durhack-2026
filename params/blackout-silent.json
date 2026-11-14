@@ -1,9 +1,9 @@
 {
   "name": "blackout, trains silent",
-  "timetable": { "seed": 1, "trains": 12, "minHeadway": 45, "dwell": 30 },
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
   "failures": [
-    { "at": 300, "centre": false, "platformKeeper": false, "junctionKeeper": false, "radioDrop": 1 },
-    { "at": 900, "centre": true, "platformKeeper": true, "junctionKeeper": true, "radioDrop": 0 }
+    { "at": 480, "centre": false, "platformKeeper": false, "junctionKeeper": false, "radioDrop": 1 },
+    { "at": 600, "centre": true, "platformKeeper": true, "junctionKeeper": true, "radioDrop": 0 }
   ],
   "runLength": 7200
 }

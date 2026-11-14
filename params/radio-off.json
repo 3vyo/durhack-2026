@@ -1,0 +1,9 @@
+{
+  "name": "radio off, centre working",
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 480, "radioDrop": 1 },
+    { "at": 600, "radioDrop": 0 }
+  ],
+  "runLength": 7200
+}

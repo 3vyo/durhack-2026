@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
-import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from '../../src/engine/timetable';
+import { DEFAULT_TIMETABLE, RUN_LENGTH, generateTimetable } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, setConstants } from '../../src/shared/constants';
 import type { LocalActor, Message, Outgoing, SensorReadings, TimetableEntry, TrackId } from '../../src/shared/types';
@@ -354,7 +354,7 @@ describe('Engine safety', () => {
   it('counts no collision when trains are spaced out in a healthy timetable', () => {
     for (let seed = 1; seed <= 5; seed++) {
       const tt = generateTimetable(seed, DEFAULT_TIMETABLE);
-      const engine = new Engine(config(tt, runLengthFor(tt)));
+      const engine = new Engine(config(tt, RUN_LENGTH));
       runUntilDone(engine);
       expect(engine.result().collisions, `seed ${seed}`).toBe(0);
     }

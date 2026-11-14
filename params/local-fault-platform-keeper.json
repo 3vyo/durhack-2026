@@ -1,0 +1,9 @@
+{
+  "name": "local fault: platform keeper off",
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 480, "platformKeeper": false },
+    { "at": 600, "platformKeeper": true }
+  ],
+  "runLength": 7200
+}

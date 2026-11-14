@@ -1,7 +1,7 @@
 import { Engine, type RunResult } from '../engine/engine';
 import { averageDelay, timeToNormal } from '../engine/metrics';
 import type { TrainProgram } from '../engine/ports';
-import { generateTimetable, runLengthFor, type TimetableOptions } from '../engine/timetable';
+import { RUN_LENGTH, generateTimetable, type TimetableOptions } from '../engine/timetable';
 import { SCENARIOS, type Scenario, type ScenarioId } from '../scenarios/scenarios';
 import { failureWindow, pressesFor } from './failure';
 
@@ -10,13 +10,13 @@ export interface RunOptions {
   scenario: Scenario;
   program: TrainProgram;
   timetable: TimetableOptions;
-  /** Seconds added after the last entry to get the run length. Defaults to runLengthFor's margin. */
-  settle?: number;
+  /** How long the run may last. RUN_LENGTH unless a test needs a shorter one. */
+  runLength?: number;
 }
 
 /**
- * One headless run: the timetable and the failure presses come from the seed, the run length
- * from the timetable, and the engine is stepped until every train has left or time runs out.
+ * One headless run: the timetable and the failure presses come from the seed, and the engine
+ * is stepped until every train has left or RUN_LENGTH runs out.
  */
 export function runScenario(o: RunOptions): RunResult {
   const timetable = generateTimetable(o.seed, o.timetable);
@@ -24,11 +24,10 @@ export function runScenario(o: RunOptions): RunResult {
     timetable,
     program: o.program,
     seed: o.seed,
-    runLength: runLengthFor(timetable, o.settle),
+    runLength: o.runLength ?? RUN_LENGTH,
     presses: pressesFor(o.scenario, timetable, o.seed),
   });
-  const runLength = runLengthFor(timetable, o.settle);
-  while (!engine.finished && engine.now < runLength) engine.step();
+  while (!engine.finished && engine.now < (o.runLength ?? RUN_LENGTH)) engine.step();
   return engine.result();
 }
 
@@ -93,12 +92,12 @@ export function healthyReference(
   seed: number,
   baseline: TrainProgram,
   tt: TimetableOptions,
-  settle?: number,
+  runLength: number = RUN_LENGTH,
 ): RunResult {
-  const reference = runScenario({ seed, scenario: SCENARIOS.healthy, program: baseline, timetable: tt, settle });
+  const reference = runScenario({ seed, scenario: SCENARIOS.healthy, program: baseline, timetable: tt, runLength });
   if (!reference.finished) {
     throw new Error(
-      `healthy reference did not finish for seed ${seed}: raise the settle margin or lower the number of trains`,
+      `healthy reference did not finish for seed ${seed}: raise RUN_LENGTH or lower the number of trains`,
     );
   }
   return reference;
@@ -114,7 +113,7 @@ export function runBatch(
   seeds: number[],
   programs: { baseline: TrainProgram; ours: TrainProgram },
   tt: TimetableOptions,
-  settle?: number,
+  runLength: number = RUN_LENGTH,
 ): ScenarioSummary {
   if (seeds.length < 1) throw new Error('runBatch needs at least one seed');
   if (new Set(seeds).size !== seeds.length) throw new Error('runBatch was given a duplicate seed');
@@ -125,12 +124,12 @@ export function runBatch(
   const caps: number[] = [];
 
   for (const seed of seeds) {
-    const reference = healthyReference(seed, programs.baseline, tt, settle);
+    const reference = healthyReference(seed, programs.baseline, tt, runLength);
     const timetable = generateTimetable(seed, tt);
-    const failureEnd = scenario.failure ? failureWindow(timetable, seed).end : null;
-    caps.push(failureEnd === null ? 0 : Math.max(0, runLengthFor(timetable, settle) - failureEnd));
+    const failureEnd = scenario.failure ? failureWindow(scenario, timetable, seed).end : null;
+    caps.push(failureEnd === null ? 0 : Math.max(0, runLength - failureEnd));
     for (const side of ['baseline', 'ours'] as const) {
-      const run = runScenario({ seed, scenario, program: programs[side], timetable: tt, settle });
+      const run = runScenario({ seed, scenario, program: programs[side], timetable: tt, runLength });
       runs[side].push(run);
       delays[side].push(averageDelay(run, reference));
       normals[side].push(timeToNormal(run, reference, failureEnd));

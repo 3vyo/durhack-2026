@@ -7,6 +7,7 @@ import {
   PERMIT_INTERVAL,
   RADIO_RELEASE_GAP,
   RADIO_WORKING_DELAY,
+  RESTART_GAP,
   TICK,
   TRAIN_LENGTH,
 } from '../shared/constants';
@@ -64,7 +65,8 @@ export type Routes = Map<TrainId, TrackId | null>;
  * Design: "Today's rule, for comparison".
  *
  * `restartGap` is the slow restart. After a gap in steps, the centre releases one
- * stopped train every `restartGap` seconds. 0 or absent means every train resumes at once.
+ * stopped train every `restartGap` seconds. Absent means RESTART_GAP, which a parameter file
+ * can set. 0 means every train resumes at once. Design: "Slow restart".
  */
 export interface CentreOptions {
   restartGap?: number;
@@ -336,6 +338,11 @@ export function updateMemory(
 
 // Slow restart.
 
+/** The slow restart's gap: the option if given, else RESTART_GAP, read now. */
+function restartGapOf(options: CentreOptions): number {
+  return options.restartGap ?? RESTART_GAP;
+}
+
 /**
  * During a slow restart, picks the one stopped train the centre releases next, or null.
  * It releases one train every `restartGap` seconds, the one furthest along the x axis
@@ -348,7 +355,7 @@ export function nextRestartRelease(
   now: number,
   options: CentreOptions,
 ): TrainId | null {
-  const gap = options.restartGap ?? 0;
+  const gap = restartGapOf(options);
   const last = memory.lastReleaseAt;
   if (last !== null && now - last < gap - TICK / 2) return null;
   const held = trains.filter((train) => memory.plans.get(train.id)?.heldForRestart);
@@ -374,7 +381,7 @@ export function releaseHeld(
   now: number,
   options: CentreOptions,
 ): CentreMemory {
-  if (!options.restartGap) {
+  if (!restartGapOf(options)) {
     const held = [...memory.plans.values()].filter((plan) => plan.heldForRestart);
     return release(memory, held.map((plan) => plan.id), now);
   }

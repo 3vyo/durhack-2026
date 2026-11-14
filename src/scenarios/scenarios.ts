@@ -6,9 +6,13 @@ import type { Switches } from '../engine/switches';
 export type ScenarioId =
   | 'healthy'
   | 'centre-outage'
-  | 'blackout-talking'
+  | 'radio-off'
+  | 'platform-keeper-fault'
   | 'local-fault'
-  | 'blackout-silent';
+  | 'sensors-off'
+  | 'blackout-talking'
+  | 'blackout-silent'
+  | 'long-outage';
 
 export interface Scenario {
   id: ScenarioId;
@@ -17,6 +21,8 @@ export interface Scenario {
   tier: 'must' | 'should' | 'could';
   /** What changes when the failure starts and when it ends. Null means nothing fails. */
   failure: { set: Partial<Switches>; restore: Partial<Switches> } | null;
+  /** How long the failure lasts, in seconds. Absent means FAILURE_LENGTH in src/runner/failure.ts. */
+  length?: number;
 }
 
 const ALL_LOCAL_AND_CENTRE_OFF: Partial<Switches> = { centre: false, platformKeeper: false, junctionKeeper: false };
@@ -34,6 +40,24 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
     title: 'Centre outage',
     tier: 'must',
     failure: { set: { centre: false }, restore: { centre: true } },
+  },
+  'radio-off': {
+    id: 'radio-off',
+    title: 'Radio off',
+    tier: 'should',
+    failure: { set: { radioDrop: 1 }, restore: { radioDrop: 0 } },
+  },
+  'platform-keeper-fault': {
+    id: 'platform-keeper-fault',
+    title: 'Platform keeper fault',
+    tier: 'should',
+    failure: { set: { platformKeeper: false }, restore: { platformKeeper: true } },
+  },
+  'sensors-off': {
+    id: 'sensors-off',
+    title: 'Sensors off',
+    tier: 'should',
+    failure: { set: { sensors: false }, restore: { sensors: true } },
   },
   'blackout-talking': {
     id: 'blackout-talking',
@@ -55,5 +79,13 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
       set: { ...ALL_LOCAL_AND_CENTRE_OFF, radioDrop: 1 },
       restore: { ...ALL_LOCAL_AND_CENTRE_ON, radioDrop: 0 },
     },
+  },
+  'long-outage': {
+    id: 'long-outage',
+    title: 'Long outage',
+    tier: 'should',
+    failure: { set: { centre: false }, restore: { centre: true } },
+    // 30 minutes, long enough for radio working to start in the baseline.
+    length: 1800,
   },
 };
