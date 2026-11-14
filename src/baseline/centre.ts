@@ -26,20 +26,25 @@ export interface Alive {
 }
 
 /**
- * Who reads the permits. The team has not decided whether ours uses this centre too.
- * Design: "Following permits" and "Today's rule, for comparison".
+ * How a centre is set up. Decided on #26: there is one centre, here, and both programs
+ * use it. Design: "Following permits" and "Today's rule, for comparison".
  *
+ * `serves` says who reads the permits.
  * - 'baseline': baseline trains obey every permit. This is the default.
  * - 'ours': our trains treat permits as hints. The centre only suggests platforms from
  *   the train's own pair, which the map forces anyway.
  *
- * The open question for 'ours' is whether the local fault rules still apply. In the
- * baseline a dead station or merge actor makes the centre hold trains short of that
- * track. If it did the same to our trains, a dead station actor would stop them at
- * x 6000, which is the failure our trains are meant to survive.
+ * Still open on #26: whether the dead actor rules apply with 'ours'. In the baseline a
+ * dead station or merge actor makes the centre hold trains short of that track. If it
+ * did the same to our trains, a dead station actor would stop them at x 6000, which is
+ * the failure our trains are meant to survive.
+ *
+ * `restartGap` is the slow restart from #26. After a gap in steps, the centre releases
+ * one stopped train every `restartGap` seconds. 0 or absent means it resumes at once.
  */
 export interface CentreOptions {
   serves: 'baseline' | 'ours';
+  restartGap?: number;
 }
 
 export const DEFAULT_CENTRE_OPTIONS: CentreOptions = { serves: 'baseline' };
@@ -53,6 +58,8 @@ export interface TrainPlan {
   nextTrack: TrackId | null;
   /** When the train stopped in its platform, so the centre can count its dwell. */
   stoppedAt: number | null;
+  /** True while the centre holds this stopped train after a restart, until its turn. */
+  heldForRestart: boolean;
 }
 
 /** Everything the centre remembers between calls to step. */
@@ -60,12 +67,16 @@ export interface CentreMemory {
   timetable: TimetableEntry[];
   /** The centre's plan for each train it has seen. */
   plans: Map<TrainId, TrainPlan>;
-  /** The platform the centre has sent each train to. A train with no entry has none yet. */
+  /** The platform the centre has sent each train to. A train has none until the centre chooses. */
   platformFor: Map<TrainId, PlatformId>;
   /** The trains waiting to go through the junction zone, first in line first. */
   junctionOrder: TrainId[];
   /** The one train the centre has let into the junction zone, or null. */
   junctionHolder: TrainId | null;
+  /** The `now` of the last step, or null before the first. A gap shows the centre was off. */
+  lastStepAt: number | null;
+  /** When the centre last released a held train during a slow restart, or null. */
+  lastReleaseAt: number | null;
 }
 
 /** The centre's memory before its first step. Design: "Today's rule, for comparison". */
@@ -76,6 +87,8 @@ export function initialMemory(timetable: TimetableEntry[]): CentreMemory {
     platformFor: new Map(),
     junctionOrder: [],
     junctionHolder: null,
+    lastStepAt: null,
+    lastReleaseAt: null,
   };
 }
 
@@ -105,6 +118,22 @@ export function updateMemory(
   _alive: Alive,
 ): CentreMemory {
   return memory;
+}
+
+/**
+ * During a slow restart, picks the one stopped train the centre releases next, or null.
+ * It releases one train every `restartGap` seconds. Until its turn a held train keeps
+ * untilX at its own x. Design: "Today's rule, for comparison" and the slow restart on #26.
+ *
+ * Placeholder: null, so no held train is released.
+ */
+export function nextRestartRelease(
+  _memory: CentreMemory,
+  _trains: TrainState[],
+  _now: number,
+  _options: CentreOptions,
+): TrainId | null {
+  return null;
 }
 
 /**
@@ -188,9 +217,10 @@ export function nextTrackFor(
 }
 
 /**
- * How far along the x axis a train may run. It keeps the train behind the train ahead,
- * short of a platform it may not enter, and short of the junction zone until the train
- * holds it. Design: "Today's rule, for comparison".
+ * How far along the x axis a train may run. It keeps the train behind the rear of the
+ * train ahead, short of a platform it may not enter, short of the junction zone until
+ * the train holds it, and at its own x while a slow restart holds it.
+ * Design: "Today's rule, for comparison".
  *
  * Placeholder: the train's current x, so it may not move.
  */
@@ -220,7 +250,7 @@ export function makeCentre(
     step(now, trains, sensors, alive): Message[] {
       memory = updateMemory(memory, now, trains, sensors, alive);
       // Planned: one permit per train in `trains`, built from choosePlatform,
-      // nextThroughJunction, nextTrackFor and untilXFor.
+      // nextThroughJunction, nextRestartRelease, nextTrackFor and untilXFor.
       return [];
     },
   };

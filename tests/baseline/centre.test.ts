@@ -7,6 +7,7 @@ import {
   isReadyToLeave,
   makeCentre,
   makePermit,
+  nextRestartRelease,
   nextThroughJunction,
   nextTrackFor,
   untilXFor,
@@ -23,6 +24,10 @@ import type {
 
 // Rules: "Today's rule, for comparison" in docs/design.md, plus "The map" and
 // "Platform sensors switched off".
+//
+// Placeholder tests pin the safe values the frame returns for now. When a rule lands,
+// delete its placeholder test and write real tests from its to-dos. Do not edit a
+// placeholder test to make it pass.
 
 const timetable: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -43,7 +48,7 @@ function train(id: number, track: TrainState['pos']['track'], offset: number): T
 }
 
 function plan(id: number): TrainPlan {
-  return { id, untilX: 0, nextTrack: null, stoppedAt: null };
+  return { id, untilX: 0, nextTrack: null, stoppedAt: null, heldForRestart: false };
 }
 
 describe('initialMemory', () => {
@@ -54,6 +59,8 @@ describe('initialMemory', () => {
     expect(memory.platformFor.size).toBe(0);
     expect(memory.junctionOrder).toEqual([]);
     expect(memory.junctionHolder).toBeNull();
+    expect(memory.lastStepAt).toBeNull();
+    expect(memory.lastReleaseAt).toBeNull();
   });
 });
 
@@ -94,6 +101,11 @@ describe('placeholders return the safest value', () => {
     expect(isReadyToLeave(stopped, timetable[0], { ...plan(1), stoppedAt: 0 }, 1000)).toBe(false);
   });
 
+  it('nextRestartRelease releases no held train', () => {
+    const stopped = { ...train(1, 'A', 3000), speed: 0 };
+    expect(nextRestartRelease(memory, [stopped], 100, { serves: 'baseline', restartGap: 30 })).toBeNull();
+  });
+
   it('nextThroughJunction lets no train through', () => {
     expect(nextThroughJunction(memory, [train(1, 'P1', 300)], clear, allAlive, 100)).toBeNull();
   });
@@ -110,14 +122,14 @@ describe('placeholders return the safest value', () => {
 });
 
 describe('makeCentre', () => {
-  it('defaults to serving baseline trains', () => {
+  it('defaults to serving baseline trains, with no slow restart', () => {
     expect(DEFAULT_CENTRE_OPTIONS).toEqual({ serves: 'baseline' });
   });
 
   it('returns a centre whose step sends no permits for now, with either option', () => {
     const trains = [train(1, 'A', 100), train(3, 'B', 100)];
     for (const serves of ['baseline', 'ours'] as const) {
-      const centre = makeCentre(timetable, { serves });
+      const centre = makeCentre(timetable, { serves, restartGap: 30 });
       expect(centre.step(0, trains, clear, allAlive)).toEqual([]);
     }
   });
@@ -138,8 +150,24 @@ describe('updateMemory', () => {
   it.todo('adds a train to junctionOrder once its dwell is over');
   it.todo('clears junctionHolder once the junction zone is empty again');
   it.todo('forgets a train that has left the right-hand end of EXIT');
+  it.todo('sets lastStepAt to now on every step');
   it.todo('catches up after a gap of more than a second, since the engine skips step while the centre is off');
   it.todo('frees the junction for a train that cleared the zone while the centre was off');
+});
+
+describe('slow restart', () => {
+  it.todo('treats a gap of more than one second since lastStepAt as a restart');
+  it.todo('does not treat the first step as a restart');
+  it.todo('after a gap, marks every stopped train heldForRestart');
+  it.todo('after a gap, releases one held train every restartGap seconds');
+  it.todo("keeps untilX at a held train's own x until its turn");
+  it.todo('records lastReleaseAt each time it releases a train');
+  it.todo('resumes every train at once when restartGap is 0 or absent');
+});
+
+describe('entry (the fix is the engine entry rule: about 1275 m clear, not 300 m)', () => {
+  it.todo('two trains that enter on one entry track during an outage do not collide');
+  it.todo('a train that enters behind a train stopped near x 1000 does not hit it');
 });
 
 describe('isAvailable', () => {
@@ -208,5 +236,7 @@ describe('untilXFor', () => {
   it.todo('keeps two trains from being in the junction zone at the same time');
   it.todo('lets a train on EXIT run to the end of EXIT, x 12400, when nothing is ahead');
   it.todo('holds a broken-down train where it is');
+  it.todo('keeps a follower bound for P2 MARGIN behind the rear of a train whose front is in P1 and rear is still on A');
+  it.todo('for a train already past x 6000 or in the junction zone when the station or merge actor dies, lets it run clear or holds it (open: pick one, then test it)');
   it.todo('never moves untilX closer than a running train can stop, when a platform or the junction becomes unavailable (the design does not say)');
 });
