@@ -43,7 +43,9 @@ describe('station.ts placeholders', () => {
   });
 
   it('shouldUseFallback is false', () => {
-    expect(shouldUseFallback({ self: stopped, heardReply: false, refusalIsSilence: true })).toBe(false);
+    expect(
+      shouldUseFallback({ self: stopped, now: 100, lastReplyAt: null, refusalIsSilence: true, usingFallback: true }),
+    ).toBe(false);
   });
 
   it('fixedSplitPlatform waits', () => {
@@ -107,11 +109,13 @@ describe('Entering the station: replies', () => {
   it.todo('reads a lockRefuse for a platform addressed to itself');
   it.todo('ignores grants and refusals addressed to other trains');
   it.todo('ignores a JUNCTION grant or refusal when reading station replies');
+  it.todo('when one inbox holds a grant and a refusal for this train, the grant wins');
   it.todo('on a lockGrant, sets nextTrack to the granted platform and runs in');
   it.todo('on a lockRefuse with an alternative, requests the alternative');
   it.todo('the refusal alternative wins over the permit suggestion');
   it.todo('on a lockRefuse with no alternative, keeps braking and keeps asking');
   it.todo('with no reply at all, stops before the end of its entry track (silence means no)');
+  it.todo('may change nextTrack on any tick until its front crosses the end of the track, and not after');
 });
 
 describe('Entering the station: dwell', () => {
@@ -126,6 +130,8 @@ describe('Station switched off: when to use the fallback', () => {
   it.todo('does not use the fallback while still moving');
   it.todo('does not use the fallback after any station reply, unless a refusal counts as silence');
   it.todo('uses the fallback after a refusal that counts as silence');
+  it.todo('counts as no reply when the station has not replied for a while, even after an earlier reply');
+  it.todo('keeps using the fallback while it moves into the platform it picked');
 });
 
 describe('Station switched off: fixed split', () => {

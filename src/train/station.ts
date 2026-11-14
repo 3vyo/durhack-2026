@@ -28,8 +28,10 @@ export interface PlatformRequestInput {
 
 export interface FallbackInput {
   self: TrainState;
-  heardReply: boolean; // any station reply since the train started asking
-  refusalIsSilence: boolean; // from refusalMeansSilence
+  now: number;
+  lastReplyAt: number | null; // when the station last replied to this train
+  refusalIsSilence: boolean; // from refusalMeansSilence, this tick
+  usingFallback: boolean; // whether the train was using the fallback last tick
 }
 
 export interface CreepInput {
@@ -92,7 +94,9 @@ export function dwellStart(_prev: number | null, _self: TrainState, _now: number
 
 /**
  * "Station switched off". True when the train is stopped at the end of its entry track and
- * has had no reply, or has had a refusal that counts as silence.
+ * has had no reply, or has had a refusal that counts as silence. The agent stores the
+ * result and passes it back as usingFallback, so the train can keep the fallback while it
+ * moves into the platform.
  *
  * Placeholder: false, so the train keeps waiting.
  */

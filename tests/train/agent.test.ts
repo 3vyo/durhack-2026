@@ -7,10 +7,11 @@ import {
   createAgent,
   hold,
   initialMemory,
+  chooseRoute,
   lowestLimit,
-  nextTrackFor,
   noteSent,
   remember,
+  setLeader,
 } from '../../src/train/agent';
 
 const timetable: TimetableEntry[] = [
@@ -99,6 +100,10 @@ describe('initialMemory', () => {
     expect(m.leader).toBe(1);
   });
 
+  it('starts with leader none when the timetable names no leader', () => {
+    expect(initialMemory(1, timetable).leader).toBe('none');
+  });
+
   it('starts with no report, permit, locks, platform or dwell timer', () => {
     const m = initialMemory(2, timetable);
     expect(m.leaderReport).toBeNull();
@@ -108,12 +113,14 @@ describe('initialMemory', () => {
     expect(m.dwellStartedAt).toBeNull();
     expect(m.platformStatus).toEqual({});
     expect(m.lastNextTrack).toBeNull();
+    expect(m.usingFallback).toBe(false);
+    expect(m.lastStationReplyAt).toBeNull();
   });
 
-  it('has no entry and no leader for a train missing from the timetable', () => {
+  it('has no entry and an unknown leader for a train missing from the timetable', () => {
     const m = initialMemory(99, timetable);
     expect(m.entry).toBeNull();
-    expect(m.leader).toBeNull();
+    expect(m.leader).toBe('unknown');
   });
 });
 
@@ -151,10 +158,10 @@ describe('agent placeholders', () => {
     expect(accelFor(30, 0)).toBe(-BRAKE);
   });
 
-  it('nextTrackFor is null', () => {
+  it('chooseRoute sets no nextTrack, keeps the platform and starts no slot', () => {
     const m = initialMemory(2, timetable);
     m.platform = 'P2';
-    expect(nextTrackFor(m, input())).toBeNull();
+    expect(chooseRoute(m, input())).toEqual({ nextTrack: null, platform: 'P2', slotStart: false });
   });
 });
 
@@ -162,26 +169,26 @@ describe('remember', () => {
   it('stores a platform grant as the chosen platform and a held lock', () => {
     const m = initialMemory(2, timetable);
     m.alternative = 'P1';
-    remember(m, { kind: 'grant', platform: 'P2' }, null);
+    remember(m, 4, { kind: 'grant', platform: 'P2' }, null);
     expect(m.platform).toBe('P2');
     expect(m.locks).toEqual(['P2']);
     expect(m.alternative).toBeNull();
-    expect(m.heardStationReply).toBe(true);
+    expect(m.lastStationReplyAt).toBe(4);
   });
 
   it('stores the alternative from a refusal and takes no lock', () => {
     const m = initialMemory(2, timetable);
-    remember(m, { kind: 'refuse', platform: 'P2', alternative: 'P1' }, null);
+    remember(m, 4, { kind: 'refuse', platform: 'P2', alternative: 'P1' }, null);
     expect(m.alternative).toBe('P1');
     expect(m.locks).toEqual([]);
     expect(m.platform).toBeNull();
-    expect(m.heardStationReply).toBe(true);
+    expect(m.lastStationReplyAt).toBe(4);
   });
 
   it('stores a junction grant as a lock and its follow train as the new leader', () => {
     const m = initialMemory(2, timetable);
     m.leaderReport = { pos: { track: 'A', offset: 2000 }, speed: 30, sentAt: 0 };
-    remember(m, null, { follow: 7 });
+    remember(m, 4, null, { follow: 7 });
     expect(m.locks).toEqual(['JUNCTION']);
     expect(m.leader).toBe(7);
     expect(m.leaderReport).toBeNull();
@@ -192,21 +199,46 @@ describe('remember', () => {
     const m = initialMemory(2, timetable);
     const report = { pos: { track: 'EXIT' as const, offset: 400 }, speed: 30, sentAt: 0 };
     m.leaderReport = report;
-    remember(m, null, { follow: 1 });
+    remember(m, 4, null, { follow: 1 });
     expect(m.leaderReport).toBe(report);
+  });
+
+  it('reads a junction grant with follow null as no train ahead', () => {
+    const m = initialMemory(2, timetable);
+    remember(m, 4, null, { follow: null });
+    expect(m.leader).toBe('none');
+    expect(m.leaderReport).toBeNull();
   });
 
   it('does not store the same lock twice', () => {
     const m = initialMemory(2, timetable);
-    remember(m, { kind: 'grant', platform: 'P2' }, { follow: null });
-    remember(m, { kind: 'grant', platform: 'P2' }, { follow: null });
+    remember(m, 4, { kind: 'grant', platform: 'P2' }, { follow: null });
+    remember(m, 5, { kind: 'grant', platform: 'P2' }, { follow: null });
     expect(m.locks).toEqual(['P2', 'JUNCTION']);
   });
 
   it('changes nothing with no replies', () => {
     const m = initialMemory(2, timetable);
-    remember(m, null, null);
+    remember(m, 4, null, null);
     expect(m).toEqual(initialMemory(2, timetable));
+  });
+});
+
+describe('setLeader', () => {
+  it('drops the old report when the leader changes', () => {
+    const m = initialMemory(2, timetable);
+    m.leaderReport = { pos: { track: 'A', offset: 2000 }, speed: 30, sentAt: 0 };
+    setLeader(m, 'unknown');
+    expect(m.leader).toBe('unknown');
+    expect(m.leaderReport).toBeNull();
+  });
+
+  it('keeps the report when the leader is the same', () => {
+    const m = initialMemory(2, timetable);
+    const report = { pos: { track: 'A' as const, offset: 2000 }, speed: 30, sentAt: 0 };
+    m.leaderReport = report;
+    setLeader(m, 1);
+    expect(m.leaderReport).toBe(report);
   });
 });
 
@@ -249,4 +281,6 @@ describe('Train rules: the agent as a whole', () => {
   it.todo('a reply sent on tick t is acted on in decide on tick t + 1');
   it.todo('a message in the inbox on two ticks is handled once and not double counted');
   it.todo('starts on A or B in mode blind with its timetable leader and no report');
+  it.todo('stores the platform chooseRoute picks under the fallback');
+  it.todo('drops a platform lock from its memory once it has left the platform (the design does not say when)');
 });

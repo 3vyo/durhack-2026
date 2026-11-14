@@ -24,9 +24,10 @@ describe('follow.ts placeholders', () => {
     expect(latestLeaderReport(report, [fromLeader], 1)).toBeNull();
   });
 
-  it('leaderLimit is 0 with or without a report', () => {
-    expect(leaderLimit(self.pos, report)).toBe(0);
-    expect(leaderLimit(self.pos, null)).toBe(0);
+  it('leaderLimit is 0 for a known, absent or unknown leader', () => {
+    expect(leaderLimit(self.pos, 1, report)).toBe(0);
+    expect(leaderLimit(self.pos, 'none', null)).toBe(0);
+    expect(leaderLimit(self.pos, 'unknown', null)).toBe(0);
   });
 
   it('sightLimit is 0 with or without an obstacle', () => {
@@ -34,14 +35,14 @@ describe('follow.ts placeholders', () => {
     expect(sightLimit(null)).toBe(0);
   });
 
-  it('stopPointLimit is 0 with or without a platform', () => {
-    expect(stopPointLimit(self.pos, null)).toBe(0);
-    expect(stopPointLimit({ track: 'P1', offset: 100 }, 'P1')).toBe(0);
+  it('stopPointLimit is 0 with or without a platform, even with nextTrack EXIT', () => {
+    expect(stopPointLimit(self, null, null)).toBe(0);
+    expect(stopPointLimit({ ...self, pos: { track: 'P1', offset: 100 } }, 'P1', 'EXIT')).toBe(0);
   });
 
   it('modeFor reports blind', () => {
-    expect(modeFor(10, report, true)).toBe('blind');
-    expect(modeFor(10, null, false)).toBe('blind');
+    expect(modeFor(10, 1, report, true)).toBe('blind');
+    expect(modeFor(10, 'unknown', null, false)).toBe('blind');
   });
 });
 
@@ -55,6 +56,7 @@ describe('Following: position broadcast', () => {
 
 describe('Following: leader reports', () => {
   it.todo('on A or B, starts with the leader the timetable names');
+  it.todo('on A or B, a timetable leader of null means no train ahead (leader none)');
   it.todo('keeps the newest position report from its leader');
   it.todo('ignores position reports from trains other than its leader');
   it.todo('ignores a report with an older sentAt than the one it holds');
@@ -72,6 +74,7 @@ describe('Following: leader limit point', () => {
   it.todo('with a report but no fresh one, the limit point stays where the old report put it');
   it.todo('the leader limit is SIGHT_SPEED when the train has never heard its leader');
   it.todo('the leader limit is SIGHT_SPEED when the leader is unknown');
+  it.todo('with leader none there is no limit point, so only MAX_SPEED, sightAhead and stop points limit the train');
 });
 
 describe('Following: sightAhead', () => {
@@ -87,11 +90,13 @@ describe('Following: stop points', () => {
   it.todo('the end of an entry track is a stop point for a train with no platform');
   it.todo('the end of an entry track is not a stop point once the train has a platform');
   it.todo('offset 300 in a platform is a stop point');
+  it.todo('the platform stop point no longer applies once nextTrack is EXIT, after a junction grant or a slot start');
   it.todo('a train on EXIT has no stop point');
   it.todo('the stop point limit is safeSpeed of the distance to the stop point');
   it.todo('the stop point limit has no SIGHT_SPEED floor');
   it.todo('the stop point limit is 0 at or past the stop point');
-  it.todo('brakes one tick early, so from MAX_SPEED it stops at or a few centimetres before the stop point');
+  it.todo('brakes one tick early, using its speed to allow for one more tick of travel');
+  it.todo('from MAX_SPEED it stops at or a few centimetres before the stop point');
   it.todo('never passes a stop point, so it never enters the junction zone from a platform by rounding');
 });
 
@@ -102,4 +107,5 @@ describe('Following: mode', () => {
   it.todo('reports stale when the leader report is FRESH seconds old or older');
   it.todo('reports blind when it has never heard its leader');
   it.todo('reports blind when its leader is unknown');
+  it.todo('picks a mode for a train with leader none (the design does not say which; ask the team)');
 });

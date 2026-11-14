@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Message } from '../../src/shared/types';
+import type { Message, TrainState } from '../../src/shared/types';
 import {
   isPermitFresh,
   latestPermit,
@@ -9,6 +9,7 @@ import {
 } from '../../src/train/permits';
 
 const permit: HeldPermit = { untilX: 6000, nextTrack: 'P1', sentAt: 9 };
+const self: TrainState = { id: 1, pos: { track: 'A', offset: 1000 }, speed: 30, brokenDown: false };
 const forMe: Message = { type: 'permit', to: 1, untilX: 6000, nextTrack: 'P1', sentAt: 9 };
 
 describe('permits.ts placeholders', () => {
@@ -23,8 +24,8 @@ describe('permits.ts placeholders', () => {
   });
 
   it('permitLimit is 0 with or without a permit', () => {
-    expect(permitLimit({ track: 'A', offset: 1000 }, permit, 10)).toBe(0);
-    expect(permitLimit({ track: 'A', offset: 1000 }, null, 10)).toBe(0);
+    expect(permitLimit(self, permit, 10)).toBe(0);
+    expect(permitLimit(self, null, 10)).toBe(0);
   });
 
   it('suggestedPlatform suggests nothing', () => {
@@ -50,6 +51,7 @@ describe('Following permits: untilX', () => {
   it.todo('a fresh permit limits speed so the train stops at or before untilX');
   it.todo('the untilX limit is safeSpeed of the distance from the train x to untilX');
   it.todo('the untilX limit is 0 at or past untilX');
+  it.todo('brakes one tick early for untilX, like a stop point');
   it.todo('a permit that is not fresh adds no limit');
   it.todo('no permit adds no limit');
   it.todo('the untilX limit only lowers speed and never raises it above the other limits');

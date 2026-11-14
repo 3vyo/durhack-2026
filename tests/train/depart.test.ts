@@ -62,7 +62,7 @@ describe('Leaving the station: the grant', () => {
   it.todo('does not leave the platform without a junction grant or an open slot');
   it.todo('treats the follow train in the grant as its leader on EXIT');
   it.todo('drops the old leader report when the grant names a new leader');
-  it.todo('with follow null in the grant, has no leader and stays at SIGHT_SPEED or below');
+  it.todo('with follow null in the grant, has leader none on EXIT (check with the team that null means no train ahead)');
 });
 
 describe('Merge switched off: when to use clock slots', () => {
@@ -87,5 +87,6 @@ describe('Merge switched off: starting', () => {
   it.todo('does not start in its slot when sightAhead shows an obstacle in the junction zone');
   it.todo('does not start outside its slot even when the junction zone is empty');
   it.todo('on a slot start, sets nextTrack to EXIT');
-  it.todo('after a slot start, has no leader on EXIT and stays at SIGHT_SPEED until it hears one');
+  it.todo('a slot start sets the leader to unknown and drops the old leader report');
+  it.todo('after a slot start, stays at SIGHT_SPEED or below on EXIT until it learns its leader');
 });

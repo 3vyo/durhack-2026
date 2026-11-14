@@ -1,7 +1,23 @@
-import type { Message, Outgoing, PlatformId, Position, TrainId, TrainOutput, TrainState } from '../shared/types';
+import type {
+  Message,
+  Outgoing,
+  PlatformId,
+  Position,
+  TrackId,
+  TrainId,
+  TrainOutput,
+  TrainState,
+} from '../shared/types';
 
 // Rules from docs/design.md, "Train rules" > "Following".
 // Every function here is a placeholder that returns the safest value.
+
+/**
+ * Who the train follows. 'none' means the train knows there is no train ahead, as when
+ * the timetable gives leader null. 'unknown' means it does not know, as after a clock slot
+ * start on EXIT, so it stays at SIGHT_SPEED or below.
+ */
+export type Leader = TrainId | 'none' | 'unknown';
 
 /** The last position a train heard from its leader. */
 export interface LeaderReport {
@@ -33,7 +49,7 @@ export function positionMessage(
 export function latestLeaderReport(
   _prev: LeaderReport | null,
   _inbox: Message[],
-  _leader: TrainId | null,
+  _leader: Leader,
 ): LeaderReport | null {
   return null;
 }
@@ -41,11 +57,15 @@ export function latestLeaderReport(
 /**
  * "Following". The speed limit from the leader's limit point: the leader's last reported
  * rear minus MARGIN, however old the report is. Floored at SIGHT_SPEED, capped at
- * MAX_SPEED. With no report it is SIGHT_SPEED.
+ * MAX_SPEED. With an unknown leader, or a leader never heard, it is SIGHT_SPEED.
  *
  * Placeholder: 0, so the train stops.
  */
-export function leaderLimit(_self: Position, _report: LeaderReport | null): number {
+export function leaderLimit(
+  _self: Position,
+  _leader: Leader,
+  _report: LeaderReport | null,
+): number {
   return 0;
 }
 
@@ -63,11 +83,16 @@ export function sightLimit(_sightAhead: number | null): number {
 /**
  * "Following". The speed limit from the next stop point: the end of an entry track for a
  * train with no platform, or offset 300 in a platform. No floor. The train starts braking
- * one tick early so it stops at or before the point, never past it.
+ * one tick early so it stops at or before the point, never past it. nextTrack is this
+ * tick's choice: once it is EXIT, the platform stop point no longer applies.
  *
  * Placeholder: 0, so the train stops.
  */
-export function stopPointLimit(_self: Position, _platform: PlatformId | null): number {
+export function stopPointLimit(
+  _self: TrainState,
+  _platform: PlatformId | null,
+  _nextTrack: TrackId | null,
+): number {
   return 0;
 }
 
@@ -79,6 +104,7 @@ export function stopPointLimit(_self: Position, _platform: PlatformId | null): n
  */
 export function modeFor(
   _now: number,
+  _leader: Leader,
   _report: LeaderReport | null,
   _permitFresh: boolean,
 ): TrainOutput['mode'] {

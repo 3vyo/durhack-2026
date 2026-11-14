@@ -1,4 +1,4 @@
-import type { Message, PlatformId, Position, TrackId, TrainId } from '../shared/types';
+import type { Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
 
 // Rules from docs/design.md, "Train rules" > "Following permits".
 // Every function here is a placeholder that returns the safest value.
@@ -34,12 +34,12 @@ export function isPermitFresh(_permit: HeldPermit | null, _now: number): boolean
 }
 
 /**
- * "Following permits". The speed limit that keeps the train from passing untilX. A permit
- * that is not fresh, or no permit, adds no limit.
+ * "Following permits". The speed limit that keeps the train from passing untilX, braking
+ * one tick early like a stop point. A permit that is not fresh, or no permit, adds no limit.
  *
  * Placeholder: 0, so the train stops.
  */
-export function permitLimit(_self: Position, _permit: HeldPermit | null, _now: number): number {
+export function permitLimit(_self: TrainState, _permit: HeldPermit | null, _now: number): number {
   return 0;
 }
 
