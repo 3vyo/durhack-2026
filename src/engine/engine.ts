@@ -209,6 +209,14 @@ export class Engine {
       for (const msg of this.centre.step(now, states, trueSensors, routes)) {
         sent.push({ out: { msg, range: 'long' }, from: { kind: 'centre' } });
       }
+    } else if (this.centre?.radioStep && onSecond) {
+      // Radio working: staff move trains by radio while the centre is down.
+      const states = this.active.map((rt) => rt.state);
+      const trueSensors = readSensors(bodies, { ...this.switches, sensors: true });
+      const routes = new Map(this.active.map((rt) => [rt.id, rt.nextTrack] as const));
+      for (const msg of this.centre.radioStep(now, states, trueSensors, routes)) {
+        sent.push({ out: { msg, range: 'long' }, from: { kind: 'radio' } });
+      }
     }
 
     // Every agent decides from the state at the start of the tick, then all move together,

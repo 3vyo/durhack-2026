@@ -27,6 +27,12 @@ import type {
  */
 export interface ControlCentre {
   step(now: number, trains: TrainState[], sensors: SensorReadings, routes: Map<TrainId, TrackId | null>): Message[];
+  /**
+   * Radio working: staff moving trains by radio while the centre is down. The engine calls it
+   * once per simulated second while the centre is switched off. Its permits go over long
+   * range, and the radio slider drops them like any train-to-train message.
+   */
+  radioStep?(now: number, trains: TrainState[], sensors: SensorReadings, routes: Map<TrainId, TrackId | null>): Message[];
 }
 
 /**

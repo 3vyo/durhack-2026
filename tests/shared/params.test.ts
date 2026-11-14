@@ -213,3 +213,14 @@ describe('applying parameters', () => {
     expect(currentConstants()).toEqual(DEFAULT_CONSTANTS);
   });
 });
+
+describe('radio working timers', () => {
+  it('a parameter file can set the radio working delay and release gap', () => {
+    const p = parseParams({ timers: { radioWorkingDelay: 600, radioReleaseGap: 30 } });
+    expect(constantsFor(p)).toMatchObject({ RADIO_WORKING_DELAY: 600, RADIO_RELEASE_GAP: 30 });
+  });
+
+  it('defaults to 20 minutes and one train a minute', () => {
+    expect(DEFAULT_PARAMS.timers).toMatchObject({ radioWorkingDelay: 1200, radioReleaseGap: 60 });
+  });
+});

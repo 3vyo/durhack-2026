@@ -51,6 +51,12 @@ describe('The centre comes first: reading permits', () => {
     expect(latestPermit(null, [permitMsg(9, 6000, null, 1)], 1)).not.toHaveProperty('leader');
   });
 
+  it('ignores a radio working permit, because by then it is running on its own rules', () => {
+    const radio: Message = { ...permitMsg(10, 6200, 'P2'), caution: true } as Message;
+    expect(latestPermit(null, [radio], 1)).toBeNull();
+    expect(latestPermit(permit, [radio], 1)).toBe(permit);
+  });
+
   it('ignores permits addressed to other trains', () => {
     expect(latestPermit(null, [permitMsg(9, 6000, 'P1', 2)], 1)).toBeNull();
     expect(latestPermit(permit, [permitMsg(20, 100, 'P2', 2)], 1)).toBe(permit);

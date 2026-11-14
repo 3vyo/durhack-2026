@@ -6,6 +6,7 @@ import {
   choosePlatform,
   initialMemory,
   isAvailable,
+  isRadioWorking,
   isReadyToLeave,
   makeCentre,
   makePermit,
@@ -23,7 +24,7 @@ import {
   type Routes,
   type TrainPlan,
 } from '../../src/baseline/centre';
-import { BRAKE, MARGIN, MAX_SPEED, TRAIN_LENGTH } from '../../src/shared/constants';
+import { BRAKE, DEFAULT_CONSTANTS, MARGIN, MAX_SPEED, TRAIN_LENGTH } from '../../src/shared/constants';
 import { JUNCTION_END_X, JUNCTION_START_X, PLATFORM_STOP, TRACK_LENGTH, TRACK_START, xOf } from '../../src/shared/map';
 import type {
   Message,
@@ -809,5 +810,53 @@ describe('local failures', () => {
     const broken = permitsWith([{ at: 0, set: { station: false, merge: false, sensors: false } }]);
     expect(broken).toEqual(healthy);
     expect(healthy.flat().some((msg) => msg.type === 'permit' && msg.nextTrack === 'EXIT')).toBe(true);
+  });
+});
+
+describe('radio working (design: "Radio working")', () => {
+  const DELAY = DEFAULT_CONSTANTS.RADIO_WORKING_DELAY;
+  const GAP = DEFAULT_CONSTANTS.RADIO_RELEASE_GAP;
+
+  it('starts RADIO_WORKING_DELAY after the centre last stepped, and never before its first step', () => {
+    const memory = { ...initialMemory(timetable), lastStepAt: 100 };
+    expect(isRadioWorking(initialMemory(timetable), 1e6)).toBe(false);
+    expect(isRadioWorking(memory, 100 + DELAY - 1)).toBe(false);
+    expect(isRadioWorking(memory, 100 + DELAY)).toBe(true);
+    expect(isRadioWorking({ ...memory, radioWorking: true }, 101)).toBe(true);
+  });
+
+  it('sends nothing until then', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000)];
+    centre.step(0, trains, clear, none);
+    expect(centre.radioStep!(DELAY - 1, trains, clear, none)).toEqual([]);
+  });
+
+  it('then releases one stopped train at a time, furthest along first, with caution permits', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000), stopped(2, 'A', 1000)];
+    centre.step(0, trains, clear, none);
+    const first = centre.radioStep!(DELAY, trains, clear, none);
+    expect(first.every((m) => m.type === 'permit' && m.caution === true)).toBe(true);
+    expect(permitFor(first, 1).untilX).toBeGreaterThan(xOf(trains[0].pos));
+    expect(permitFor(first, 2).untilX).toBe(xOf(trains[1].pos));
+    // The engine calls radioStep once a second. Train 2 waits its turn, RADIO_RELEASE_GAP later.
+    let last: Message[] = first;
+    for (let t = DELAY + 1; t < DELAY + GAP; t++) {
+      last = centre.radioStep!(t, trains, clear, none);
+      expect(permitFor(last, 2).untilX).toBe(xOf(trains[1].pos));
+    }
+    last = centre.radioStep!(DELAY + GAP, trains, clear, none);
+    expect(permitFor(last, 2).untilX).toBeGreaterThan(xOf(trains[1].pos));
+  });
+
+  it('stops when the centre is back: its permits carry no caution and release every held train', () => {
+    const centre = makeCentre(timetable);
+    const trains = [stopped(1, 'A', 3000), stopped(2, 'A', 1000)];
+    centre.step(0, trains, clear, none);
+    centre.radioStep!(DELAY, trains, clear, none);
+    const back = centre.step(DELAY + 1, trains, clear, none);
+    expect(back.some((m) => m.type === 'permit' && m.caution)).toBe(false);
+    expect(permitFor(back, 2).untilX).toBeGreaterThan(xOf(trains[1].pos));
   });
 });

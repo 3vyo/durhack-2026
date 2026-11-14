@@ -19,12 +19,14 @@ export interface HeldPermit {
 
 /**
  * "The centre comes first". The newest permit addressed to this train, given the permit it
- * already had and this tick's inbox. Permits for other trains are ignored.
+ * already had and this tick's inbox. Permits for other trains are ignored, and so are radio
+ * working permits (`caution`): by the time staff move trains by radio, ours are already
+ * running on their own rules, which are faster. Design: "Radio working".
  */
 export function latestPermit(prev: HeldPermit | null, inbox: Message[], id: TrainId): HeldPermit | null {
   let held = prev;
   for (const msg of inbox) {
-    if (msg.type !== 'permit' || msg.to !== id) continue;
+    if (msg.type !== 'permit' || msg.to !== id || msg.caution) continue;
     if (held && held.sentAt > msg.sentAt) continue;
     held = { untilX: msg.untilX, nextTrack: msg.nextTrack, sentAt: msg.sentAt };
     if (msg.leader !== undefined) held.leader = msg.leader;

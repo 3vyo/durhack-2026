@@ -114,3 +114,18 @@ describe('route short range', () => {
     expect(route(out(status, 'short'), { kind: 'sensors' }, [{ id: 1, x: 6000 }], sw, never)).toEqual([]);
   });
 });
+
+describe('route radio working permits', () => {
+  const permit: Message = { type: 'permit', to: 2, untilX: 1000, nextTrack: null, sentAt: 0, caution: true };
+  const radio: Sender = { kind: 'radio' };
+
+  it('delivers a radio working permit to its train while the centre is off', () => {
+    const sw: Switches = { ...ALL_ON, centre: false };
+    expect(ids(route(out(permit, 'long'), radio, trains, sw, never))).toEqual([2]);
+  });
+
+  it('drops a radio working permit when the radio is down, because it travels by radio', () => {
+    const sw: Switches = { ...ALL_ON, centre: false, radioDrop: 1 };
+    expect(route(out(permit, 'long'), radio, trains, sw, never)).toEqual([]);
+  });
+});

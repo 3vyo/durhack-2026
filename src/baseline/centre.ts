@@ -5,6 +5,8 @@ import {
   MARGIN,
   MAX_SPEED,
   PERMIT_INTERVAL,
+  RADIO_RELEASE_GAP,
+  RADIO_WORKING_DELAY,
   TICK,
   TRAIN_LENGTH,
 } from '../shared/constants';
@@ -47,6 +49,10 @@ import type {
 // Our trains run on their own rules while the centre is off. When it comes back it takes
 // over from where they are: a platform a train has set its route to, and a train already
 // in the junction zone.
+//
+// Radio working: once the centre has been down for RADIO_WORKING_DELAY, staff move the
+// stopped trains by radio. radioStep makes the same decisions as step, but releases one
+// stopped train every RADIO_RELEASE_GAP and marks its permits `caution`.
 
 export type Permit = Extract<Message, { type: 'permit' }>;
 
@@ -118,6 +124,8 @@ export interface CentreMemory {
   lastStepAt: number | null;
   /** When the centre last released a held train during a slow restart, or null. */
   lastReleaseAt: number | null;
+  /** True while staff are moving trains by radio, from the first radioStep that acts until the centre is back. */
+  radioWorking: boolean;
 }
 
 /** The centre's memory before its first step. Design: "Today's rule, for comparison". */
@@ -130,6 +138,7 @@ export function initialMemory(timetable: TimetableEntry[]): CentreMemory {
     junctionHolder: null,
     lastStepAt: null,
     lastReleaseAt: null,
+    radioWorking: false,
   };
 }
 
@@ -140,8 +149,10 @@ export function makePermit(
   nextTrack: TrackId | null,
   now: number,
   leader: TrainId | null = null,
+  caution = false,
 ): Permit {
-  return { type: 'permit', to, untilX, nextTrack, sentAt: now, leader };
+  const permit: Permit = { type: 'permit', to, untilX, nextTrack, sentAt: now, leader };
+  return caution ? { ...permit, caution: true } : permit;
 }
 
 // Map helpers.
@@ -595,15 +606,32 @@ function decide(
 }
 
 /** Builds one permit per train and records each in the train's plan. */
-function writePermits(memory: CentreMemory, now: number, trains: TrainState[], sensors: SensorReadings): Permit[] {
+function writePermits(
+  memory: CentreMemory,
+  now: number,
+  trains: TrainState[],
+  sensors: SensorReadings,
+  caution = false,
+): Permit[] {
   return trains.map((train) => {
     const untilX = untilXFor(train, trains, memory, sensors);
     const nextTrack = nextTrackFor(train, memory);
     const plan = memory.plans.get(train.id) ?? newPlan(train);
     memory.plans.set(train.id, { ...plan, untilX, nextTrack });
     const leader = trainAhead(train, trains, memory)?.id ?? null;
-    return makePermit(train.id, untilX, nextTrack, now, leader);
+    return makePermit(train.id, untilX, nextTrack, now, leader, caution);
   });
+}
+
+/**
+ * Radio working. True once the centre has been down for RADIO_WORKING_DELAY seconds, counted
+ * from its last step, and from then on until the centre is back. Never before the centre's
+ * first step. Design: "Radio working".
+ */
+export function isRadioWorking(memory: CentreMemory, now: number): boolean {
+  if (memory.radioWorking) return true;
+  if (memory.lastStepAt === null) return false;
+  return now - memory.lastStepAt >= RADIO_WORKING_DELAY - TICK / 2;
 }
 
 /**
@@ -619,9 +647,15 @@ export function makeCentre(
   let memory = initialMemory(timetable);
   return {
     step(now, trains, sensors, routes): Message[] {
-      memory = updateMemory(memory, now, trains, sensors, routes);
+      memory = { ...updateMemory(memory, now, trains, sensors, routes), radioWorking: false };
       memory = decide(memory, now, trains, sensors, options);
       return writePermits(memory, now, trains, sensors);
+    },
+    radioStep(now, trains, sensors, routes): Message[] {
+      if (!isRadioWorking(memory, now)) return [];
+      memory = { ...updateMemory(memory, now, trains, sensors, routes), radioWorking: true };
+      memory = decide(memory, now, trains, sensors, { ...options, restartGap: RADIO_RELEASE_GAP });
+      return writePermits(memory, now, trains, sensors, true);
     },
   };
 }

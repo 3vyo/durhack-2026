@@ -4,7 +4,7 @@ import type { TrainProgram } from '../../src/engine/ports';
 import type { Press, Switches } from '../../src/engine/switches';
 import { generateTimetable, makeRng } from '../../src/engine/timetable';
 import { baselineProgram, ourProgram } from '../../src/runner/programs';
-import { SIGHT_SPEED } from '../../src/shared/constants';
+import { RADIO_WORKING_DELAY, SIGHT_SPEED } from '../../src/shared/constants';
 
 // The real programs on the real engine: train agents, local actors and the control centre
 // running together. docs/why.md claims zero collisions in every failure the demo can
@@ -184,12 +184,24 @@ describe('the baseline', () => {
     expectClean(run(baselineProgram, seed, { name: 'healthy' }));
   });
 
-  it.each(SEEDS)('stops every train with no collision when the centre goes off for good (seed %i)', (seed) => {
-    const o = run(baselineProgram, seed, { name: 'centre off', presses: [{ at: OFF_AT, set: { centre: false } }] }, 2000);
+  it.each(SEEDS)('stops every train with no collision when the centre and the radio go off for good (seed %i)', (seed) => {
+    const presses = [{ at: OFF_AT, set: { centre: false, radioDrop: 1 } }];
+    const o = run(baselineProgram, seed, { name: 'centre and radio off', presses }, 2000);
     expect(o.firstProblem).toEqual([]);
     expect({ collisions: o.collisions, overruns: o.overruns }).toEqual({ collisions: 0, overruns: 0 });
     expect(o.through).toBeLessThan(TRAINS);
     expect(o.speeds.every((s) => s === 0)).toBe(true);
+  });
+
+  it.each(SEEDS)('stays stopped for the first 20 minutes of a centre outage (seed %i)', (seed) => {
+    const before = OFF_AT + RADIO_WORKING_DELAY - 10;
+    const o = run(baselineProgram, seed, { name: 'centre off', presses: [{ at: OFF_AT, set: { centre: false } }] }, before);
+    expect(o.speeds.every((s) => s === 0)).toBe(true);
+  });
+
+  it.each(SEEDS)('moves every train through by radio working when the centre never comes back, with no collision (seed %i)', (seed) => {
+    const o = run(baselineProgram, seed, { name: 'centre off', presses: [{ at: OFF_AT, set: { centre: false } }] });
+    expectClean(o);
   });
 
   it.each(SEEDS)('moves again when the centre comes back, with no collision (seed %i)', (seed) => {
@@ -212,10 +224,20 @@ describe('the baseline', () => {
 });
 
 describe('ours against the baseline', () => {
-  it.each(SEEDS)('gets more trains through a centre outage that never ends (seed %i)', (seed) => {
-    const scenario = { name: 'centre off', presses: [{ at: OFF_AT, set: { centre: false } }] };
+  it.each(SEEDS)('gets more trains through a centre and radio outage that never ends (seed %i)', (seed) => {
+    const scenario = { name: 'centre and radio off', presses: [{ at: OFF_AT, set: { centre: false, radioDrop: 1 } }] };
     const ours = run(ourProgram, seed, scenario);
     const base = run(baselineProgram, seed, scenario, 3000);
+    expect(ours.through).toBe(TRAINS);
+    expect(base.through).toBeLessThan(TRAINS);
+  });
+});
+
+describe('radio working against ours', () => {
+  it.each(SEEDS)('ours gets every train out of a centre outage that never ends before radio working does (seed %i)', (seed) => {
+    const scenario = { name: 'centre off', presses: [{ at: OFF_AT, set: { centre: false } }] };
+    const ours = run(ourProgram, seed, scenario, OFF_AT + RADIO_WORKING_DELAY);
+    const base = run(baselineProgram, seed, scenario, OFF_AT + RADIO_WORKING_DELAY);
     expect(ours.through).toBe(TRAINS);
     expect(base.through).toBeLessThan(TRAINS);
   });
