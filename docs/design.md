@@ -103,7 +103,8 @@ export type Message =
   | { type: 'lockRequest'; from: TrainId; resource: ResourceId }
   | { type: 'lockGrant'; to: TrainId; resource: ResourceId; follow: TrainId | null }
   | { type: 'lockRefuse'; to: TrainId; resource: ResourceId; alternative: PlatformId | null }
-  | { type: 'platformStatus'; platform: PlatformId; occupied: boolean; sentAt: number };
+  | { type: 'platformStatus'; platform: PlatformId; occupied: boolean; sentAt: number }
+  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number }; // baseline only
 
 export interface Outgoing { msg: Message; range: 'long' | 'short' }
 
@@ -118,11 +119,15 @@ export interface TrainOutput {
   accel: number;             // between -BRAKE and ACCEL
   nextTrack: TrackId | null; // where to go at the end of the current track
   outbox: Outgoing[];
+  mode: 'full' | 'stale' | 'blind'; // for the display only
 }
 
 export interface TrainAgent {
   decide(input: TrainInput): TrainOutput;
 }
+
+// Every agent is built from its own ID and the full timetable, and nothing else.
+export type TrainAgentFactory = (id: TrainId, timetable: TimetableEntry[]) => TrainAgent;
 
 export interface SensorReadings {
   platformOccupied: Record<PlatformId, boolean>;
@@ -172,7 +177,9 @@ The display labels each train with a mode.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
 
-The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock when the sensor shows the train has left.
+The station actor grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave.
+
+The train counts its own dwell time from the moment it stops in the platform.
 
 ### Station switched off
 
@@ -214,7 +221,7 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 
 ## Today's rule, for comparison
 
-A toggle swaps in a baseline. A central controller sends every train a permit each second over long range and decides platforms and junction order itself. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
+A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
 
 ## Metrics
 
