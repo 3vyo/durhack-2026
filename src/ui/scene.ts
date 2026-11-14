@@ -20,6 +20,11 @@ export interface SceneView {
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
+  /**
+   * Where each drawn train's middle is on the canvas, in CSS pixels from its top left corner.
+   * For the demo check, which clicks a real train. Trains off the canvas are left out.
+   */
+  trainScreenPoints(): Array<{ id: number; x: number; y: number }>;
   resize(): void;
   dispose(): void;
 }
@@ -156,6 +161,17 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     });
   }
 
+  function trainScreenPoints(): Array<{ id: number; x: number; y: number }> {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const points: Array<{ id: number; x: number; y: number }> = [];
+    for (const [id, mesh] of trains) {
+      const p = mesh.getWorldPosition(new THREE.Vector3()).project(camera);
+      if (Math.abs(p.x) > 1 || Math.abs(p.y) > 1 || p.z > 1) continue;
+      points.push({ id, x: ((p.x + 1) / 2) * rect.width, y: ((1 - p.y) / 2) * rect.height });
+    }
+    return points;
+  }
+
   // The page around the scene changes height as the scoreboard fills in, so the canvas has to
   // follow its container and not just the window. Without this the bottom of each scene is
   // clipped and the camera's target drifts off centre.
@@ -170,5 +186,5 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
 
   setCamera('angled');
   resize();
-  return { render, setCamera, onPick, resize, dispose };
+  return { render, setCamera, onPick, trainScreenPoints, resize, dispose };
 }
