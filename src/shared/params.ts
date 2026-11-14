@@ -40,6 +40,8 @@ export interface TimerParams {
   mergeTimeout: number;
   stationTimeout: number;
   resumeSettle: number;
+  radioWorkingDelay: number;
+  radioReleaseGap: number;
   slotLength: number;
   slotWindow: number;
   slotCount: number;
@@ -104,6 +106,8 @@ export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
     mergeTimeout: DEFAULT_CONSTANTS.MERGE_TIMEOUT,
     stationTimeout: DEFAULT_CONSTANTS.STATION_TIMEOUT,
     resumeSettle: DEFAULT_CONSTANTS.RESUME_SETTLE,
+    radioWorkingDelay: DEFAULT_CONSTANTS.RADIO_WORKING_DELAY,
+    radioReleaseGap: DEFAULT_CONSTANTS.RADIO_RELEASE_GAP,
     slotLength: DEFAULT_CONSTANTS.SLOT_LENGTH,
     slotWindow: DEFAULT_CONSTANTS.SLOT_WINDOW,
     slotCount: DEFAULT_CONSTANTS.SLOT_COUNT,
@@ -295,6 +299,8 @@ export function constantsFor(p: SimParams): ConstantValues {
     MERGE_TIMEOUT: p.timers.mergeTimeout,
     STATION_TIMEOUT: p.timers.stationTimeout,
     RESUME_SETTLE: p.timers.resumeSettle,
+    RADIO_WORKING_DELAY: p.timers.radioWorkingDelay,
+    RADIO_RELEASE_GAP: p.timers.radioReleaseGap,
     SLOT_LENGTH: p.timers.slotLength,
     SLOT_WINDOW: p.timers.slotWindow,
     SLOT_COUNT: p.timers.slotCount,

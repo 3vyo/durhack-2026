@@ -35,6 +35,12 @@ export let MERGE_TIMEOUT = 10; // with no reply from the merge actor for this lo
 export let STATION_TIMEOUT = 10; // with no reply from the station actor for this long, a train stopped at the end of its entry track uses the fixed split
 export let RESUME_SETTLE = 5; // a local actor that is switched back on grants nothing for this long
 
+// Radio working: today's fallback when the control centre is down. Staff move stopped
+// trains by radio, one at a time and at caution speed. RADIO_WORKING_DELAY is from the
+// Modern Railways article in issue #24. RADIO_RELEASE_GAP is our own assumption.
+export let RADIO_WORKING_DELAY = 1200; // the centre is down this long before staff move the first train
+export let RADIO_RELEASE_GAP = 60; // staff release one stopped train this often
+
 // Clock slots, used while the merge actor is switched off.
 // slot = floor(now / SLOT_LENGTH) mod SLOT_COUNT. Platform Pk may start during the
 // first SLOT_WINDOW seconds of slot k - 1.
@@ -60,6 +66,8 @@ export interface ConstantValues {
   MERGE_TIMEOUT: number;
   STATION_TIMEOUT: number;
   RESUME_SETTLE: number;
+  RADIO_WORKING_DELAY: number;
+  RADIO_RELEASE_GAP: number;
   SLOT_LENGTH: number;
   SLOT_WINDOW: number;
   SLOT_COUNT: number;
@@ -87,6 +95,8 @@ export function currentConstants(): ConstantValues {
     MERGE_TIMEOUT,
     STATION_TIMEOUT,
     RESUME_SETTLE,
+    RADIO_WORKING_DELAY,
+    RADIO_RELEASE_GAP,
     SLOT_LENGTH,
     SLOT_WINDOW,
     SLOT_COUNT,
@@ -116,6 +126,8 @@ export function setConstants(values: Partial<ConstantValues>): void {
   MERGE_TIMEOUT = v.MERGE_TIMEOUT;
   STATION_TIMEOUT = v.STATION_TIMEOUT;
   RESUME_SETTLE = v.RESUME_SETTLE;
+  RADIO_WORKING_DELAY = v.RADIO_WORKING_DELAY;
+  RADIO_RELEASE_GAP = v.RADIO_RELEASE_GAP;
   SLOT_LENGTH = v.SLOT_LENGTH;
   SLOT_WINDOW = v.SLOT_WINDOW;
   SLOT_COUNT = v.SLOT_COUNT;

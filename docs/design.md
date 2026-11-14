@@ -8,6 +8,15 @@ Today a regional control centre sets every signal. When it or the rail radio fai
 
 We show a fallback where trains keep moving safely through that kind of outage. We pitch it as a layer underneath the central system. It does not replace it. While the control centre works, our trains obey it exactly as today's trains do. Our own rules take over only when it fails.
 
+| Layer | Today's system | With ours |
+|---|---|---|
+| 1 | The control centre | The control centre |
+| 2 | | Our trains' own rules, 5 seconds after the centre goes quiet |
+| 3 | Radio working, 20 minutes after the centre goes down | Radio working, which our trains do not need in the sim |
+| 4 | Nothing moves | Nothing moves |
+
+Radio working is how the railway moves stranded trains today. Staff tell each driver by radio when to move, one train at a time, at caution speed. It cannot start until about 20 minutes after the outage, and it needs the radio.
+
 ## The map
 
 All trains run left to right. Every track sits on one shared x axis, in metres. A train's x is its track's start plus its offset.
@@ -63,6 +72,8 @@ The timers the rules use are constants too.
 | `STATION_TIMEOUT` | 10 | Silence from the station actor before a stopped train uses the fixed split |
 | `RESUME_SETTLE` | 5 | How long a local actor grants nothing after it is switched back on |
 | `SLOT_LENGTH`, `SLOT_WINDOW`, `SLOT_COUNT` | 60, 15, 4 | The clock slots |
+| `RADIO_WORKING_DELAY` | 1200 | How long the centre is down before staff move the first train by radio |
+| `RADIO_RELEASE_GAP` | 60 | How often staff release one stopped train by radio. Our assumption |
 
 ### The parameter file
 
@@ -356,6 +367,17 @@ A train starts only if `sightAhead` shows the junction zone empty. It does not k
 ## Today's rule, for comparison
 
 A toggle swaps in a baseline. A central controller sees the true state of every train and decides platforms and junction order itself. Each second it sends every train a `permit` over long range, which says how far along the x axis the train may run and which track to take next. A train with no permit for 5 seconds brakes to a stop and waits until permits resume. This lives in `src/baseline/`.
+
+### Radio working
+
+When the centre has been down for `RADIO_WORKING_DELAY` seconds, staff start moving the stopped trains by radio. This is today's "emergency special working". The 20 minutes is from a 2019 Modern Railways article on it.
+
+- Staff release one stopped train every `RADIO_RELEASE_GAP` seconds, the one furthest along first. The time per train is our assumption. No source gives one.
+- Staff know where every train is and make the same decisions as the centre. Their permits carry `caution: true`, and a train holding one stays at `SIGHT_SPEED` or below.
+- The permits go over the radio, so the radio slider drops them. With the radio fully down, no train moves until the centre is back.
+- When the centre comes back it takes over at once.
+
+In the engine, `ControlCentre.radioStep` is called once a second while the centre is switched off. Our trains ignore a permit with `caution: true`. By then they are already running on their own rules, which are faster.
 
 When its permits stop, a baseline train keeps two things from its last permit.
 
