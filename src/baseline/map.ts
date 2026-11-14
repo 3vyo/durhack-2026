@@ -1,8 +1,12 @@
 import type { PlatformId, Position, TrackId } from '../shared/types';
 
+// Temporary. Pull request #34 adds the shared map to src/shared/. When #34 merges, the
+// shared map replaces this file and src/baseline/ imports from it instead. Until then
+// every number here must match "The map", or the centre and the engine will disagree
+// about where the junction zone is.
+//
 // The map facts the centre and the baseline train both need. They come from "The map"
-// in docs/design.md. src/shared/constants.ts does not name them yet, so they live here
-// until a contract pull request moves them there or the engine's map exports them.
+// in docs/design.md.
 
 /** Where each track starts on the shared x axis, in metres. Design: "The map". */
 export const TRACK_START: Record<TrackId, number> = {

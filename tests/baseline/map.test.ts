@@ -9,6 +9,9 @@ import {
   xOf,
 } from '../../src/baseline/map';
 
+// src/baseline/map.ts is temporary. When #34 merges, the shared map replaces it, and
+// these tests move with it or go. They test real map facts, not placeholders.
+
 describe('xOf', () => {
   it('is the offset on an entry track', () => {
     expect(xOf({ track: 'A', offset: 4800 })).toBe(4800);
