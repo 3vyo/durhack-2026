@@ -3,10 +3,12 @@ import {
   canGrantJunction,
   canReleaseJunction,
   createMergeActor,
+  dropSilentRequests,
   followFor,
   initialMergeMemory,
   nextForJunction,
   observeJunction,
+  queuedToAnswer,
   recordJunctionRequests,
   resumeMerge,
   type JunctionHolder,
@@ -15,7 +17,7 @@ import {
 import type { Message, SensorReadings } from '../../src/shared/types';
 
 const clear: SensorReadings = {
-  platformOccupied: { P1: true, P2: false, P3: false, P4: false },
+  platformOccupied: { P1: false, P2: false, P3: false, P4: false },
   junctionOccupied: false,
   exitStartClear: true,
 };
@@ -50,7 +52,17 @@ describe('merge frame', () => {
 
   it('placeholder recordJunctionRequests adds nobody', () => {
     const inbox: Message[] = [{ type: 'lockRequest', from: 2, resource: 'JUNCTION' }];
-    expect(recordJunctionRequests(queue, inbox, 10)).toEqual(queue);
+    const before = structuredClone(queue);
+    expect(recordJunctionRequests(queue, inbox, 10)).toEqual(before);
+  });
+
+  it('placeholder dropSilentRequests drops nobody', () => {
+    const before = structuredClone(queue);
+    expect(dropSilentRequests(queue, 1000)).toEqual(before);
+  });
+
+  it('placeholder queuedToAnswer answers nobody', () => {
+    expect(queuedToAnswer({ ...initialMergeMemory(), queue }, 30)).toEqual([]);
   });
 
   it('placeholder nextForJunction picks nobody', () => {
@@ -76,7 +88,8 @@ describe('merge frame', () => {
 
   it('placeholder resumeMerge keeps the memory as it was', () => {
     const memory = { holder, queue, lastIntoExit: 2, lastStepAt: 10 };
-    expect(resumeMerge(memory, 50)).toEqual(memory);
+    const before = structuredClone(memory);
+    expect(resumeMerge(memory, 50)).toEqual(before);
   });
 });
 
@@ -87,6 +100,9 @@ describe('Leaving the station: the queue', () => {
   it.todo('never lists the same train twice');
   it.todo('ignores lockRequests for platforms, which are for the station actor');
   it.todo('removes a train from the queue when it is granted');
+  it.todo('does not put the holder back in the queue when it repeats its request');
+  it.todo('ignores a late JUNCTION request from a train it already let into EXIT');
+  it.todo('drops a request whose train has stopped asking, for example one that left by clock slot');
 });
 
 describe('Leaving the station: who is next', () => {
@@ -118,7 +134,8 @@ describe('Leaving the station: releasing', () => {
 });
 
 describe('Merge switched off: what the alive actor must not cause', () => {
-  it.todo('keeps a train that waits over 10 seconds in the queue from falling back to clock slots (design gap, see pull request)');
+  it.todo('sends lockRefuse for JUNCTION with alternative null to each queued train it does not grant, so none waits 10 seconds without a reply (design gap, see pull request)');
+  it.todo('never lets a train that fell back to clock slots and a granted train into the junction zone together');
 });
 
 describe('Messages (The radio)', () => {
@@ -129,6 +146,7 @@ describe('Messages (The radio)', () => {
 describe('Switched back on (not in the design yet)', () => {
   it.todo('keeps its memory across being switched off and on');
   it.todo('notices from the gap since lastStepAt that it was switched off');
+  it.todo('sets lastStepAt to now on every step');
   it.todo('does not name a stale train in follow, since trains may have joined EXIT by clock slots while it was off');
   it.todo('handles queued requests heard before it was switched off (rule not decided)');
   it.todo('handles a holder that entered and left the zone while the actor was off (rule not decided)');

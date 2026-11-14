@@ -9,6 +9,8 @@ import {
   initialStationMemory,
   observePlatform,
   ownPair,
+  recordGrant,
+  recordHolderRequests,
   resumeStation,
   type PlatformLock,
 } from '../../src/locks/station';
@@ -84,7 +86,21 @@ describe('station frame', () => {
 
   it('placeholder observePlatform records nothing', () => {
     const fresh: PlatformLock = { ...lock, seenArrive: false };
-    expect(observePlatform(fresh, true, 20)).toEqual(fresh);
+    const before = structuredClone(fresh);
+    expect(observePlatform(fresh, true, 20)).toEqual(before);
+  });
+
+  it('placeholder recordGrant records nothing', () => {
+    const memory = initialStationMemory();
+    expect(recordGrant(memory, 1, 'P1', 20)).toEqual(initialStationMemory());
+  });
+
+  it('placeholder recordHolderRequests records nothing', () => {
+    const memory = initialStationMemory();
+    memory.locks.P1 = lock;
+    const before = structuredClone(memory);
+    const inbox: Message[] = [{ type: 'lockRequest', from: 1, resource: 'P1' }];
+    expect(recordHolderRequests(memory, inbox, 20)).toEqual(before);
   });
 
   it('placeholder canReleasePlatform never releases, even after arrive then leave', () => {
@@ -95,7 +111,8 @@ describe('station frame', () => {
     const memory = initialStationMemory();
     memory.locks.P1 = lock;
     memory.lastStepAt = 10;
-    expect(resumeStation(memory, 50)).toEqual(memory);
+    const before = structuredClone(memory);
+    expect(resumeStation(memory, 50)).toEqual(before);
   });
 });
 
@@ -113,6 +130,7 @@ describe('Entering the station: granting', () => {
   it.todo('never grants a platform to a train that is not in the timetable');
   it.todo('grants the same platform again when its holder repeats the request');
   it.todo('never gives one train locks on two platforms at once');
+  it.todo('keeps a holder on its current platform when it asks for the other platform of its pair');
   it.todo('grants a free platform to only one of two trains that ask for it on the same tick');
   it.todo('records the holder and the grant time in the lock table on a grant');
   it.todo('sends lockGrant to the requesting train with resource set to the platform and follow null');
@@ -140,9 +158,9 @@ describe('Platform sensors switched off', () => {
   it.todo('offers the other platform of the pair as alternative when one sensor is dead and the other platform is free');
   it.todo('refuses every request with alternative null when every sensor is dead');
   it.todo('never releases a lock while its train could still be on its way in');
-  it.todo('does not take a dead sensor reading occupied as the holder arriving');
-  it.todo('does not take a sensor coming back on as the holder leaving');
+  it.todo('does not release a lock when a sensor dies and comes back while the holder is still asking');
   it.todo('keeps a lock while it still hears the holder repeating its request');
+  it.todo('does not grant a platform that a creeping train may be heading into when the sensors come back');
 });
 
 describe('Messages (The radio)', () => {
@@ -157,6 +175,7 @@ describe('Switched back on (not in the design yet)', () => {
   it.todo('keeps its lock table across being switched off and on');
   it.todo('notices from the gap since lastStepAt that it was switched off');
   it.todo('handles a lock whose train arrived and left while the actor was off (rule not decided)');
-  it.todo('does not grant a platform that a train entered by the fixed split while the actor was off');
+  it.todo('does not grant a platform that a train is about to enter by the fixed split, from a stop at the end of A or B');
+  it.todo('sets lastStepAt to now on every step');
   it.todo('never releases a lock on coming back while its train could still be on its way in');
 });
