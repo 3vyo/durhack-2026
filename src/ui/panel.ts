@@ -18,6 +18,8 @@ export interface Panel {
   oursMinimap: HTMLCanvasElement;
   setBanner(title: string, status: string): void;
   setRows(rows: Row[]): void;
+  /** Shows the decision card for a clicked train over a scene, or hides it with null. */
+  setCard(side: 'baseline' | 'ours', lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
 }
@@ -62,6 +64,11 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   }
   const left = column("Today's system");
   const right = column('Our fallback');
+  const cardStyle =
+    'position:absolute;top:8px;left:8px;padding:8px 10px;font-size:13px;line-height:1.5;background:rgba(11,15,20,0.88);border:1px solid #3a4658;border-radius:6px;display:none;pointer-events:none;';
+  const cards = { baseline: el('div', cardStyle), ours: el('div', cardStyle) };
+  left.stage.append(cards.baseline);
+  right.stage.append(cards.ours);
   columns.append(left.wrap, right.wrap);
 
   const table = el('table', 'border-collapse:collapse;margin:0 16px;font-size:15px;');
@@ -119,6 +126,15 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
         );
         table.append(tr);
       }
+    },
+    setCard(side, lines) {
+      const card = cards[side];
+      if (lines === null) {
+        card.style.display = 'none';
+        return;
+      }
+      card.replaceChildren(...lines.map((line) => el('div', '', line)));
+      card.style.display = 'block';
     },
     setPauseLabel(paused) {
       pause.textContent = paused ? 'Resume' : 'Pause';

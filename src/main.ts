@@ -5,6 +5,7 @@ import { runScenario, type ScenarioSummary } from './runner/run';
 import { stubBaseline, stubOurs } from './runner/stubs';
 import { SCENARIOS } from './scenarios/scenarios';
 import { scoreboardRows } from './ui/hud';
+import { describeTrain } from './ui/overlay';
 import { STATION_FRAME, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { createPanel } from './ui/panel';
@@ -71,6 +72,14 @@ panel.setCameraLabel(cameraLabel());
 
 const baselineView = createScene(panel.baselineStage, STATION_FRAME);
 const oursView = createScene(panel.oursStage, STATION_FRAME);
+// Click a train to see how it is deciding. Each scene keeps its own selection.
+const selected: { baseline: number | null; ours: number | null } = { baseline: null, ours: null };
+baselineView.onPick((id) => {
+  selected.baseline = id;
+});
+oursView.onPick((id) => {
+  selected.ours = id;
+});
 const baselineMap = createMinimap(panel.baselineMinimap);
 const oursMap = createMinimap(panel.oursMinimap);
 window.addEventListener('resize', () => {
@@ -98,6 +107,10 @@ function draw(): void {
   oursView.render(ours);
   baselineMap.render(base);
   oursMap.render(ours);
+  for (const [side, snap] of [['baseline', base], ['ours', ours]] as const) {
+    const train = snap.trains.find((t) => t.id === selected[side]);
+    panel.setCard(side, train ? describeTrain(train) : null);
+  }
 
   const b = session.baseline.result();
   const o = session.ours.result();

@@ -19,7 +19,18 @@ function snapshotWith(x: number): Snapshot {
   return {
     now: 0,
     switches: ALL_ON,
-    trains: [{ id: 1, pos: { track: 'A', offset: x }, x, speed: 45, mode: 'blind' }],
+    trains: [
+      {
+        id: 1,
+        pos: { track: 'A', offset: x },
+        x,
+        speed: 45,
+        mode: 'blind',
+        leaderAge: null,
+        permitAge: null,
+        lastGrants: { platform: null, junction: false },
+      },
+    ],
   };
 }
 

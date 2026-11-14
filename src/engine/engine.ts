@@ -38,6 +38,15 @@ export interface TrainView {
   speed: number;
   mode: TrainOutput['mode'];
   reason?: string;
+  /** Seconds since a position report from this train's timetable leader arrived, or null if none has. */
+  leaderAge: number | null;
+  /** Seconds since a permit arrived, or null if none has. */
+  permitAge: number | null;
+  /**
+   * The last lock grants this train heard. The engine never clears them: this is what the train
+   * was told, not what an actor believes, so it is labelled "last grant" and not "lock held".
+   */
+  lastGrants: { platform: PlatformId | null; junction: boolean };
 }
 
 export interface Snapshot {
@@ -65,6 +74,11 @@ interface Runtime {
   nextTrack: TrackId | null;
   mode: TrainOutput['mode'];
   reason?: string;
+  /** The train that runs directly ahead on its entry track, from the timetable. */
+  leaderId: TrainId | null;
+  lastLeaderAt: number | null;
+  lastPermitAt: number | null;
+  lastGrants: { platform: PlatformId | null; junction: boolean };
 }
 
 interface Sent {
@@ -180,6 +194,7 @@ export class Engine {
 
     // Every agent decides from the state at the start of the tick, then all move together,
     // so the result does not depend on the order trains are listed in.
+    for (const rt of this.active) this.observe(rt, trainInbox.get(rt.id) ?? [], now);
     const outputs = this.active.map((rt, i) =>
       rt.agent.decide({
         now,
@@ -235,6 +250,9 @@ export class Engine {
         speed: rt.state.speed,
         mode: rt.mode,
         ...(rt.reason !== undefined ? { reason: rt.reason } : {}),
+        leaderAge: rt.lastLeaderAt === null ? null : this.now - rt.lastLeaderAt,
+        permitAge: rt.lastPermitAt === null ? null : this.now - rt.lastPermitAt,
+        lastGrants: { ...rt.lastGrants },
       })),
     };
   }
@@ -248,6 +266,20 @@ export class Engine {
       closeCalls: this.closeCalls,
       overruns: this.overruns,
     };
+  }
+
+  /** Notes what a train was just told, for the overlay. The engine decides nothing from this. */
+  private observe(rt: Runtime, inbox: Message[], now: number): void {
+    for (const m of inbox) {
+      if (m.type === 'position' && rt.leaderId !== null && m.from === rt.leaderId) {
+        rt.lastLeaderAt = now;
+      } else if (m.type === 'permit') {
+        rt.lastPermitAt = now;
+      } else if (m.type === 'lockGrant') {
+        if (m.resource === 'JUNCTION') rt.lastGrants.junction = true;
+        else rt.lastGrants.platform = m.resource;
+      }
+    }
   }
 
   private deliver(to: Recipient, msg: Message): void {
@@ -287,6 +319,10 @@ export class Engine {
         prev: null,
         nextTrack: null,
         mode: 'blind',
+        leaderId: entry.leader,
+        lastLeaderAt: null,
+        lastPermitAt: null,
+        lastGrants: { platform: null, junction: false },
       });
     }
     this.pending.length = 0;

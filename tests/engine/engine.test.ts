@@ -322,6 +322,93 @@ describe('Engine safety', () => {
   });
 });
 
+describe('Engine overlay facts', () => {
+  const tt2: TimetableEntry[] = [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: 1, dwell: 30 },
+  ];
+
+  it('reports how old the last report from the timetable leader is', () => {
+    let sent = false;
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          const outbox: Outgoing[] = [];
+          if (id === 1 && !sent) {
+            sent = true;
+            outbox.push({
+              msg: { type: 'position', from: 1, pos: input.self.pos, speed: input.self.speed, sentAt: input.now },
+              range: 'long',
+            });
+          }
+          return { accel: 0, nextTrack: 'P1', outbox, mode: 'blind' };
+        },
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config(tt2, 60, program));
+    engine.step();
+    expect(engine.snapshot().trains.find((t) => t.id === 2)!.leaderAge).toBeNull();
+    for (let i = 0; i < 80; i++) engine.step();
+    const age = engine.snapshot().trains.find((t) => t.id === 2)!.leaderAge!;
+    expect(age).toBeCloseTo(8, 5);
+    expect(engine.snapshot().trains.find((t) => t.id === 1)!.leaderAge).toBeNull();
+  });
+
+  it('reports how old the last permit is, and none without a centre', () => {
+    const withCentre = new Engine(config(one, 60, stubBaseline));
+    for (let i = 0; i < 35; i++) withCentre.step();
+    const age = withCentre.snapshot().trains[0].permitAge!;
+    expect(age).toBeGreaterThanOrEqual(0);
+    expect(age).toBeLessThan(1.5);
+
+    const without = new Engine(config(one, 60, stubOurs));
+    for (let i = 0; i < 35; i++) without.step();
+    expect(without.snapshot().trains[0].permitAge).toBeNull();
+  });
+
+  it('records the last grants a train heard and never clears them', () => {
+    const granting = (id: 'station' | 'merge'): LocalActor => ({
+      id,
+      step: (_now, inbox) =>
+        inbox.flatMap((m: Message): Outgoing[] =>
+          m.type === 'lockRequest'
+            ? [{ msg: { type: 'lockGrant', to: m.from, resource: m.resource, follow: null }, range: 'short' }]
+            : [],
+        ),
+    });
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: () => ({
+          accel: 0,
+          nextTrack: 'P1',
+          outbox: [
+            { msg: { type: 'lockRequest', from: id, resource: 'P2' }, range: 'short' },
+            { msg: { type: 'lockRequest', from: id, resource: 'JUNCTION' }, range: 'short' },
+          ],
+          mode: 'blind',
+        }),
+      }),
+      makeActors: () => [granting('station'), granting('merge')],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config(one, 300, program));
+    while (engine.now < 110) engine.step();
+    expect(engine.snapshot().trains[0].lastGrants).toEqual({ platform: 'P2', junction: false });
+    while (engine.now < 140) engine.step();
+    expect(engine.snapshot().trains[0].lastGrants).toEqual({ platform: 'P2', junction: true });
+  });
+
+  it('shows no grants for a train that never heard one', () => {
+    const engine = new Engine(config(one, 60));
+    engine.step();
+    expect(engine.snapshot().trains[0].lastGrants).toEqual({ platform: null, junction: false });
+  });
+});
+
 describe('Engine display reason', () => {
   function withReason(reason: unknown): TrainProgram {
     return {

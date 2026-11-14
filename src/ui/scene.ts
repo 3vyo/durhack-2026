@@ -18,6 +18,8 @@ export interface SceneView {
   /** Draws one snapshot. The view only reads it. */
   render(s: Snapshot): void;
   setCamera(mode: CameraMode): void;
+  /** Calls back with the id of the train under a click, or null for a click on empty space. */
+  onPick(handler: (id: number | null) => void): void;
   resize(): void;
   dispose(): void;
 }
@@ -135,6 +137,20 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     renderer.render(scene, camera);
   }
 
+  const raycaster = new THREE.Raycaster();
+  function onPick(handler: (id: number | null) => void): void {
+    renderer.domElement.addEventListener('click', (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const hit = raycaster.intersectObjects([...trains.values()])[0];
+      if (!hit) return handler(null);
+      for (const [id, mesh] of trains) if (mesh === hit.object) return handler(id);
+      handler(null);
+    });
+  }
+
   function dispose(): void {
     renderer.dispose();
     renderer.domElement.remove();
@@ -142,5 +158,5 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
 
   setCamera('angled');
   resize();
-  return { render, setCamera, resize, dispose };
+  return { render, setCamera, onPick, resize, dispose };
 }
