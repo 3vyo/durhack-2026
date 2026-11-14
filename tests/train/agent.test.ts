@@ -209,12 +209,13 @@ describe('remember', () => {
     expect(m.lastStationReply).toEqual({ kind: 'refuse', platform: 'P2', alternative: null, at: 4 });
   });
 
-  it('ignores a platform grant once the front has left the entry track', () => {
+  it('ignores a platform grant once the front has left the entry track, and does not store it as a reply', () => {
     const m = initialMemory(2, timetable);
     m.platform = 'P1';
     remember(m, 4, inP1, { kind: 'grant', platform: 'P2' }, null);
     expect(m.platform).toBe('P1');
     expect(m.locks).toEqual([]);
+    expect(m.lastStationReply).toBeNull();
   });
 
   it('stores a junction grant as a lock, a reply time and its follow train as the new leader', () => {

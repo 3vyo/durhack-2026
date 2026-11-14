@@ -158,9 +158,9 @@ export function exitLeader(follow: TrainId | null): Leader {
 /**
  * Stores what this tick's replies say: the station's last reply and its time, a granted
  * lock, the granted platform, the merge actor's last reply time, and the new leader from
- * a junction grant. A platform grant is ignored once the front has left the entry track,
- * so a late grant cannot move a train that is already in a platform. Bookkeeping only.
- * The decisions live in the rule files.
+ * a junction grant. A platform grant is ignored, and not stored as the last reply, once
+ * the front has left the entry track, so a late grant cannot move a train that is already
+ * in a platform. Bookkeeping only. The decisions live in the rule files.
  */
 export function remember(
   memory: TrainMemory,
@@ -169,8 +169,9 @@ export function remember(
   station: StationReply | null,
   merge: MergeReply | null,
 ): void {
-  if (station) memory.lastStationReply = { ...station, at: now };
   const onEntryTrack = pos.track === 'A' || pos.track === 'B';
+  const lateGrant = station?.kind === 'grant' && !onEntryTrack;
+  if (station && !lateGrant) memory.lastStationReply = { ...station, at: now };
   if (station?.kind === 'grant' && onEntryTrack) {
     memory.platform = station.platform;
     addLock(memory, station.platform);

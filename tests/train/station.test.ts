@@ -139,7 +139,7 @@ describe('Station switched off: when to use the fallback', () => {
   it.todo('does not use the fallback while still moving');
   it.todo('does not use the fallback after a station reply, unless the stored refusal counts as silence');
   it.todo('uses the fallback after a refusal that counts as silence, on the ticks after the refusal too');
-  it.todo('waiting on docs/design.md and a constant: counts as no reply when the station has not replied for a while, even after an earlier reply');
+  it.todo('waiting on docs/design.md and a constant: counts as no reply when the station has not replied for a while, even after an earlier reply, with half a tick of slack');
   it.todo('keeps using the fallback while it moves into the platform it picked');
 });
 

@@ -105,7 +105,8 @@ export function dwellStart(_prev: number | null, _self: TrainState, _now: number
  * "Station switched off". True when the train is stopped at the end of its entry track and
  * has had no reply, or has had a refusal that counts as silence. The agent stores the
  * result and passes it back as usingFallback, so the train can keep the fallback while it
- * moves into the platform.
+ * moves into the platform. When the design gives a time for "no reply for a while", this
+ * becomes a timer and takes that constant and `slack` like the others.
  *
  * Placeholder: false, so the train keeps waiting.
  */

@@ -28,9 +28,10 @@ export interface TrainNumbers {
 
 /**
  * The numbers the agent uses until #34 merges. Every design number is NaN, the pairs are
- * empty and xOf gives NaN, so a rule written before then cannot move a train: NaN fails
- * every comparison and lowestLimit reads it as 0. Replace each value with its constant
- * from src/shared/ once #34 merges.
+ * empty and xOf gives NaN. A speed limit built from NaN is NaN, and lowestLimit reads that
+ * as 0, so a rule written before then keeps the train stopped. Other results are not
+ * guarded: a negated comparison such as !(x < askPoint) is true, so a request could go out
+ * early. Replace each value with its constant from src/shared/ once #34 merges.
  */
 export const PENDING_NUMBERS: TrainNumbers = {
   slack: TICK / 2,
