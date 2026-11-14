@@ -5,8 +5,10 @@ import type { TrackId } from '../shared/types';
 import {
   LANE_SPACING,
   cameraPreset,
+  isStopped,
   laneOf,
   markersFor,
+  modeColor,
   toScreenX,
   type CameraMode,
   type Frame,
@@ -23,6 +25,9 @@ export interface SceneView {
 const TRAIN_HEIGHT = 8;
 const TRAIN_DEPTH = 10;
 const TRACK_DEPTH = 12;
+const STOPPED_DIM = 0.4;
+const DEVICE_ON = 0x7be07b;
+const DEVICE_OFF = 0x1c1f24;
 
 const TRACK_COLOR: Record<TrackId, number> = {
   A: 0x3a4658,
@@ -34,10 +39,21 @@ const TRACK_COLOR: Record<TrackId, number> = {
   EXIT: 0x3a4658,
 };
 
+type DeviceKey = 'centre' | 'station' | 'merge' | 'sensors';
+
+/** Where each device sits, in metres along the track and scene z. They go dark when switched off. */
+const DEVICES: Array<{ key: DeviceKey; x: number; z: number }> = [
+  { key: 'centre', x: 5500, z: -90 },
+  { key: 'station', x: 5200, z: -40 },
+  { key: 'merge', x: 6300, z: -40 },
+  { key: 'sensors', x: 5800, z: -40 },
+];
+
 /**
  * Builds the whole three.js scene once: flat strips for tracks and platforms, boxes for
- * trains, and a camera that can switch between an angled and an overhead view. Labels,
- * controls and metrics are plain HTML outside the scene.
+ * trains coloured by mode, markers for the devices that go dark when switched off, and a
+ * camera that can switch between an angled and an overhead view. Labels, controls and
+ * metrics are plain HTML outside the scene.
  */
 export function createScene(container: HTMLElement, frame: Frame): SceneView {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -62,17 +78,24 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     scene.add(strip);
   }
 
+  const devices = new Map<DeviceKey, THREE.MeshStandardMaterial>();
+  for (const d of DEVICES) {
+    const material = new THREE.MeshStandardMaterial({ color: DEVICE_ON });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(24, 14, 24), material);
+    mesh.position.set(toScreenX(d.x, frame), 7, d.z);
+    scene.add(mesh);
+    devices.set(d.key, material);
+  }
+
   const camera = new THREE.PerspectiveCamera(45, 1, 1, 50000);
-  const trainMaterial = new THREE.MeshStandardMaterial({ color: 0x4da3ff });
   const trainGeometry = new THREE.BoxGeometry(1, TRAIN_HEIGHT, TRAIN_DEPTH);
   const trains = new Map<number, THREE.Mesh>();
 
   function setCamera(mode: CameraMode): void {
     const { position, lookAt } = cameraPreset(mode, frame);
     camera.position.set(...position);
-    camera.up.set(0, 1, 0);
     // Looking straight down makes "up" ambiguous, so point the top of the picture at -z.
-    if (mode === 'overhead') camera.up.set(0, 0, -1);
+    camera.up.set(0, mode === 'overhead' ? 0 : 1, mode === 'overhead' ? -1 : 0);
     camera.lookAt(...lookAt);
   }
 
@@ -85,21 +108,27 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
   }
 
   function render(s: Snapshot): void {
+    for (const [key, material] of devices) material.color.setHex(s.switches[key] ? DEVICE_ON : DEVICE_OFF);
+
     const seen = new Set<number>();
     for (const m of markersFor(s, frame)) {
       seen.add(m.id);
       let mesh = trains.get(m.id);
       if (!mesh) {
-        mesh = new THREE.Mesh(trainGeometry, trainMaterial);
+        mesh = new THREE.Mesh(trainGeometry, new THREE.MeshStandardMaterial());
         scene.add(mesh);
         trains.set(m.id, mesh);
       }
+      const colour = new THREE.Color(modeColor(m.mode));
+      if (isStopped(m.speed)) colour.multiplyScalar(STOPPED_DIM);
+      (mesh.material as THREE.MeshStandardMaterial).color.copy(colour);
       mesh.scale.x = m.lengthPx;
       mesh.position.set(m.px - m.lengthPx / 2, 2 + TRAIN_HEIGHT / 2, m.lane * LANE_SPACING);
     }
     for (const [id, mesh] of trains) {
       if (!seen.has(id)) {
         scene.remove(mesh);
+        (mesh.material as THREE.Material).dispose();
         trains.delete(id);
       }
     }

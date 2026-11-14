@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
-import { cameraPreset, laneOf, markersFor, toScreenX, type Frame } from '../../src/ui/layout';
+import {
+  cameraPreset,
+  isStopped,
+  laneOf,
+  markersFor,
+  modeColor,
+  toScreenX,
+  type Frame,
+} from '../../src/ui/layout';
 import { TRAIN_LENGTH } from '../../src/shared/constants';
 import type { TrackId } from '../../src/shared/types';
 
@@ -67,5 +75,20 @@ describe('cameraPreset', () => {
     const { position, lookAt } = cameraPreset('angled', frame);
     expect(position[2]).not.toBe(lookAt[2]);
     expect(position[1]).toBeGreaterThan(0);
+  });
+});
+
+describe('modeColor', () => {
+  it('gives each of the four modes its own colour', () => {
+    const colours = (['central', 'full', 'stale', 'blind'] as const).map(modeColor);
+    expect(new Set(colours).size).toBe(4);
+  });
+});
+
+describe('isStopped', () => {
+  it('is true below 0.1 m/s and false above', () => {
+    expect(isStopped(0.05)).toBe(true);
+    expect(isStopped(0)).toBe(true);
+    expect(isStopped(3)).toBe(false);
   });
 });

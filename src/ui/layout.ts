@@ -1,6 +1,6 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
-import type { TrackId, TrainId } from '../shared/types';
+import type { TrackId, TrainId, TrainOutput } from '../shared/types';
 
 /**
  * A window onto the track. xMin and xMax are metres along the shared x axis, and width is
@@ -39,6 +39,8 @@ export function laneOf(track: TrackId): number {
 
 export interface Marker {
   id: TrainId;
+  mode: TrainOutput['mode'];
+  speed: number;
   /** Scene x of the train's front. */
   px: number;
   lane: number;
@@ -51,11 +53,32 @@ export function markersFor(s: Snapshot, f: Frame): Marker[] {
   const scale = f.width / (f.xMax - f.xMin);
   return s.trains.map((t) => ({
     id: t.id,
+    mode: t.mode,
+    speed: t.speed,
     px: toScreenX(t.x, f),
     lane: laneOf(t.pos.track),
     lengthPx: TRAIN_LENGTH * scale,
     visible: t.x >= f.xMin && t.x - TRAIN_LENGTH <= f.xMax,
   }));
+}
+
+/** One colour per display mode, so a judge can read how each train is deciding. */
+export function modeColor(mode: TrainOutput['mode']): number {
+  switch (mode) {
+    case 'central':
+      return 0x4da3ff;
+    case 'full':
+      return 0x45c27a;
+    case 'stale':
+      return 0xe0b040;
+    case 'blind':
+      return 0xe05555;
+  }
+}
+
+/** A train this slow reads as stopped. The picture dims it so stopped against moving shows at a glance. */
+export function isStopped(speed: number): boolean {
+  return speed < 0.1;
 }
 
 export type CameraMode = 'angled' | 'overhead';

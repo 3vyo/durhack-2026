@@ -1,56 +1,136 @@
-import { Engine } from './engine/engine';
-import { DEFAULT_TIMETABLE, generateTimetable, runLengthFor } from './engine/timetable';
-import { stubOurs } from './runner/stubs';
+import { delaySoFar, timeToNormal } from './engine/metrics';
+import { DEFAULT_TIMETABLE } from './engine/timetable';
+import { LiveSession } from './runner/live';
+import { runScenario, type ScenarioSummary } from './runner/run';
+import { stubBaseline, stubOurs } from './runner/stubs';
+import { SCENARIOS } from './scenarios/scenarios';
+import { scoreboardRows } from './ui/hud';
 import { STATION_FRAME, type CameraMode } from './ui/layout';
+import { createMinimap } from './ui/minimap';
+import { createPanel } from './ui/panel';
 import { createScene } from './ui/scene';
-import { TICK } from './shared/constants';
 
-// Simulated seconds per real second. A first look at the engine, before the live session.
-const SPEED = 8;
+const SEED = 1;
+const SCENARIO = SCENARIOS['centre-outage'];
 
 const app = document.getElementById('app');
 if (!app) throw new Error('missing #app');
-app.style.cssText = 'position:fixed;inset:0;font-family:system-ui,sans-serif;';
 
-const stage = document.createElement('div');
-stage.style.cssText = 'position:absolute;inset:0;';
-app.appendChild(stage);
-
-const timetable = generateTimetable(1, DEFAULT_TIMETABLE);
-const engine = new Engine({
-  timetable,
-  program: stubOurs,
-  seed: 1,
-  runLength: runLengthFor(timetable),
-  presses: [],
+const session = new LiveSession({
+  seed: SEED,
+  scenario: SCENARIO,
+  programs: { baseline: stubBaseline, ours: stubOurs },
+  timetable: DEFAULT_TIMETABLE,
 });
-const view = createScene(stage, STATION_FRAME);
 
-// Controls are plain HTML, outside the scene.
-let mode: CameraMode = 'angled';
-const toggle = document.createElement('button');
-toggle.style.cssText = 'position:absolute;top:12px;left:12px;padding:8px 12px;font-size:14px;';
-const label = (): string => (mode === 'angled' ? 'Camera: angled (switch to overhead)' : 'Camera: overhead (switch to angled)');
-toggle.textContent = label();
-toggle.addEventListener('click', () => {
-  mode = mode === 'angled' ? 'overhead' : 'angled';
-  view.setCamera(mode);
-  toggle.textContent = label();
+// Delay is scored against one reference for both systems: the baseline's healthy run of this seed.
+const reference = runScenario({
+  seed: SEED,
+  scenario: SCENARIOS.healthy,
+  program: stubBaseline,
+  timetable: DEFAULT_TIMETABLE,
 });
-app.appendChild(toggle);
 
-window.addEventListener('resize', () => view.resize());
+let restoredAt: number | null = null;
+let average: ScenarioSummary | null = null;
+let cameraMode: CameraMode = 'angled';
 
-let last = performance.now();
-let carry = 0;
-function frameLoop(now: number): void {
-  carry += ((now - last) / 1000) * SPEED;
-  last = now;
-  while (carry >= TICK) {
-    engine.step();
-    carry -= TICK;
-  }
-  view.render(engine.snapshot());
-  requestAnimationFrame(frameLoop);
+const cameraLabel = (): string =>
+  cameraMode === 'angled' ? 'Camera: angled (switch to overhead)' : 'Camera: overhead (switch to angled)';
+
+const panel = createPanel(app, {
+  onCutCentre: () => {
+    session.press({ centre: false });
+    restoredAt = null;
+  },
+  onRestoreCentre: () => {
+    session.press({ centre: true });
+    restoredAt = session.ours.now;
+  },
+  onCutRadio: () => session.press({ radioDrop: 1 }),
+  onRestoreRadio: () => session.press({ radioDrop: 0 }),
+  onSpeed: (speed) => {
+    session.speed = speed;
+  },
+  onPause: () => {
+    session.paused = !session.paused;
+    panel.setPauseLabel(session.paused);
+  },
+  onRestart: () => {
+    session.restart();
+    restoredAt = null;
+  },
+  onCamera: () => {
+    cameraMode = cameraMode === 'angled' ? 'overhead' : 'angled';
+    baselineView.setCamera(cameraMode);
+    oursView.setCamera(cameraMode);
+    panel.setCameraLabel(cameraLabel());
+  },
+});
+panel.setCameraLabel(cameraLabel());
+
+const baselineView = createScene(panel.baselineStage, STATION_FRAME);
+const oursView = createScene(panel.oursStage, STATION_FRAME);
+const baselineMap = createMinimap(panel.baselineMinimap);
+const oursMap = createMinimap(panel.oursMinimap);
+window.addEventListener('resize', () => {
+  baselineView.resize();
+  oursView.resize();
+});
+
+// The many-run averages come from a worker so the demo never freezes while they are worked out.
+const worker = new Worker(new URL('./runner/batch.worker.ts', import.meta.url), { type: 'module' });
+worker.addEventListener('message', (e: MessageEvent<ScenarioSummary>) => {
+  average = e.data;
+});
+worker.postMessage({ scenario: SCENARIO.id });
+
+function clock(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
-requestAnimationFrame(frameLoop);
+
+function draw(): void {
+  const base = session.baseline.snapshot();
+  const ours = session.ours.snapshot();
+  baselineView.render(base);
+  oursView.render(ours);
+  baselineMap.render(base);
+  oursMap.render(ours);
+
+  const b = session.baseline.result();
+  const o = session.ours.result();
+  const sw = ours.switches;
+  panel.setBanner(
+    `${SCENARIO.title}: today's system against our fallback`,
+    `Control centre ${sw.centre ? 'ON' : 'OFF'}  |  Radio loss ${Math.round(sw.radioDrop * 100)}%  |  Time ${clock(ours.now)}`,
+  );
+  panel.setRows(
+    scoreboardRows({
+      through: { baseline: b.exits.size, ours: o.exits.size },
+      delaySeconds: {
+        baseline: delaySoFar(b, reference, base.now),
+        ours: delaySoFar(o, reference, ours.now),
+      },
+      timeToNormalSeconds: {
+        baseline: restoredAt === null ? null : timeToNormal(b, reference, restoredAt),
+        ours: restoredAt === null ? null : timeToNormal(o, reference, restoredAt),
+      },
+      collisions: { baseline: b.collisions, ours: o.collisions },
+      closeCalls: { baseline: b.closeCalls, ours: o.closeCalls },
+      avg: average,
+    }),
+  );
+}
+
+// Cap the real time passed in, so a tab that was in the background does not run a burst of steps.
+const MAX_FRAME_SECONDS = 0.1;
+let last = performance.now();
+function frame(now: number): void {
+  session.tick(Math.min((now - last) / 1000, MAX_FRAME_SECONDS));
+  last = now;
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
