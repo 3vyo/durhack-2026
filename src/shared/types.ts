@@ -27,7 +27,9 @@ export type Message =
   | { type: 'lockGrant'; to: TrainId; resource: ResourceId; follow: TrainId | null }
   | { type: 'lockRefuse'; to: TrainId; resource: ResourceId; alternative: PlatformId | null }
   | { type: 'platformStatus'; platform: PlatformId; occupied: boolean; sentAt: number }
-  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number }; // from the control centre
+  // From the control centre. `leader` is the train directly ahead on this train's path, null
+  // if there is none, and absent if the sender does not say.
+  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number; leader?: TrainId | null };
 
 export interface Outgoing { msg: Message; range: 'long' | 'short' }
 

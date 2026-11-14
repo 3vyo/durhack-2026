@@ -6,7 +6,7 @@ A browser simulation where trains run themselves, share track through local lock
 
 Today a regional control centre sets every signal. When it or the rail radio fails, every train in the area stops until staff restart them one at a time. On 6 August 2026 a 90-second power cut at the Manchester control centre stopped trains across the North West for the rest of the day.
 
-We show a fallback where trains keep moving safely through that kind of outage. We pitch it as a layer underneath the central system. It does not replace it.
+We show a fallback where trains keep moving safely through that kind of outage. We pitch it as a layer underneath the central system. It does not replace it. While the control centre works, our trains obey it exactly as today's trains do. Our own rules take over only when it fails.
 
 ## The map
 
@@ -95,7 +95,7 @@ These values are the defaults. A parameter file can change them for one run. It 
 - The merge actor owns the junction zone and grants one lock at a time.
 - The station actor owns the four platforms and grants one lock per platform.
 - Each platform has a sensor that broadcasts empty or occupied.
-- The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second.
+- The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second. It is today's system. It does not use the station actor, the merge actor or the platform sensors.
 
 The merge and station actors have wired sensors, so they see their own track without radio.
 
@@ -144,7 +144,9 @@ export type Message =
   | { type: 'lockGrant'; to: TrainId; resource: ResourceId; follow: TrainId | null }
   | { type: 'lockRefuse'; to: TrainId; resource: ResourceId; alternative: PlatformId | null }
   | { type: 'platformStatus'; platform: PlatformId; occupied: boolean; sentAt: number }
-  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number }; // from the control centre
+  // From the control centre. `leader` is the train directly ahead on this train's path, null
+  // if there is none, and absent if the sender does not say.
+  | { type: 'permit'; to: TrainId; untilX: number; nextTrack: TrackId | null; sentAt: number; leader?: TrainId | null };
 
 export interface Outgoing { msg: Message; range: 'long' | 'short' }
 
@@ -196,6 +198,30 @@ A train enters at the start of A or B at `SIGHT_SPEED`, the one speed that can a
 
 ## Train rules
 
+### The centre comes first
+
+While a train holds a permit under 5 seconds old, it obeys the control centre like today's trains. The centre picks its platform, orders the junction and says how far it may run.
+
+- It takes the permit's `nextTrack` and never passes the permit's `untilX`.
+- It brakes for `sightAhead`, as a driver would.
+- It sends no lock requests and ignores the local actors' replies.
+- It still broadcasts its position every second, so the trains behind it can follow it if the centre fails.
+
+It needs nothing from the train-to-train radio, the station actor, the merge actor or the platform sensors. A failure of any of those, with the centre still working, costs it nothing.
+
+When its permit goes stale, the train runs on the rules in the rest of this section. It starts from where the centre left it.
+
+- On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the merge actor.
+- On A or B, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the station actor for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
+- Anywhere else it stops where its own rules say and asks for what it needs.
+
+When permits return, the train obeys them again on the next tick. It forgets its request timers and drops a junction grant, because the centre now orders the junction. The centre takes over from where the trains are.
+
+- A train on A or B whose route is set into a platform of its own pair is sent there.
+- A train already in the junction zone becomes the junction holder, so the centre lets no other train in until it has cleared the zone.
+
+The centre sees each train's set route as the signalling shows it. The engine passes it with the trains' true state.
+
 ### Following
 
 Each train broadcasts a `position` message every second over long range.
@@ -219,6 +245,8 @@ The `SIGHT_SPEED` floor applies to the leader's limit point only. `sightAhead` c
 
 If a train has never heard its leader, or does not know who its leader is, it has no limit point and stays at `SIGHT_SPEED` or below.
 
+A train that leaves the map sends one last `position` on the tick it leaves, with its front at the end of EXIT. Only a train that is leaving can report that, so a leader whose last report says it has gone leaves no limit point. Without this, the train behind would slow to `SIGHT_SPEED` near the end of the line, because its leader's last report would still sit there.
+
 A stop point is a place the train must not pass. There are two.
 
 - The end of an entry track, for a train with no platform.
@@ -236,30 +264,15 @@ The display labels each train with a mode.
 
 | Mode | Meaning |
 |---|---|
-| central | The train holds a permit under 5 seconds old. This label takes priority over the other three |
+| central | The train holds a permit under 5 seconds old and obeys it. This label takes priority over the other three |
 | full | Leader's report is under `FRESH` seconds old |
 | stale | Leader's report is older |
 | blind | No report from the leader, or leader unknown |
 
-### Following permits
-
-A train always runs the rules in this section, with or without the control centre. It keeps its limit point, obeys `sightAhead`, and gets its locks from the station and merge actors. The centre never replaces a lock.
-
-A `permit` does two things only.
-
-- `nextTrack` suggests which platform to ask for. The centre only suggests platforms from the train's own pair.
-- `untilX` adds one more limit. The train may not pass that x.
-
-The lock always wins on which platform. If the station actor refuses the suggested platform or offers another, the train follows the station actor. A permit never makes a train go where its own rules say stop.
-
-A permit is fresh for 5 seconds. After that the train drops the permit's limit and its suggestion, and carries on. Until then an old permit can hold a train back, which costs up to 5 seconds and no safety. The timer is not a safety mechanism. Safety comes from the train's own rules and the locks.
-
-When permits return, the train follows them again on the next tick. It keeps any lock it holds and any platform it has already chosen.
-
 ### Entering the station
 
 1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
-2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for the platform its permit suggests, or for its default platform if it has no fresh permit.
+2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for its default platform, unless it kept a platform from its last permit.
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
 5. With no reply at all, it stops before the end of its entry track. Silence means no.
@@ -349,21 +362,16 @@ When its permits stop, a baseline train keeps two things from its last permit.
 - It keeps its last `nextTrack` while it waits. A train still braking can cross onto its platform, and a null `nextTrack` would end its path at the end of its entry track.
 - The `untilX` of its last permit still applies after the permit is stale. A baseline train never goes faster than `safeSpeed` of the distance to that `untilX`, so full braking always stops it at or before that x.
 
-There is one control centre, and it lives in `src/baseline/`. Both train programs get their permits from it. The baseline is a second train program. It holds no locks and obeys its permits, where ours holds locks and treats the same permits as hints.
+There is one control centre, and it lives in `src/baseline/`. Both train programs get the same permits from it. The baseline is a second train program. It holds no locks, obeys its permits, and stops when they stop. Ours obeys the same permits while they come, and runs on its own rules when they stop.
 
-The baseline's centre uses no locks, so a local fault needs its own rule.
-
-- A dead platform sensor means the centre cannot tell if that platform is clear. It treats the platform as occupied and permits no train into it.
-- A dead station actor or merge actor means the centre treats that piece of track as unavailable. It permits no train through it.
-
-The dead actor and dead sensor rules apply to the baseline only. For our trains the centre never holds a train that its locks would let through, and it does not order the junction. Its `untilX` only keeps a train `MARGIN` behind the true rear of the train ahead, and its `nextTrack` only suggests a platform. Otherwise our trains would stop in a local fault exactly as the baseline does, and the centre could deadlock against the merge actor.
+The centre is today's system, so it never depends on the station actor, the merge actor or our platform sensors. Switching those off changes nothing for the baseline. The centre knows where every train is from its own train detection, which the engine gives it as true sensor readings.
 
 The baseline train also brakes for `sightAhead`, as a driver would. The centre is safe without it.
 
 ## Metrics
 
 - Trains per hour leaving the right-hand end of EXIT.
-- Total delay against the timetable.
+- Average delay per train against the baseline with nothing failed. This is what a passenger on a typical train sees, and it does not grow with the number of trains. A train that never leaves counts at the run length.
 - Collisions, meaning two trains overlapping on one track or two trains in the junction zone. This must stay at zero.
 - Close calls, meaning a gap under `MARGIN`.
 
