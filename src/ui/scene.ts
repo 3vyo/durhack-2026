@@ -36,6 +36,12 @@ import { buildWorld } from './world';
 import { LINK_STYLE, linkReach, type Link, type LinkEnd } from './links';
 import { SIGHT_HALF_ANGLE, SIGHT_STYLE, sightCone } from './sight';
 
+/** Where a camera is and what it looks at, in scene units. */
+export interface CameraPose {
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
 export interface SceneView {
   /**
    * Draws one snapshot and a line for each link (see links.ts). `drawn.sight` adds each train's
@@ -44,6 +50,10 @@ export interface SceneView {
    */
   render(s: Snapshot, links?: Link[], drawn?: { sight: boolean; tint: boolean }): void;
   setCamera(mode: CameraMode): void;
+  /** Calls back whenever the viewer moves this camera, with where it now is. */
+  onCameraMove(handler: (pose: CameraPose) => void): void;
+  /** Puts the camera where another view's camera is, without calling back. */
+  setPose(pose: CameraPose): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
   /** Calls back with the id of a train that was double-clicked. */
@@ -335,6 +345,22 @@ export function createScene(
   controls.addEventListener('start', () => {
     fitted = false;
   });
+
+  let moveHandler: ((pose: CameraPose) => void) | null = null;
+  let applyingPose = false;
+  controls.addEventListener('change', () => {
+    if (applyingPose || !moveHandler) return;
+    moveHandler({ position: camera.position.toArray(), target: controls.target.toArray() });
+  });
+  function setPose(pose: CameraPose): void {
+    applyingPose = true;
+    fitted = false;
+    camera.position.set(...pose.position);
+    controls.target.set(...pose.target);
+    controls.update();
+    applyingPose = false;
+    setFog();
+  }
 
   function setFog(): void {
     // Haze the far edges, whatever the view: fog from just beyond what the camera looks at.
@@ -792,5 +818,5 @@ export function createScene(
 
   setCamera(DEFAULT_CAMERA);
   resize();
-  return { render, observe, setCamera, onPick, onDoublePick, trainScreenPoints, resize, dispose };
+  return { render, observe, setCamera, onCameraMove: (h) => (moveHandler = h), setPose, onPick, onDoublePick, trainScreenPoints, resize, dispose };
 }

@@ -1,7 +1,7 @@
 import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
 import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
-import type { Row, Tile } from './hud';
+import { barShares, type Board, type BarRow } from './hud';
 import { LINK_KINDS, LINK_STYLE } from './links';
 import { SHOW_ITEMS, type Show, type ShowKey } from './show';
 import { SIGHT_STYLE } from './sight';
@@ -39,9 +39,8 @@ export interface Panel {
   oursMinimap: HTMLCanvasElement;
   /** The scenario name and the clock line. */
   setBanner(title: string, status: string): void;
-  setRows(rows: Row[]): void;
-  /** The three numbers on the delay board. */
-  setTiles(tiles: Tile[]): void;
+  /** Fills the score panel, or hides it with null when the run cannot be scored. */
+  setBoard(board: Board | null): void;
   /** Shows the decision card for a clicked train over a scene, or hides it with null. */
   setCard(side: Side, lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
@@ -78,7 +77,7 @@ const SWITCH_NAMES: Record<SwitchKey, string> = {
 };
 
 const SIDE_NAMES: Record<Side, string> = { baseline: "Today's system", ours: 'Our fallback' };
-/** The colour tick beside each side's name, the same as on the delay board. */
+/** The colour tick beside each side's name, the same as the bars on the score panel. */
 const SIDE_COLOUR: Record<Side, string> = { baseline: MODE_STYLE.blind.css, ours: MODE_STYLE.central.css };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text?: string): HTMLElementTagNameMap[K] {
@@ -108,25 +107,69 @@ function shapeIcon(shape: Parameters<typeof shapePath>[0], fill: string, opacity
   return svg;
 }
 
-/** A panel with a heading button that folds its body away. */
-function foldingPanel(className: string, heading: string, folded: boolean): { box: HTMLElement; body: HTMLElement } {
-  const box = el('section', `glass side ${className}${folded ? ' folded' : ''}`);
-  const toggle = el('button', 'fold', heading);
-  toggle.setAttribute('aria-expanded', String(!folded));
-  const body = el('div', 'body');
-  toggle.addEventListener('click', () => {
-    const nowFolded = box.classList.toggle('folded');
-    toggle.setAttribute('aria-expanded', String(!nowFolded));
-  });
-  box.append(toggle, body);
-  return { box, body };
+/** Sets a node's text only when it changes, so the page does no work on a quiet frame. */
+function setText(node: HTMLElement, text: string): void {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+interface BarView {
+  root: HTMLElement;
+  update(row: BarRow): void;
+}
+
+/**
+ * One measurement as two bars, today's system above ours. With `named`, each bar has its side's
+ * name in front of it, which also works as the colour key for the smaller rows below.
+ */
+function barView(className: string, named: boolean): BarView {
+  const root = el('div', `metric ${className}`);
+  const name = el('div', 'name');
+  root.append(name);
+  const parts = {} as Record<Side, { fill: HTMLElement; num: HTMLElement }>;
+  for (const side of ['baseline', 'ours'] as const) {
+    const bar = el('div', 'bar');
+    if (named) bar.append(el('span', 'who', side === 'baseline' ? "Today's" : 'Ours'));
+    const track = el('span', 'track');
+    const fill = el('span', 'fill');
+    fill.style.background = SIDE_COLOUR[side];
+    track.append(fill);
+    const num = el('span', 'num');
+    bar.append(track, num);
+    root.append(bar);
+    parts[side] = { fill, num };
+  }
+  return {
+    root,
+    update(row) {
+      setText(name, row.label);
+      const share = barShares(row.values);
+      for (const side of ['baseline', 'ours'] as const) {
+        const width = `${(share[side] * 100).toFixed(1)}%`;
+        if (parts[side].fill.style.width !== width) parts[side].fill.style.width = width;
+        setText(parts[side].num, row.text[side]);
+      }
+    },
+  };
+}
+
+/** Keeps one bar view per row, adding and removing views as the number of rows changes. */
+function barList(box: HTMLElement): (rows: BarRow[]) => void {
+  const views: BarView[] = [];
+  return (rows) => {
+    while (views.length < rows.length) {
+      const view = barView('small', false);
+      views.push(view);
+      box.append(view.root);
+    }
+    while (views.length > rows.length) views.pop()!.root.remove();
+    rows.forEach((row, i) => views[i].update(row));
+  };
 }
 
 /**
  * The page: one side's 3D view fills the window, and small glass panels float over it. The
- * title and clock top left, the view switch top centre, the delay board top right, the key and
- * the scoreboard on the sides (each folds away), and the minimap over the control dock at the
- * bottom. Everything is plain HTML, so it stays readable whatever the camera does.
+ * title and clock top left, the view switch top centre, the score panel top right, and the key
+ * and the minimap over the control dock at the bottom. Everything is plain HTML, so it stays readable whatever the camera does.
  *
  * Keys: V switches the view, Space pauses, C cuts or restores the control centre, L shows or
  * hides all the explanatory drawings (the Show menu picks them one by one).
@@ -165,23 +208,23 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     views.append(b);
   }
 
-  // The delay board.
+  // The score panel: the delay as two big bars, then the other measurements as small bars.
   const board = el('section', 'glass board');
-  board.append(el('div', 'heading', 'Average delay per train, against a run where nothing fails'));
-  const cells = el('div', 'cells');
-  const cellParts = [0, 1, 2].map(() => {
-    const cell = el('div', 'cell');
-    const label = el('div', 'label');
-    const value = el('div', 'value');
-    const number = el('span');
-    value.append(number, el('span', 'unit', 'min'));
-    const sub = el('div', 'sub');
-    cell.append(label, value, sub);
-    cells.append(cell);
-    return { cell, label, number, sub };
-  });
-  board.append(cells);
-  const EDGE: Record<Tile['tone'], string> = { baseline: SIDE_COLOUR.baseline, ours: SIDE_COLOUR.ours, neutral: '#a9b6c5' };
+  board.setAttribute('aria-label', 'Score');
+  const head = el('div', 'head');
+  const saved = el('div', 'saved');
+  const savedNumber = el('span', 'value');
+  saved.append(savedNumber, el('span', 'unit', 'min saved per train'));
+  head.append(saved);
+  const delay = barView('big', true);
+  const rowsBox = el('div', 'rows');
+  const setRowList = barList(rowsBox);
+  const runs = el('div', 'runs');
+  const runsTitle = el('div', 'runs-title');
+  const runsBox = el('div', 'rows');
+  runs.append(runsTitle, runsBox);
+  const setRunList = barList(runsBox);
+  board.append(head, delay.root, rowsBox, runs);
 
   // The key: one compact row of shapes and names. Click it to show what each one means.
   const key = el('button', 'glass key');
@@ -209,12 +252,6 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     const open = key.classList.toggle('open');
     key.setAttribute('aria-expanded', String(open));
   });
-
-  // The scoreboard, on the right.
-  const scores = foldingPanel('right', 'Scoreboard', false);
-  const table = el('table', 'scores');
-  scores.body.append(table);
-  let shownRows = '';
 
   // The minimap of the whole line, for the side on show.
   const minimapBox = el('div', 'glass minimap');
@@ -341,7 +378,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   // The bottom: the key, the minimap and the control dock, stacked.
   const bottom = el('div', 'bottom');
   bottom.append(key, minimapBox, dock);
-  root.append(stages.baseline, stages.ours, title, views, board, scores.box, bottom);
+  root.append(stages.baseline, stages.ours, title, views, board, bottom);
 
   // Keys for the presenter. They do nothing while a text box or a list has focus.
   window.addEventListener('keydown', (e) => {
@@ -369,34 +406,16 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       clock.textContent = time;
       ended.textContent = rest.join(' ');
     },
-    setTiles(tiles) {
-      tiles.forEach((t, i) => {
-        const part = cellParts[i];
-        if (!part) return;
-        part.label.textContent = t.label;
-        part.number.textContent = t.value;
-        part.sub.textContent = t.sub;
-        part.cell.style.setProperty('--edge', EDGE[t.tone]);
-      });
-    },
-    setRows(rows) {
-      // Rebuild only when the text changes, so the table can be read and selected.
-      const text = JSON.stringify(rows);
-      if (text === shownRows) return;
-      shownRows = text;
-      table.replaceChildren();
-      const head = el('tr');
-      for (const t of ['', "Today's", 'Ours']) head.append(el('th', '', t));
-      table.append(head);
-      for (const r of rows) {
-        const tr = el('tr');
-        tr.append(
-          el('td', '', r.label),
-          el('td', r.alert?.baseline ? 'alert' : '', r.baseline),
-          el('td', r.alert?.ours ? 'alert' : '', r.ours),
-        );
-        table.append(tr);
-      }
+    setBoard(score) {
+      board.hidden = score === null;
+      if (score === null) return;
+      saved.classList.toggle('none', score.saved === null);
+      setText(savedNumber, score.saved ?? '0.0');
+      delay.update(score.delay);
+      setRowList(score.rows);
+      runs.hidden = score.runs === null;
+      setText(runsTitle, score.runs?.title ?? '');
+      setRunList(score.runs?.rows ?? []);
     },
     setCard(side, lines) {
       const card = cards[side];
