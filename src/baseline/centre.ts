@@ -377,14 +377,67 @@ function isInJunctionZone(train: TrainState): boolean {
 }
 
 /**
- * The junction holder after this step. It keeps a holder that is not done. With no holder,
- * a train already in the zone becomes the holder, so the centre lets it finish and lets no
- * other train in until it has cleared the zone.
+ * True if a train in a platform is setting off into the junction zone: it is moving with its
+ * route set to EXIT. Only a train that is leaving does that. Our trains set off on a junction
+ * keeper grant or a clock slot while the centre is off, and the centre's own holder sets off
+ * on its permit.
+ *
+ * It is never true of a train that is arriving or waiting:
+ * - An arriving train has no route out of its platform.
+ * - A train waiting at its stop point may point its route at EXIT to look through the zone
+ *   on a clock slot, but it stands still while it looks.
+ * - A baseline train sets the route its permits name, and only the holder's name EXIT.
+ * - A broken-down train is braking to a stand, not leaving.
  */
-function updateJunctionHolder(memory: CentreMemory, trains: TrainState[]): TrainId | null {
+function isSettingOff(train: TrainState, routes: Routes): boolean {
+  if (!isPlatform(train.pos.track) || train.brokenDown || isStopped(train)) return false;
+  return routes.get(train.id) === 'EXIT';
+}
+
+/** The x a moving train reaches if it brakes fully from now on. */
+function brakingEndX(train: TrainState): number {
+  return xOf(train.pos) + (train.speed * train.speed) / (2 * BRAKE);
+}
+
+/**
+ * The train that has the junction zone whatever the centre says, other than `holderId`, or
+ * undefined. A train already in the zone comes first. Otherwise it is the train setting off
+ * that will stop furthest along if braked now, lowest ID on a tie.
+ */
+function trainTakingZone(trains: TrainState[], routes: Routes, holderId: TrainId | null): TrainState | undefined {
+  const others = trains.filter((train) => train.id !== holderId);
+  const inZone = others.find(isInJunctionZone);
+  if (inZone) return inZone;
+  const settingOff = others.filter((train) => isSettingOff(train, routes));
+  settingOff.sort((a, b) => brakingEndX(b) - brakingEndX(a) || a.id - b.id);
+  return settingOff[0];
+}
+
+/** True if the holder has started its turn: it is moving, or its front is past its platform stop. */
+function hasSetOff(holder: TrainState): boolean {
+  return !isPlatform(holder.pos.track) || !isStopped(holder) || holder.pos.offset > PLATFORM_STOP;
+}
+
+/**
+ * The junction holder after this step. Design: "The centre comes first".
+ *
+ * The centre takes over from where the trains are. A train already in the zone, or setting
+ * off into it (isSettingOff), becomes the holder, so the centre lets it finish and lets no
+ * other train in until it has cleared the zone. Telling a train that is setting off to stop
+ * at its platform stop would be too late: it can run past it into the zone, beside the train
+ * the centre let in.
+ *
+ * The centre keeps a holder that is not done. The one exception is a holder that has not set
+ * off while another train has the zone. That holder is standing at its platform stop and
+ * cannot go, so the turn passes to the train that has the zone, and the old holder waits in
+ * the queue again. While the centre stays on this never happens: no train enters the zone or
+ * sets off without being the holder.
+ */
+function updateJunctionHolder(memory: CentreMemory, trains: TrainState[], routes: Routes): TrainId | null {
   const holder = trains.find((train) => train.id === memory.junctionHolder);
-  if (!holderIsDone(holder)) return memory.junctionHolder;
-  return trains.find(isInJunctionZone)?.id ?? null;
+  const taking = trainTakingZone(trains, routes, memory.junctionHolder);
+  if (holder && !holderIsDone(holder) && (taking === undefined || hasSetOff(holder))) return holder.id;
+  return taking?.id ?? null;
 }
 
 /** True if the holder has left the junction zone behind, or cannot use its turn. */
@@ -431,7 +484,7 @@ export function updateMemory(
   for (const train of trains) {
     plans.set(train.id, updatePlan(memory.plans.get(train.id), train, now, restart));
   }
-  const junctionHolder = updateJunctionHolder(memory, trains);
+  const junctionHolder = updateJunctionHolder(memory, trains, routes);
   return {
     ...memory,
     plans,
