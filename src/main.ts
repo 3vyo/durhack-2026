@@ -5,12 +5,12 @@ import type { RunResult } from './engine/engine';
 import { healthyReference, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
-import { trainChoices } from './ui/controls';
+import { statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, STATION_FRAME, isStopped, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
-import { createPanel, type Side } from './ui/panel';
+import { NORMAL_SPEED, createPanel, type Side } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
 import { createScene } from './ui/scene';
 
@@ -26,6 +26,8 @@ const session = new LiveSession({
   programs: { baseline: baselineProgram, ours: ourProgram },
   timetable: DEFAULT_TIMETABLE,
 });
+// 1x on the page is 8 simulated seconds a second, so a run fits the time a judge watches.
+session.speed = NORMAL_SPEED;
 
 // Delay is scored against one reference for both systems: the baseline's healthy run of this
 // seed. It is the same checked run the batch uses. If it cannot finish, the page says so and
@@ -55,11 +57,6 @@ const panel = createPanel(app, {
     if (key === 'centre') restoredAt = on ? session.ours.now : null;
   },
   onRadioDrop: (drop) => session.press({ radioDrop: drop }),
-  onBreakDown: (id) => {
-    // A train that has already left one side is gone there, so this does nothing to that side.
-    session.baseline.breakDown(id);
-    session.ours.breakDown(id);
-  },
   onSpeed: (speed) => {
     session.speed = speed;
   },
@@ -99,11 +96,20 @@ baselineView.onPick((id) => {
 oursView.onPick((id) => {
   selected.ours = id;
 });
+// Double-click a train to break it down, on both sides at once. A train that has already left
+// one side is gone there, so that side is unchanged.
+for (const v of [baselineView, oursView]) {
+  v.onDoublePick((id) => {
+    session.baseline.breakDown(id);
+    session.ours.breakDown(id);
+  });
+}
 // The demo check (scripts/demo-check.mjs) opens the page with ?check and reads where the
 // trains are, so it can click a real one. The page never reads this itself.
 if (new URLSearchParams(location.search).has('check')) {
   (window as unknown as { demoCheck: unknown }).demoCheck = {
     trainPoints: () => (view === 'baseline' ? baselineView : oursView).trainScreenPoints(),
+    brokenDown: (id: number) => session.ours.snapshot().trains.some((t) => t.id === id && t.brokenDown === true),
   };
 }
 const baselineMap = createMinimap(panel.baselineMinimap);
@@ -147,9 +153,8 @@ function draw(): void {
   const o = session.ours.result();
   const sw = ours.switches;
   panel.setSwitches(sw);
-  panel.setTrains(trainChoices(base.trains, ours.trains));
   if (referenceError !== null || reference === null) {
-    panel.setBanner(SCENARIO.title, `${clock(ours.now)} | Cannot score this run: ${referenceError}`);
+    panel.setBanner(statusTitle(sw), `${clock(ours.now)} | Cannot score this run: ${referenceError}`);
     panel.setRows([]);
     return;
   }
@@ -165,7 +170,7 @@ function draw(): void {
   const baseTtn = ttn(b, base.now);
   const oursTtn = ttn(o, ours.now);
   const stuck = (run: RunResult): number => reference!.exits.size - [...reference!.exits.keys()].filter((id) => run.exits.has(id)).length;
-  panel.setBanner(SCENARIO.title, `${clock(ours.now)}${ended ? ' | Run ended' : ''}`);
+  panel.setBanner(statusTitle(sw), `${clock(ours.now)}${ended ? ' | Run ended' : ''}`);
   const delaySeconds = {
     baseline: averageDelaySoFar(b, reference, base.now),
     ours: averageDelaySoFar(o, reference, ours.now),

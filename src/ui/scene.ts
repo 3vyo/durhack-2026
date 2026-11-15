@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
@@ -33,6 +34,8 @@ export interface SceneView {
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
+  /** Calls back with the id of a train that was double-clicked. */
+  onDoublePick(handler: (id: number) => void): void;
   /** Keeps track of where trains are without drawing, for a view that is not on show. */
   observe(s: Snapshot): void;
   /**
@@ -282,18 +285,39 @@ export function createScene(
     disposeAll([...t.bodyMaterials, t.marker.material as THREE.SpriteMaterial, t.tag.material as THREE.SpriteMaterial]);
   }
 
+  // Drag to turn the camera, right-drag (or shift-drag) to slide it, scroll to zoom. The
+  // camera button puts it back to the angled or overhead view.
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.screenSpacePanning = false; // slide over the ground, not up into the sky
+  controls.maxPolarAngle = (84 * Math.PI) / 180; // never under the ground
+  controls.minDistance = 6;
+  controls.maxDistance = 400;
+  // Until someone moves the camera, a resize refits the view to the new shape.
+  let fitted = true;
+  controls.addEventListener('start', () => {
+    fitted = false;
+  });
+
+  function setFog(): void {
+    // Haze the far edges, whatever the view: fog from just beyond what the camera looks at.
+    const distance = camera.position.distanceTo(controls.target);
+    fog.near = distance * ENVIRONMENT.fog.near;
+    fog.far = distance * ENVIRONMENT.fog.far;
+  }
+
   let cameraMode: CameraMode = DEFAULT_CAMERA;
   function setCamera(mode: CameraMode): void {
     cameraMode = mode;
+    fitted = true;
     const { position, lookAt } = cameraPreset(mode, frame, camera.aspect);
-    camera.position.set(...position);
-    // Looking straight down makes "up" ambiguous, so point the top of the picture at -z.
-    camera.up.set(0, mode === 'overhead' ? 0 : 1, mode === 'overhead' ? -1 : 0);
-    camera.lookAt(...lookAt);
-    // Haze the far edges, whichever view: fog from just beyond what the camera looks at.
-    const distance = camera.position.distanceTo(new THREE.Vector3(...lookAt));
-    fog.near = distance * ENVIRONMENT.fog.near;
-    fog.far = distance * ENVIRONMENT.fog.far;
+    // Straight down has no "up", so lean a hair towards +z: the top of the picture is then -z.
+    camera.position.set(position[0], position[1], position[2] + (mode === 'overhead' ? 0.01 : 0));
+    camera.up.set(0, 1, 0);
+    controls.target.set(...lookAt);
+    controls.update();
+    setFog();
   }
 
   function resize(): void {
@@ -302,8 +326,9 @@ export function createScene(
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    // The camera backs off just enough to fit the frame at this shape of canvas.
-    setCamera(cameraMode);
+    // The camera backs off just enough to fit the frame at this shape of canvas, unless
+    // someone has moved it.
+    if (fitted) setCamera(cameraMode);
   }
 
   // Labels for the tracks and devices are HTML over the canvas, so they stay sharp and readable.
@@ -388,20 +413,42 @@ export function createScene(
         lastPlatform.delete(id);
       }
     }
+    controls.update();
+    setFog();
     renderer.render(scene, camera);
     placeLabels();
   }
 
   const raycaster = new THREE.Raycaster();
+  /** The train under a point on the canvas, or null. */
+  function trainAt(clientX: number, clientY: number): number | null {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+    raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+    const bodies = [...trains.values()].map((t) => t.body);
+    const hit = raycaster.intersectObjects(bodies, true)[0];
+    return hit ? trainIdOf(hit.object) : null;
+  }
+
+  // A drag moves the camera; only a press and release in about the same place is a click.
+  let downAt: { x: number; y: number } | null = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    downAt = { x: e.clientX, y: e.clientY };
+  });
+  const wasDrag = (e: MouseEvent) => downAt !== null && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5;
+
   function onPick(handler: (id: number | null) => void): void {
     renderer.domElement.addEventListener('click', (e) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
-      const bodies = [...trains.values()].map((t) => t.body);
-      const hit = raycaster.intersectObjects(bodies, true)[0];
-      handler(hit ? trainIdOf(hit.object) : null);
+      if (wasDrag(e)) return;
+      handler(trainAt(e.clientX, e.clientY));
+    });
+  }
+
+  function onDoublePick(handler: (id: number) => void): void {
+    renderer.domElement.addEventListener('dblclick', (e) => {
+      const id = trainAt(e.clientX, e.clientY);
+      if (id !== null) handler(id);
     });
   }
 
@@ -425,6 +472,7 @@ export function createScene(
 
   function dispose(): void {
     observer?.disconnect();
+    controls.dispose();
     for (const t of trains.values()) disposeTrain(t);
     trains.clear();
     renderer.dispose();
@@ -434,5 +482,5 @@ export function createScene(
 
   setCamera(DEFAULT_CAMERA);
   resize();
-  return { render, observe, setCamera, onPick, trainScreenPoints, resize, dispose };
+  return { render, observe, setCamera, onPick, onDoublePick, trainScreenPoints, resize, dispose };
 }

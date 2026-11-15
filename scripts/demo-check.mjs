@@ -274,7 +274,7 @@ async function main() {
     await evaluate(`document.querySelector('.key')?.click()`);
     const text = await bodyText();
     await evaluate(`document.querySelector('.key')?.click()`);
-    for (const t of ['Centre outage', 'Trains through', ...REQUIRED_TEXT]) {
+    for (const t of ['All systems working', 'Trains through', ...REQUIRED_TEXT]) {
       if (text.toLowerCase().includes(t.toLowerCase())) pass(`page shows "${t}"`);
       else fail(`page shows "${t}"`);
     }
@@ -292,8 +292,8 @@ async function main() {
     // 3. Cut the control centre. Today's trains stop, ours carry on.
     await click('Control centre');
     const cut = await waitFor('cut', async () => (await buttonText('Control centre')) === 'Control centre: OFF', 3000);
-    if (cut) pass('the control centre switch turns it off');
-    else fail('the control centre switch turns it off', String(await buttonText('Control centre')));
+    if (cut && (await bodyText()).includes('Control centre down')) pass('the control centre switch turns it off, and the title says so');
+    else fail('the control centre switch turns it off, and the title says so', String(await buttonText('Control centre')));
     const tc = (await simTime()) ?? 0;
     await waitForSimTime(tc + (QUICK ? 60 : 120), 60000);
     await screenshot('during-outage');
@@ -347,17 +347,24 @@ async function main() {
       s.dispatchEvent(new Event('input'));
     })()`);
 
-    // 7. Break down a train.
-    const broke = await evaluate(`(() => {
-      const s = [...document.querySelectorAll('select')].find((x) => ![...x.options].some((o) => o.textContent.endsWith('x speed')));
-      if (!s || s.options.length === 0) return null;
-      s.value = s.options[0].value;
-      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Break down');
-      b.click();
-      return s.value;
-    })()`);
-    if (broke !== null) pass('a train can be broken down', `train ${broke}`);
-    else fail('a train can be broken down', 'no trains in the picker');
+    // 7. Double-click a train to break it down.
+    {
+      const target = await evaluate(`(() => {
+        const canvases = [...document.querySelectorAll('canvas')].filter((c) => c.getBoundingClientRect().height > 100);
+        const r = canvases[canvases.length - 1].getBoundingClientRect();
+        const p = (window.demoCheck ? window.demoCheck.trainPoints() : []).find((q) => q.x > 4 && q.y > 4 && q.x < r.width - 4 && q.y < r.height - 4);
+        return p ? { id: p.id, x: r.x + p.x, y: r.y + p.y } : null;
+      })()`);
+      if (target) {
+        for (const clickCount of [1, 2]) {
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount });
+        }
+        const broken = await waitFor('broken', () => evaluate(`window.demoCheck.brokenDown(${target.id})`), 3000);
+        if (broken) pass('double-clicking a train breaks it down', `train ${target.id}`);
+        else fail('double-clicking a train breaks it down', `train ${target.id} did not break down`);
+      } else fail('double-clicking a train breaks it down', 'no train on screen');
+    }
 
     // 8. Switch the camera.
     const before = await buttonText('Camera');

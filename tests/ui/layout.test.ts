@@ -3,6 +3,7 @@ import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
   ANGLED_FOCUS,
+  EXIT_MERGE,
   POINTS_LENGTH,
   pathAt,
   routeOf,
@@ -256,11 +257,14 @@ describe('pathAt and routeOf', () => {
     expect(pathAt(6300, route)).toEqual({ z: lane('P1'), slope: 0 });
   });
 
-  it('bends from the platform it left into EXIT, then runs straight', () => {
+  it('joins its platform pair first, then the pair joins EXIT, then runs straight', () => {
     const route = routeOf('EXIT', 'P4');
     expect(route.entry).toBe('B');
     expect(pathAt(6400, route).z).toBeCloseTo(lane('P4'), 9);
-    expect(pathAt(6400 + POINTS_LENGTH, route)).toEqual({ z: lane('EXIT'), slope: 0 });
+    expect(pathAt(6400 + EXIT_MERGE.pairs, route).z).toBeCloseTo(lane('B'), 9);
+    expect(pathAt(6400 + EXIT_MERGE.pairs + EXIT_MERGE.join, route)).toEqual({ z: lane('EXIT'), slope: 0 });
+    // Its partner platform joins the same pair lane.
+    expect(pathAt(6400 + EXIT_MERGE.pairs, routeOf('EXIT', 'P3')).z).toBeCloseTo(lane('B'), 9);
   });
 
   it('keeps the rear cars on the entry line while the front is already in the platform', () => {
