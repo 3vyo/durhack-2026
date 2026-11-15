@@ -20,7 +20,7 @@ import { route, type Recipient, type Sender } from './radio';
 import { checkSafety } from './safety';
 import { readSensors, sightAhead } from './sensing';
 import { ALL_ON, type Press, type Switches } from './switches';
-import { makeRng } from './timetable';
+import { entersBefore, makeRng } from './timetable';
 
 export interface EngineConfig {
   timetable: TimetableEntry[];
@@ -147,6 +147,35 @@ export class Engine {
    */
   breakDown(id: TrainId): void {
     this.broken.add(id);
+  }
+
+  /**
+   * Adds a train to the timetable while the run goes on, for the demo's spawn button. Build
+   * the entry with spawnEntry. It waits outside the map like any other train and enters in
+   * timetable order on its track.
+   *
+   * The next train on the same track that has not entered yet now follows the new one, so its
+   * timetable leader becomes the new train. That train builds its agent only when it enters, so
+   * it never sees the old leader. The agents, keepers and centre read the timetable array they
+   * were built with, so the entry goes into that array. Two engines built on one array may both
+   * add the same entry: it goes in once.
+   */
+  addTrain(entry: TimetableEntry): void {
+    const timetable = this.cfg.timetable;
+    const existing = timetable.find((e) => e.id === entry.id);
+    if (existing !== undefined && existing !== entry) throw new Error(`train ${entry.id} is already in the timetable`);
+    const seen =
+      this.pending.some((e) => e.id === entry.id) ||
+      this.active.some((rt) => rt.id === entry.id) ||
+      this.exits.has(entry.id);
+    if (seen) return;
+    if (entry.enterAt < this.now - 1e-9) throw new Error(`train ${entry.id} cannot enter in the past`);
+    if (existing === undefined) timetable.push(entry);
+
+    const follower = this.pending.find((e) => e.entry === entry.entry && entersBefore(entry, e));
+    if (follower) follower.leader = entry.id;
+    const at = this.pending.findIndex((e) => entersBefore(entry, e));
+    this.pending.splice(at < 0 ? this.pending.length : at, 0, entry);
   }
 
   get now(): number {

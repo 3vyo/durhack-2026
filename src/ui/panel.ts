@@ -1,5 +1,5 @@
 import type { Switches } from '../engine/switches';
-import { radioLabel, SWITCH_KEYS, type SwitchKey } from './controls';
+import { ENTRY_LINES, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
@@ -16,6 +16,8 @@ export interface PanelHandlers {
   onPause(): void;
   onRestart(): void;
   onCamera(): void;
+  /** Add a train at the start of line A or B. */
+  onSpawn(line: EntryLine): void;
   /** Show this side's 3D view. */
   onView(side: Side): void;
 }
@@ -34,6 +36,8 @@ export interface Panel {
   setCard(side: Side, lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
+  /** The note beside the spawn button. An empty string clears it. */
+  setSpawnNote(text: string): void;
   /** Shows the current switches on the lamps and the radio slider. */
   setSwitches(sw: Switches): void;
   /** Shows one side's view and minimap, and marks it on the view switch. */
@@ -226,6 +230,25 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const breakdownHint = el('span', 'hint', 'Double-click a train to break it down');
   failures.append(radio, breakdownHint);
 
+  // Extra traffic: a train added at the start of the chosen line.
+  const traffic = el('div', 'group');
+  traffic.setAttribute('role', 'group');
+  traffic.setAttribute('aria-label', 'Traffic');
+  const spawnLine = el('select');
+  spawnLine.setAttribute('aria-label', 'Line for the new train');
+  for (const line of ENTRY_LINES) {
+    const option = el('option', '', `Line ${line}`);
+    option.value = line;
+    spawnLine.append(option);
+  }
+  const spawnTrain = (): void => h.onSpawn(spawnLine.value as EntryLine);
+  const spawn = el('button', '', 'Spawn train');
+  spawn.title = 'Add a train at the start of the chosen line (T). It enters once the start of the line is clear';
+  spawn.addEventListener('click', spawnTrain);
+  const spawnNoteText = el('span', 'hint');
+  spawnNoteText.setAttribute('aria-live', 'polite');
+  traffic.append(spawn, spawnLine, spawnNoteText);
+
   const run = el('div', 'group push');
   run.setAttribute('role', 'group');
   run.setAttribute('aria-label', 'Run');
@@ -246,7 +269,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const camera = el('button', '', 'Camera');
   camera.addEventListener('click', h.onCamera);
   run.append(speed, pause, restart, camera);
-  dock.append(failures, run);
+  dock.append(failures, traffic, run);
 
   // The bottom: the key, the minimap and the control dock, stacked.
   const bottom = el('div', 'bottom');
@@ -260,6 +283,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'v' || e.key === 'V') h.onView(stages.baseline.hidden ? 'baseline' : 'ours');
     else if (e.key === 'c' || e.key === 'C') h.onToggle('centre');
+    else if (e.key === 't' || e.key === 'T') spawnTrain();
     else if (e.key === ' ' && target?.tagName !== 'BUTTON') {
       e.preventDefault();
       h.onPause();
@@ -320,6 +344,9 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setCameraLabel(text) {
       camera.textContent = text;
+    },
+    setSpawnNote(text) {
+      spawnNoteText.textContent = text;
     },
     setSwitches(sw) {
       for (const k of SWITCH_KEYS) {

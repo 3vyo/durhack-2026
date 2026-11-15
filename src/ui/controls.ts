@@ -34,6 +34,15 @@ export function switchesLine(sw: Switches): string {
   );
 }
 
+/** The lines a spawned train can start on, in the order the page lists them. */
+export type EntryLine = 'A' | 'B';
+export const ENTRY_LINES: EntryLine[] = ['A', 'B'];
+
+/** The note beside the spawn button after a train is added, such as "Train 17 joins line A". */
+export function spawnNote(id: TrainId, line: EntryLine): string {
+  return `Train ${id} joins line ${line}`;
+}
+
 /** The train IDs on either map, lowest first, each once. Both sides run the same timetable. */
 export function trainChoices(...maps: Array<Array<{ id: TrainId }>>): TrainId[] {
   const ids = new Set<TrainId>();

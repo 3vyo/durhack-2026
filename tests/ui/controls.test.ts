@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_ON } from '../../src/engine/switches';
-import { batchRunsText, radioLabel, statusTitle, switchesLine, switchLabel, trainChoices } from '../../src/ui/controls';
+import {
+  ENTRY_LINES,
+  batchRunsText,
+  radioLabel,
+  spawnNote,
+  statusTitle,
+  switchesLine,
+  switchLabel,
+  trainChoices,
+} from '../../src/ui/controls';
 
 describe('switchLabel', () => {
   it('names the switch and says whether it is on', () => {
@@ -73,5 +82,16 @@ describe('statusTitle', () => {
   it('gives partial radio loss as a share', () => {
     expect(statusTitle({ ...on, radioDrop: 0.4 })).toBe('Radio losing 40%');
     expect(statusTitle({ ...on, sensors: false, radioDrop: 0.25 })).toBe('Platform sensors down, radio losing 25%');
+  });
+});
+
+describe('spawnNote', () => {
+  it('names the new train and its line', () => {
+    expect(spawnNote(17, 'A')).toBe('Train 17 joins line A');
+    expect(spawnNote(3, 'B')).toBe('Train 3 joins line B');
+  });
+
+  it('offers both entry lines, A first', () => {
+    expect(ENTRY_LINES).toEqual(['A', 'B']);
   });
 });

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
-import { DEFAULT_TIMETABLE, RUN_LENGTH, generateTimetable } from '../../src/engine/timetable';
+import { DEFAULT_TIMETABLE, RUN_LENGTH, generateTimetable, spawnEntry } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, setConstants } from '../../src/shared/constants';
 import type { LocalActor, Message, Outgoing, SensorReadings, TimetableEntry, TrackId } from '../../src/shared/types';
@@ -607,5 +607,96 @@ describe('Engine breakdown', () => {
     const engine = new Engine({ ...config(two), presses: [{ at: 40, set: {}, breakDown: 1 }] });
     runUntilDone(engine);
     expect(engine.result().collisions).toBe(1);
+  });
+});
+
+describe('Engine.addTrain', () => {
+  /** Steps until the train is on the map, and returns the time it appeared, or -1. */
+  function appearedAt(engine: Engine, id: number, until: number): number {
+    while (engine.now < until) {
+      engine.step();
+      if (engine.snapshot().trains.some((t) => t.id === id)) return engine.now;
+    }
+    return -1;
+  }
+
+  it('adds a train during a run that enters, runs and leaves, and counts it', () => {
+    const timetable = [...one];
+    const engine = new Engine(config(timetable));
+    for (let i = 0; i < 50; i++) engine.step();
+    const entry = spawnEntry(timetable, 'B', engine.now, 30);
+    engine.addTrain(entry);
+    expect(timetable).toContain(entry);
+    runUntilDone(engine);
+    expect(engine.result().finished).toBe(true);
+    expect(engine.result().exits.has(entry.id)).toBe(true);
+  });
+
+  it('puts the new train in front of a later train on its track, which then follows it', () => {
+    const timetable: TimetableEntry[] = [
+      ...one,
+      { id: 2, entry: 'A', enterAt: 200, platform: 'P2', leader: 1, dwell: 30 },
+    ];
+    const engine = new Engine(config(timetable, 1200));
+    for (let i = 0; i < 200; i++) engine.step();
+    const entry = spawnEntry(timetable, 'A', engine.now, 30);
+    expect(entry.leader).toBe(1);
+    engine.addTrain(entry);
+    expect(timetable[1].leader).toBe(entry.id);
+    const spawned = appearedAt(engine, entry.id, 200);
+    expect(spawned).toBeGreaterThan(0);
+    expect(engine.snapshot().trains.some((t) => t.id === 2)).toBe(false);
+    runUntilDone(engine);
+    expect(engine.result().finished).toBe(true);
+    expect(engine.result().collisions).toBe(0);
+  });
+
+  it('waits behind a train that is due but still waiting to enter on its track', () => {
+    const timetable: TimetableEntry[] = [
+      ...one,
+      { id: 2, entry: 'A', enterAt: 1, platform: 'P2', leader: 1, dwell: 30 },
+    ];
+    const engine = new Engine(config(timetable));
+    for (let i = 0; i < 20; i++) engine.step(); // train 2 is due and held back by train 1
+    const entry = spawnEntry(timetable, 'A', engine.now, 30);
+    expect(entry.leader).toBe(2);
+    engine.addTrain(entry);
+    const second = appearedAt(engine, 2, 120);
+    const third = appearedAt(engine, entry.id, 120);
+    expect(second).toBeGreaterThan(0);
+    expect(third).toBeGreaterThan(second);
+  });
+
+  it('adds the entry once when two engines share one timetable, and both run it', () => {
+    const timetable = [...one];
+    const a = new Engine(config(timetable));
+    const b = new Engine(config(timetable));
+    const entry = spawnEntry(timetable, 'B', 0, 30);
+    a.addTrain(entry);
+    b.addTrain(entry);
+    expect(timetable.filter((e) => e.id === entry.id)).toHaveLength(1);
+    a.step();
+    b.step();
+    expect(a.snapshot().trains.map((t) => t.id)).toContain(entry.id);
+    expect(b.snapshot().trains.map((t) => t.id)).toContain(entry.id);
+  });
+
+  it('ignores the same train added twice', () => {
+    const timetable = [...one];
+    const engine = new Engine(config(timetable));
+    const entry = spawnEntry(timetable, 'B', 0, 30);
+    engine.addTrain(entry);
+    engine.step();
+    engine.addTrain(entry);
+    engine.step();
+    expect(engine.snapshot().trains.filter((t) => t.id === entry.id)).toHaveLength(1);
+  });
+
+  it('refuses a train due in the past, and a different train with an ID already in the timetable', () => {
+    const timetable = [...one];
+    const engine = new Engine(config(timetable));
+    for (let i = 0; i < 10; i++) engine.step();
+    expect(() => engine.addTrain({ ...spawnEntry(timetable, 'B', 0, 30) })).toThrow(/past/);
+    expect(() => engine.addTrain({ ...one[0], enterAt: engine.now })).toThrow(/already/);
   });
 });

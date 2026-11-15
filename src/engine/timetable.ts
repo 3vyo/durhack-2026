@@ -40,6 +40,33 @@ const PAIR: Record<'A' | 'B', [PlatformId, PlatformId]> = {
   B: ['P3', 'P4'],
 };
 
+/** True if timetable order puts `a` before `b`: earlier `enterAt` first, lowest ID on a tie. */
+export function entersBefore(a: TimetableEntry, b: TimetableEntry): boolean {
+  return a.enterAt < b.enterAt || (a.enterAt === b.enterAt && a.id < b.id);
+}
+
+/**
+ * The entry for a train added to a running timetable on `track`, due at `now`. It takes the
+ * next free ID. Its leader is the last train on the same track that comes before it in
+ * timetable order, which may be one still waiting to enter. Its default platform is the other
+ * one of the pair from that leader's, so defaults still alternate. This only builds the entry:
+ * Engine.addTrain puts it in the timetable.
+ */
+export function spawnEntry(timetable: TimetableEntry[], track: 'A' | 'B', now: number, dwell: number): TimetableEntry {
+  const id = timetable.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+  const entry: TimetableEntry = { id, entry: track, enterAt: now, platform: PAIR[track][0], leader: null, dwell };
+  let leader: TimetableEntry | null = null;
+  for (const e of timetable) {
+    if (e.entry !== track || !entersBefore(e, entry)) continue;
+    if (leader === null || entersBefore(leader, e)) leader = e;
+  }
+  if (leader !== null) {
+    entry.leader = leader.id;
+    entry.platform = leader.platform === PAIR[track][0] ? PAIR[track][1] : PAIR[track][0];
+  }
+  return entry;
+}
+
 /**
  * Builds a timetable from a seed. Each gap is minHeadway + rng() * minHeadway, so the
  * timetable stays under full capacity. Each train picks A or B at random from the seed.

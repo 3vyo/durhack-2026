@@ -5,7 +5,7 @@ import type { RunResult } from './engine/engine';
 import { healthyReference, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
-import { statusTitle } from './ui/controls';
+import { spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, STATION_FRAME, isStopped, type CameraMode } from './ui/layout';
@@ -67,6 +67,12 @@ const panel = createPanel(app, {
   onRestart: () => {
     session.restart();
     restoredAt = null;
+    panel.setSpawnNote('');
+  },
+  // A spawned train goes to both engines at the same simulated time. It is not in the
+  // healthy reference run, so it adds traffic but is not scored for delay itself.
+  onSpawn: (line) => {
+    panel.setSpawnNote(spawnNote(session.spawn(line), line));
   },
   onView: (side) => {
     view = side;
@@ -110,6 +116,8 @@ if (new URLSearchParams(location.search).has('check')) {
   (window as unknown as { demoCheck: unknown }).demoCheck = {
     trainPoints: () => (view === 'baseline' ? baselineView : oursView).trainScreenPoints(),
     brokenDown: (id: number) => session.ours.snapshot().trains.some((t) => t.id === id && t.brokenDown === true),
+    hasTrain: (id: number) =>
+      [session.baseline, session.ours].every((engine) => engine.snapshot().trains.some((t) => t.id === id)),
   };
 }
 const baselineMap = createMinimap(panel.baselineMinimap);

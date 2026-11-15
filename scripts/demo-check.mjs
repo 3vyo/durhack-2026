@@ -366,6 +366,25 @@ async function main() {
       } else fail('double-clicking a train breaks it down', 'no train on screen');
     }
 
+    // 7b. Spawn a train on line B, on both sides at once.
+    {
+      await evaluate(`(() => {
+        const s = [...document.querySelectorAll('select')].find((x) => x.getAttribute('aria-label') === 'Line for the new train');
+        s.value = 'B';
+        s.dispatchEvent(new Event('change'));
+      })()`);
+      const clicked = await click('Spawn train');
+      let id = null;
+      await waitFor('spawn note', async () => {
+        const m = (await bodyText()).match(/Train (\d+) joins line B/);
+        id = m ? Number(m[1]) : null;
+        return id !== null;
+      }, 3000);
+      const entered = id !== null && (await waitFor('spawned', () => evaluate(`window.demoCheck.hasTrain(${id})`), 10000));
+      if (clicked && entered) pass('Spawn train adds a train on the chosen line', `train ${id} on line B`);
+      else fail('Spawn train adds a train on the chosen line', id === null ? 'no note after the click' : `train ${id} never entered`);
+    }
+
     // 8. Switch the camera.
     const before = await buttonText('Camera');
     await click('Camera');
