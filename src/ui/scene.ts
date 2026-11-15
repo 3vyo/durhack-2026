@@ -28,10 +28,20 @@ import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
 
+/** Where a camera is and what it looks at, in scene units. */
+export interface CameraPose {
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
 export interface SceneView {
   /** Draws one snapshot. The view only reads it. */
   render(s: Snapshot): void;
   setCamera(mode: CameraMode): void;
+  /** Calls back whenever the viewer moves this camera, with where it now is. */
+  onCameraMove(handler: (pose: CameraPose) => void): void;
+  /** Puts the camera where another view's camera is, without calling back. */
+  setPose(pose: CameraPose): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
   /** Calls back with the id of a train that was double-clicked. */
@@ -300,6 +310,22 @@ export function createScene(
     fitted = false;
   });
 
+  let moveHandler: ((pose: CameraPose) => void) | null = null;
+  let applyingPose = false;
+  controls.addEventListener('change', () => {
+    if (applyingPose || !moveHandler) return;
+    moveHandler({ position: camera.position.toArray(), target: controls.target.toArray() });
+  });
+  function setPose(pose: CameraPose): void {
+    applyingPose = true;
+    fitted = false;
+    camera.position.set(...pose.position);
+    controls.target.set(...pose.target);
+    controls.update();
+    applyingPose = false;
+    setFog();
+  }
+
   function setFog(): void {
     // Haze the far edges, whatever the view: fog from just beyond what the camera looks at.
     const distance = camera.position.distanceTo(controls.target);
@@ -482,5 +508,5 @@ export function createScene(
 
   setCamera(DEFAULT_CAMERA);
   resize();
-  return { render, observe, setCamera, onPick, onDoublePick, trainScreenPoints, resize, dispose };
+  return { render, observe, setCamera, onCameraMove: (h) => (moveHandler = h), setPose, onPick, onDoublePick, trainScreenPoints, resize, dispose };
 }
