@@ -1136,3 +1136,36 @@ describe('Engine trackside view', () => {
     expect(two().leaderId).toBe(1);
   });
 });
+
+describe('Engine sensor view', () => {
+  it('shows what each train sensed on its last tick, and the track it set next', () => {
+    const tt: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'A', enterAt: 1, platform: 'P1', leader: 1, dwell: 30 },
+    ];
+    const program: TrainProgram = {
+      name: 'ours',
+      // Train 1 runs on at its entry speed and stops 800 m in. Train 2 runs on at its entry speed.
+      agentFactory: (id) => ({
+        decide: (input) => ({
+          accel: id === 1 && input.self.pos.offset > 800 ? -BRAKE : 0,
+          nextTrack: 'P1',
+          outbox: [],
+          mode: 'blind',
+        }),
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config(tt, 120, program));
+    engine.step();
+    expect(engine.snapshot().trains[0].sightAhead).toBeNull();
+    const two = () => engine.snapshot().trains.find((t) => t.id === 2);
+    while (engine.now < 120 && (two() === undefined || two()!.sightAhead === null)) engine.step();
+    const one = engine.snapshot().trains.find((t) => t.id === 1)!;
+    expect(two()!.nextTrack).toBe('P1');
+    expect(two()!.sightAhead).not.toBeNull();
+    // Front of 2 to the rear of 1, give or take the one tick the reading is behind.
+    expect(Math.abs((two()!.sightAhead as number) - (one.x - 100 - two()!.x))).toBeLessThan(5);
+  });
+});

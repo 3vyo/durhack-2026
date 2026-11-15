@@ -167,11 +167,11 @@ function draw(): void {
   const ours = session.ours.snapshot();
   const links = (snap: typeof base, side: Side) => (showLinks ? snap.trains.flatMap((t) => linksFor(t, side)) : []);
   if (view === 'baseline') {
-    baselineView.render(base, links(base, 'baseline'));
+    baselineView.render(base, links(base, 'baseline'), showLinks);
     baselineMap.render(base);
     oursView.observe(ours);
   } else {
-    oursView.render(ours, links(ours, 'ours'));
+    oursView.render(ours, links(ours, 'ours'), showLinks);
     oursMap.render(ours);
     baselineView.observe(base);
   }

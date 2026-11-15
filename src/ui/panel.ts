@@ -3,6 +3,7 @@ import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
 import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { LINK_KINDS, LINK_STYLE } from './links';
+import { SIGHT_STYLE } from './sight';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
 import './page.css';
@@ -196,6 +197,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     line.style.setProperty('--line', style.css);
     keyItem(line, style.label, style.meaning);
   }
+  const beam = el('span', 'line beam');
+  beam.style.setProperty('--line', SIGHT_STYLE.clear);
+  beam.style.setProperty('--blocked', SIGHT_STYLE.blocked);
+  keyItem(beam, SIGHT_STYLE.label, SIGHT_STYLE.meaning);
   key.addEventListener('click', () => {
     const open = key.classList.toggle('open');
     key.setAttribute('aria-expanded', String(open));

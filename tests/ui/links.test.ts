@@ -22,6 +22,8 @@ function view(over: Omit<Partial<TrainView>, 'trackside'> & { trackside?: Partia
     leaderAge: null,
     permitAge: null,
     lastGrants: { platform: null, junction: false },
+    nextTrack: null,
+    sightAhead: null,
     ...rest,
     trackside: { ...quiet, ...trackside },
   };

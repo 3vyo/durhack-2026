@@ -80,6 +80,13 @@ export interface TrainView {
    */
   lastGrants: { platform: PlatformId | null; junction: boolean };
   trackside: TracksideView;
+  /** The track the train has set to take at the end of this one, or null if none. */
+  nextTrack: TrackId | null;
+  /**
+   * What the train's own sensor reported on its last tick: metres to the nearest train or busy
+   * junction zone on its path, or null if nothing is within SENSOR_RANGE.
+   */
+  sightAhead: number | null;
 }
 
 export interface Snapshot {
@@ -115,6 +122,8 @@ interface Runtime {
   /** When each keeper last replied, and whether it granted. */
   replies: Record<Keeper, { at: number; granted: boolean } | null>;
   lastStatusAt: number | null;
+  /** What the train's own sensor reported on its last tick. */
+  sight: number | null;
   /** When the train last sent a request to each keeper. */
   askedAt: Record<Keeper, number | null>;
 }
@@ -315,14 +324,15 @@ export class Engine {
     // Every agent decides from the state at the start of the tick, then all move together,
     // so the result does not depend on the order trains are listed in.
     for (const rt of this.active) this.observe(rt, trainInbox.get(rt.id) ?? [], now);
-    const outputs = this.active.map((rt, i) =>
-      rt.agent.decide({
+    const outputs = this.active.map((rt, i) => {
+      rt.sight = sightAhead(bodies[i], rt.nextTrack, bodies);
+      return rt.agent.decide({
         now,
         self: rt.state,
         inbox: trainInbox.get(rt.id) ?? [],
-        sightAhead: sightAhead(bodies[i], rt.nextTrack, bodies),
-      }),
-    );
+        sightAhead: rt.sight,
+      });
+    });
     outputs.forEach((o, i) => {
       const rt = this.active[i];
       for (const out of o.outbox) {
@@ -389,6 +399,8 @@ export class Engine {
           askedPlatformKeeper: ageOf(rt.askedAt.platformKeeper, this.now),
           askedJunctionKeeper: ageOf(rt.askedAt.junctionKeeper, this.now),
         },
+        nextTrack: rt.nextTrack,
+        sightAhead: rt.sight,
       })),
     };
   }
@@ -485,6 +497,7 @@ export class Engine {
         lastGrants: { platform: null, junction: false },
         replies: { platformKeeper: null, junctionKeeper: null },
         lastStatusAt: null,
+        sight: null,
         askedAt: { platformKeeper: null, junctionKeeper: null },
       });
     }

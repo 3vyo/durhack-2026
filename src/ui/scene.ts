@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { Snapshot } from '../engine/engine';
+import type { Snapshot, TrainView } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
 import { TRAIN_LENGTH } from '../shared/constants';
 import { isPlatform } from '../shared/map';
@@ -33,10 +33,14 @@ import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
 import { LINK_STYLE, linkReach, type Link, type LinkEnd } from './links';
+import { SIGHT_STYLE, sightBeam } from './sight';
 
 export interface SceneView {
-  /** Draws one snapshot, and a line for each link (see links.ts). The view only reads them. */
-  render(s: Snapshot, links?: Link[]): void;
+  /**
+   * Draws one snapshot, a line for each link (see links.ts) and, if `sight` is true, each
+   * train's sensor beam (see sight.ts). The view only reads them.
+   */
+  render(s: Snapshot, links?: Link[], sight?: boolean): void;
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
@@ -68,6 +72,8 @@ const DEVICE_TOP: Record<DeviceKey, number> = { centre: 3.5, platformKeeper: 1.6
 const PULSE_RATE = 0.9;
 /** How many straight pieces make up one link arc. */
 const ARC_STEPS = 32;
+/** Metres between the points of a sensor beam, so it bends with the track through the points. */
+const SIGHT_STEP = 10;
 
 /** One car of a drawn train, placed on its own so a train bends through the points. */
 interface Car {
@@ -414,16 +420,25 @@ export function createScene(
     mid.y += Math.min(9, 1.5 + a.distanceTo(b) * 0.2);
     // The control point that makes the curve pass through the raised middle.
     const c = mid.multiplyScalar(2).sub(a.clone().add(b).multiplyScalar(0.5));
-    const runs: Array<Array<{ left: number; top: number }>> = [];
-    let run: Array<{ left: number; top: number }> = [];
-    const p = new THREE.Vector3();
+    const points: THREE.Vector3[] = [];
     for (let i = 0; i <= ARC_STEPS; i++) {
       const u = i / ARC_STEPS;
-      p.set(0, 0, 0)
-        .addScaledVector(a, (1 - u) * (1 - u))
-        .addScaledVector(c, 2 * (1 - u) * u)
-        .addScaledVector(b, u * u)
-        .project(camera);
+      points.push(
+        new THREE.Vector3()
+          .addScaledVector(a, (1 - u) * (1 - u))
+          .addScaledVector(c, 2 * (1 - u) * u)
+          .addScaledVector(b, u * u),
+      );
+    }
+    return projectRuns(points, w, h);
+  }
+
+  /** Projects scene points to the canvas, breaking the run at any point the camera cannot see. */
+  function projectRuns(points: THREE.Vector3[], w: number, h: number): Array<Array<{ left: number; top: number }>> {
+    const runs: Array<Array<{ left: number; top: number }>> = [];
+    let run: Array<{ left: number; top: number }> = [];
+    for (const point of points) {
+      const p = point.clone().project(camera);
       if (p.z < -1 || p.z > 1) {
         if (run.length > 1) runs.push(run);
         run = [];
@@ -440,8 +455,9 @@ export function createScene(
    * it the way the message goes. A link fades as its message gets older. A note sits above its
    * train.
    */
-  function drawLinks(links: Link[], anchors: Map<number, Anchor>): void {
-    if (!linkPen) return;
+  /** Clears the overlay canvas, sized to the container, and returns its pen and size in CSS pixels. */
+  function clearOverlay(): { g: CanvasRenderingContext2D; w: number; h: number } | null {
+    if (!linkPen) return null;
     const w = container.clientWidth;
     const h = container.clientHeight;
     const ratio = Math.min(window.devicePixelRatio, 2);
@@ -451,9 +467,76 @@ export function createScene(
       linkCanvas.width = pw;
       linkCanvas.height = ph;
     }
+    linkPen.setTransform(ratio, 0, 0, ratio, 0, 0);
+    linkPen.clearRect(0, 0, w, h);
+    return { g: linkPen, w, h };
+  }
+
+  /**
+   * A beam along the track ahead of each train for its own front sensor, just above the rails.
+   * Pale blue while nothing is in the way. Red, with a bar across its end, when the sensor
+   * sees a train or a busy junction zone there.
+   */
+  function drawSight(views: TrainView[]): void {
+    if (!linkPen) return;
     const g = linkPen;
-    g.setTransform(ratio, 0, 0, ratio, 0, 0);
-    g.clearRect(0, 0, w, h);
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const y = world.railTop() + 0.3;
+    for (const v of views) {
+      const reach = linkReach(v.x, frame);
+      if (reach <= 0 || !trains.has(v.id)) continue;
+      const beam = sightBeam(v, lastPlatform.get(v.id) ?? null);
+      if (beam.toX - beam.fromX < 1) continue;
+      const steps = Math.max(2, Math.ceil((beam.toX - beam.fromX) / SIGHT_STEP));
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i <= steps; i++) {
+        const x = beam.fromX + ((beam.toX - beam.fromX) * i) / steps;
+        points.push(new THREE.Vector3(toScreenX(x, frame), y, pathAt(x, beam.route).z));
+      }
+      const runs = projectRuns(points, w, h);
+      if (runs.length === 0) continue;
+      const css = beam.blocked ? SIGHT_STYLE.blocked : SIGHT_STYLE.clear;
+      g.strokeStyle = css;
+      g.lineCap = 'round';
+      g.setLineDash([]);
+      for (const [width, alpha] of [
+        [10, 0.16],
+        [2.5, 0.75],
+      ] as const) {
+        g.globalAlpha = alpha * reach;
+        g.lineWidth = width;
+        g.beginPath();
+        for (const run of runs) {
+          g.moveTo(run[0].left, run[0].top);
+          for (const q of run.slice(1)) g.lineTo(q.left, q.top);
+        }
+        g.stroke();
+      }
+      // A bar across the end of the beam, where the obstacle is.
+      const last = runs[runs.length - 1];
+      if (beam.blocked && last.length > 1) {
+        const p = last[last.length - 1];
+        const q = last[last.length - 2];
+        const len = Math.hypot(p.left - q.left, p.top - q.top) || 1;
+        const nx = (-(p.top - q.top) / len) * 9;
+        const ny = ((p.left - q.left) / len) * 9;
+        g.globalAlpha = reach;
+        g.lineWidth = 3;
+        g.beginPath();
+        g.moveTo(p.left - nx, p.top - ny);
+        g.lineTo(p.left + nx, p.top + ny);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  function drawLinks(links: Link[], anchors: Map<number, Anchor>): void {
+    if (!linkPen) return;
+    const g = linkPen;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
     const seconds = performance.now() / 1000;
     const notes: Array<{ text: string; left: number; top: number }> = [];
 
@@ -552,7 +635,7 @@ export function createScene(
     return middle;
   }
 
-  function render(s: Snapshot, links: Link[] = []): void {
+  function render(s: Snapshot, links: Link[] = [], sight = false): void {
     observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
@@ -594,6 +677,8 @@ export function createScene(
       const t = trains.get(v.id);
       if (t) anchors.set(v.id, { at: t.marker.position, reach: linkReach(v.x, frame) });
     }
+    clearOverlay();
+    if (sight) drawSight(s.trains);
     drawLinks(links, anchors);
     placeLabels();
   }
