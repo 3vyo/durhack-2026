@@ -364,6 +364,49 @@ select option {
   text-overflow: ellipsis;
 }
 
+/* The Show menu: a button in the dock that opens a list of boxes above it. */
+.dock .show {
+  position: relative;
+}
+.dock .show summary {
+  list-style: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.dock .show summary::-webkit-details-marker {
+  display: none;
+}
+.dock .show summary::after {
+  content: ' \25B4';
+  color: var(--ink-2);
+}
+.dock .show[open] summary {
+  background: rgba(255, 255, 255, 0.14);
+}
+.dock .show-list {
+  bottom: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  min-width: 15em;
+  /* Solid, so the key behind it does not show through its words. */
+  background: rgb(16, 22, 30);
+}
+.dock .show-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock .show-list .all {
+  margin-top: 4px;
+}
+
 /* A failure switch reads as a signal lamp: lit green when on, red when switched off. */
 .lamp {
   display: inline-flex;

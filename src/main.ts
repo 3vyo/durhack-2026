@@ -9,6 +9,7 @@ import { LAYOUT, applyLayout } from './shared/map';
 import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { linksFor, wiredLinks } from './ui/links';
+import { kindShown, parseShow, toggleAll, type Show } from './ui/show';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
@@ -52,8 +53,24 @@ let average: ScenarioSummary | null = null;
 let cameraMode: CameraMode = DEFAULT_CAMERA;
 /** The side on show. The other keeps running; only the one on show is drawn. */
 let view: Side = 'baseline';
-/** True while the scene draws a line from each train to what it is listening to. */
-let showLinks = true;
+/** Which explanatory drawings are on show. The choice is kept in this browser between visits. */
+const SHOW_STORE = 'durhack-show';
+let show: Show = (() => {
+  try {
+    return parseShow(localStorage.getItem(SHOW_STORE));
+  } catch {
+    return parseShow(null);
+  }
+})();
+function setShow(next: Show): void {
+  show = next;
+  panel.setShow(show);
+  try {
+    localStorage.setItem(SHOW_STORE, JSON.stringify(show));
+  } catch {
+    // A private window may refuse storage. The choice then lasts until the page reloads.
+  }
+}
 
 const cameraLabel = (): string => (cameraMode === 'angled' ? 'Camera: angled' : 'Camera: overhead');
 
@@ -100,12 +117,10 @@ const panel = createPanel(app, {
     oursView.setCamera(cameraMode);
     panel.setCameraLabel(cameraLabel());
   },
-  onLinks: () => {
-    showLinks = !showLinks;
-    panel.setLinksLabel(showLinks);
-  },
+  onShow: (key, on) => setShow({ ...show, [key]: on }),
+  onShowAll: () => setShow(toggleAll(show)),
 });
-panel.setLinksLabel(showLinks);
+panel.setShow(show);
 panel.setCameraLabel(cameraLabel());
 
 // ?quality=low turns off shadows and trees, for a weak laptop.
@@ -166,13 +181,14 @@ function draw(): void {
   const base = session.baseline.snapshot();
   const ours = session.ours.snapshot();
   const links = (snap: typeof base, side: Side) =>
-    showLinks ? [...wiredLinks(snap.switches, side), ...snap.trains.flatMap((t) => linksFor(t, side))] : [];
+    [...wiredLinks(snap.switches, side), ...snap.trains.flatMap((t) => linksFor(t, side))].filter((l) => kindShown(l.kind, show));
+  const drawn = { sight: show.cones, tint: show.tint };
   if (view === 'baseline') {
-    baselineView.render(base, links(base, 'baseline'), showLinks);
+    baselineView.render(base, links(base, 'baseline'), drawn);
     baselineMap.render(base);
     oursView.observe(ours);
   } else {
-    oursView.render(ours, links(ours, 'ours'), showLinks);
+    oursView.render(ours, links(ours, 'ours'), drawn);
     oursMap.render(ours);
     baselineView.observe(base);
   }

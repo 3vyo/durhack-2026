@@ -39,8 +39,11 @@ export interface World {
   railTop(): number;
   setDevices(sw: Switches): void;
   setJunctionBusy(busy: boolean): void;
-  /** Shows each platform sensor's reading on its track and its box. `on` is the sensors' switch. */
-  setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean): void;
+  /**
+   * Shows each platform sensor's reading on its track and its box's lamp. `on` is the sensors'
+   * switch. With `visible` false the tracks are untinted and the lamps only show the switch.
+   */
+  setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean, visible: boolean): void;
 }
 
 /** What a platform sensor shows: empty, occupied, or switched off (it then reads occupied). */
@@ -329,16 +332,19 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     zoneMaterial.opacity = busy ? 0.32 : 0.12;
   }
 
-  function setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean): void {
+  function setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean, visible: boolean): void {
+    for (const strip of sensorStrips.values()) strip.visible = visible;
     for (const p of platforms) {
       const reading = sensorReading(occupied[p], on);
       sensorStrips.get(p)!.color.setHex(SENSOR_TINT[reading]);
       sensorStrips.get(p)!.opacity = reading === 'off' ? 0.2 : 0.35;
       const lamp = sensorLamps.get(p);
       if (!lamp) continue;
-      lamp.color.setHex(reading === 'off' ? 0x221818 : SENSOR_TINT[reading]);
-      lamp.emissive.setHex(reading === 'off' ? 0x000000 : SENSOR_TINT[reading]);
-      lamp.emissiveIntensity = reading === 'off' ? 0 : 1.2;
+      // Hidden readings leave the lamp like any other device's: lit while switched on.
+      const colour = reading === 'off' ? null : visible ? SENSOR_TINT[reading] : 0x7be07b;
+      lamp.color.setHex(colour ?? 0x221818);
+      lamp.emissive.setHex(colour === null ? 0x000000 : visible ? colour : 0x3bd13b);
+      lamp.emissiveIntensity = colour === null ? 0 : 1.2;
     }
   }
 

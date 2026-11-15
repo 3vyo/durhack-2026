@@ -38,10 +38,11 @@ import { SIGHT_HALF_ANGLE, SIGHT_STYLE, sightCone } from './sight';
 
 export interface SceneView {
   /**
-   * Draws one snapshot, a line for each link (see links.ts) and, if `sight` is true, each
-   * train's sensor cone (see sight.ts). The view only reads them.
+   * Draws one snapshot and a line for each link (see links.ts). `drawn.sight` adds each train's
+   * sensor cone (see sight.ts), and `drawn.tint` colours each platform track by its sensor's
+   * reading. The view only reads them.
    */
-  render(s: Snapshot, links?: Link[], sight?: boolean): void;
+  render(s: Snapshot, links?: Link[], drawn?: { sight: boolean; tint: boolean }): void;
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
@@ -677,11 +678,12 @@ export function createScene(
     return middle;
   }
 
-  function render(s: Snapshot, links: Link[] = [], sight = false): void {
+  function render(s: Snapshot, links: Link[] = [], drawn = { sight: false, tint: false }): void {
+    const sight = drawn.sight;
     observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
-    world.setSensors(s.sensors.platformOccupied, s.switches.sensors);
+    world.setSensors(s.sensors.platformOccupied, s.switches.sensors, drawn.tint);
     const views = new Map(s.trains.map((v) => [v.id, v]));
 
     const seen = new Set<number>();
