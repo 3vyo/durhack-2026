@@ -229,7 +229,7 @@ The engine calls `decide` on every train each tick, applies the returned acceler
 
 A message sent on tick t is in the inbox on tick t + 1. This holds for trains, local actors and the control centre.
 
-A train enters at the start of A or B at `SIGHT_SPEED`, the one speed that can always stop within what it sees. It waits outside the map until the first `SENSOR_RANGE + TRAIN_LENGTH` metres of its entry track are clear, and the wait counts as delay. Trains on one entry track enter in timetable order.
+A train enters at the start of its entry line at `SIGHT_SPEED`, the one speed that can always stop within what it sees. It waits outside the map until the first `SENSOR_RANGE + TRAIN_LENGTH` metres of its entry track are clear, and the wait counts as delay. Trains on one entry track enter in timetable order.
 
 ## Train rules
 
@@ -247,7 +247,7 @@ It needs nothing from the train-to-train radio, the platform keeper, the junctio
 When its permit goes stale, the train runs on the rules in the rest of this section. It starts from where the centre left it.
 
 - On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the junction keeper.
-- On A or B, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the platform keeper for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
+- On an entry line, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the platform keeper for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
 - Anywhere else it stops where its own rules say and asks for what it needs.
 
 When permits return, the train obeys them again on the next tick. It forgets its request timers and drops a junction grant, because the centre now orders the junction. The centre takes over from where the trains are.
@@ -261,7 +261,7 @@ The centre sees each train's set route as the signalling shows it. The engine pa
 
 Each train broadcasts a `position` message every second over long range.
 
-A train knows who its leader is. On A and B the timetable names it. On EXIT the junction keeper names it in the `follow` field of the grant.
+A train knows who its leader is. On an entry line the timetable names it. On EXIT the junction keeper names it in the `follow` field of the grant.
 
 "No leader" and "leader unknown" are different.
 
@@ -307,7 +307,7 @@ The display labels each train with a mode.
 
 ### Entering the station
 
-1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
+1. A train may not pass the end of its entry line without a platform. It treats the end of its entry track as a stop point until it has one.
 2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for its default platform, unless it kept a platform from its last permit.
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
