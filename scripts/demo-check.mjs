@@ -28,8 +28,7 @@ const HEIGHT = 950;
 
 /** Extra page text the screen must show, added as the screen grows. */
 const REQUIRED_TEXT = [
-  'How each train is deciding',
-  'Delay saved per train',
+  'Delay saved',
   'Obeys the control centre',
   'Moved by staff over the radio, at caution speed',
   'Hears the train ahead',
@@ -215,7 +214,8 @@ async function main() {
     };
     const bodyText = () => evaluate('document.body.innerText');
     const simTime = async () => {
-      const m = (await bodyText()).match(/Time (\d+):(\d\d)/);
+      const clock = await evaluate(`document.querySelector('.clock')?.textContent ?? ''`);
+      const m = clock.match(/(\d+):(\d\d)/);
       return m ? Number(m[1]) * 60 + Number(m[2]) : null;
     };
     /** Clicks the first button whose text starts with `prefix`. */
@@ -226,9 +226,17 @@ async function main() {
         b.click();
         return true;
       })()`);
+    // A button's label: its aria-label if it has one (the failure lamps say "Control centre: ON"
+    // there), else its text.
     const buttonText = (prefix) =>
       evaluate(`(() => {
         const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim().startsWith(${JSON.stringify(prefix)}));
+        return b ? (b.getAttribute('aria-label') || b.textContent.trim()) : null;
+      })()`);
+    /** Which side's view is on show, from the view switch. */
+    const shownView = () =>
+      evaluate(`(() => {
+        const b = [...document.querySelectorAll('button[aria-pressed="true"]')].find((x) => /Today's system|Our fallback/.test(x.textContent));
         return b ? b.textContent.trim() : null;
       })()`);
     const waitFor = async (what, test, ms) => {
@@ -262,7 +270,10 @@ async function main() {
     const canvases = await evaluate('document.querySelectorAll("canvas").length');
     if (canvases >= 4) pass('two scenes and two minimaps are drawn', `${canvases} canvases`);
     else fail('two scenes and two minimaps are drawn', `${canvases} canvases`);
+    // The key shows its meanings once opened. Open it to check them, then close it again.
+    await evaluate(`document.querySelector('.key')?.click()`);
     const text = await bodyText();
+    await evaluate(`document.querySelector('.key')?.click()`);
     for (const t of ['Centre outage', 'Trains through', ...REQUIRED_TEXT]) {
       if (text.toLowerCase().includes(t.toLowerCase())) pass(`page shows "${t}"`);
       else fail(`page shows "${t}"`);
@@ -286,6 +297,15 @@ async function main() {
     const tc = (await simTime()) ?? 0;
     await waitForSimTime(tc + (QUICK ? 60 : 120), 60000);
     await screenshot('during-outage');
+    // Switch to our side, and back.
+    await click('Our fallback');
+    const toOurs = await waitFor('view', async () => (await shownView()) === 'Our fallback', 3000);
+    await sleep(500);
+    await screenshot('during-outage-ours');
+    await click("Today's system");
+    const toBase = await waitFor('view', async () => (await shownView()) === "Today's system", 3000);
+    if (toOurs && toBase) pass('the view switch shows each side');
+    else fail('the view switch shows each side', String(await shownView()));
     // A close-up of the middle of our scene, three times bigger, to see the trains themselves.
     const stage = await evaluate(`(() => {
       const canvases = [...document.querySelectorAll('canvas')].filter((c) => c.getBoundingClientRect().height > 100);
@@ -332,7 +352,7 @@ async function main() {
       const s = [...document.querySelectorAll('select')].find((x) => ![...x.options].some((o) => o.textContent.endsWith('x speed')));
       if (!s || s.options.length === 0) return null;
       s.value = s.options[0].value;
-      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '▸');
+      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Break down');
       b.click();
       return s.value;
     })()`);
@@ -428,7 +448,7 @@ async function clickUntilCard(evaluate, send) {
   const until = Date.now() + 3000;
   while (Date.now() < until) {
     const text = await evaluate(`(() => {
-      const card = [...document.querySelectorAll('div')].find((d) => d.style.display === 'block' && d.textContent.startsWith('mode:'));
+      const card = [...document.querySelectorAll('div.card')].find((d) => !d.hidden && d.offsetParent !== null && d.textContent.startsWith('mode:'));
       return card ? card.innerText : null;
     })()`);
     if (text) return `train ${target.id}: ${text}`;

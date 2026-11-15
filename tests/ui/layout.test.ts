@@ -3,6 +3,9 @@ import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
   ANGLED_FOCUS,
+  POINTS_LENGTH,
+  pathAt,
+  routeOf,
   CAMERA_FOV,
   DEFAULT_CAMERA,
   DEVICE_SITES,
@@ -235,5 +238,40 @@ describe('junctionBusy', () => {
     expect(junctionBusy(at('P2', 6290))).toBe(false);
     expect(junctionBusy(at('EXIT', 6750))).toBe(false);
     expect(junctionBusy(at('A', 5990))).toBe(false);
+  });
+});
+
+describe('pathAt and routeOf', () => {
+  const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
+
+  it('runs straight along an entry line up to its end', () => {
+    expect(pathAt(5990, routeOf('A', null))).toEqual({ z: lane('A'), slope: 0 });
+  });
+
+  it('bends from the entry lane into the platform over the points, then runs straight', () => {
+    const route = routeOf('P1', null);
+    expect(pathAt(6000, route).z).toBeCloseTo(lane('A'), 9);
+    expect(pathAt(6000 + POINTS_LENGTH / 2, route).z).toBeCloseTo((lane('A') + lane('P1')) / 2, 9);
+    expect(pathAt(6000 + POINTS_LENGTH / 2, route).slope).toBeCloseTo((lane('P1') - lane('A')) / POINTS_LENGTH, 9);
+    expect(pathAt(6300, route)).toEqual({ z: lane('P1'), slope: 0 });
+  });
+
+  it('bends from the platform it left into EXIT, then runs straight', () => {
+    const route = routeOf('EXIT', 'P4');
+    expect(route.entry).toBe('B');
+    expect(pathAt(6400, route).z).toBeCloseTo(lane('P4'), 9);
+    expect(pathAt(6400 + POINTS_LENGTH, route)).toEqual({ z: lane('EXIT'), slope: 0 });
+  });
+
+  it('keeps the rear cars on the entry line while the front is already in the platform', () => {
+    const route = routeOf('P3', null);
+    expect(pathAt(5950, route)).toEqual({ z: lane('B'), slope: 0 });
+  });
+
+  it('keeps a stopped train straight: the bends are clear of the platform stop', () => {
+    for (const p of ['P1', 'P2', 'P3', 'P4'] as const) {
+      expect(pathAt(6200, routeOf(p, null)).slope).toBe(0);
+      expect(pathAt(6300, routeOf(p, null)).slope).toBe(0);
+    }
   });
 });

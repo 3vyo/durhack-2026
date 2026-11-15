@@ -4,7 +4,7 @@ For whoever works on the screen next: what is there, how it fits together, and h
 
 ## What the demo is
 
-Two railways side by side on the same seeded timetable: today's system on the left, our fallback on the right. The presenter cuts the control centre live. Today's trains stop, and after 20 minutes staff start moving them by radio, one at a time. Ours keep going on their own rules. Three big numbers at the top show each side's delay per train and the delay saved.
+Two railways on the same seeded timetable, today's system and our fallback. One fills the window at a time; the switch at the top (or the V key) flips between them. The presenter cuts the control centre live. Today's trains stop, and after 20 minutes staff start moving them by radio, one at a time. Ours keep going on their own rules. Three big numbers at the top show each side's delay per train and the delay saved.
 
 ## Run it
 
@@ -38,7 +38,7 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 |---|---|
 | `palette.ts` | The five mode colours, checked together with the data-viz palette checker, and a shape per mode. The one source of mode colours |
 | `markers.ts` | The marker over each train, stopped dimming, the legend entries, and drawing the shapes |
-| `layout.ts` | Real-scale units (0.08 per metre), the frame (x 5000 to 6800), lanes, the two cameras (a close angled view of `ANGLED_FOCUS`, x 5500 to 6500, opens first; overhead fits the whole frame), label anchors, device sites and looks, `junctionBusy` |
+| `layout.ts` | The path through the points (`pathAt`, `routeOf`), so each car follows the rails. Real-scale units (0.08 per metre), the frame (x 5000 to 6800), lanes, the two cameras (a close angled view of `ANGLED_FOCUS`, x 5500 to 6500, opens first; overhead fits the whole frame), label anchors, device sites and looks, `junctionBusy` |
 | `assets.ts`, `kit.ts`, `consist.ts`, `rails.ts` | Kenney model paths, loading with a fallback, laying cars end to end, laying track pieces |
 | `environment.ts` | The sky, light and fog values, and `?quality=low` |
 | `hud.ts` | The scoreboard rows and the three big tiles |
@@ -46,7 +46,8 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 | `overlay.ts` | The lines on a clicked train's card |
 | `scene.ts` (three) | One scene per side: trains from the models (boxes if they fail), markers, STOPPED tags, HTML labels, the camera |
 | `world.ts` (three) | The fixed scenery: track, platforms, the four device buildings, the junction zone, trees |
-| `panel.ts`, `minimap.ts` | The page around the scenes, and the whole-line strip under each |
+| `panel.ts`, `page.css` | The page: the full-window view, and the glass panels over it (title and clock, view switch, delay board, scoreboard, key, minimap, control dock). Keys: V switches view, Space pauses, C cuts or restores the centre |
+| `minimap.ts` | The whole-line strip at the bottom |
 
 ## What the screen reads from the engine
 
