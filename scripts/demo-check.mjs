@@ -403,6 +403,26 @@ async function main() {
     await sleep(500);
     await screenshot('camera-switched');
 
+    // 8b. The Show menu opens with a ticked box for each drawing, and its "All" button turns
+    // them all off and back on.
+    const ticked = () =>
+      evaluate(`[...document.querySelectorAll('.show-list input[type=checkbox]')].map((b) => b.checked)`);
+    await evaluate(`document.querySelector('.show summary')?.click()`);
+    await sleep(300);
+    const showOpened = await evaluate(`document.querySelector('.show')?.open === true`);
+    const showBoxes = await ticked();
+    await screenshot('show-menu');
+    await click('All on or off');
+    const showOff = await ticked();
+    await click('All on or off');
+    const showOn = await ticked();
+    await evaluate(`document.querySelector('.show summary')?.click()`);
+    if (showOpened && showBoxes.length === 7 && showBoxes.every(Boolean) && showOff.every((b) => !b) && showOn.every(Boolean)) {
+      pass('the Show menu turns each drawing on and off', `${showBoxes.length} boxes`);
+    } else {
+      fail('the Show menu turns each drawing on and off', JSON.stringify({ showOpened, showBoxes, showOff, showOn }));
+    }
+
     // 9. Pause stops time, and a click on a train opens its card.
     await click('Pause');
     await sleep(400);

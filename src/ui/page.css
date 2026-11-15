@@ -301,6 +301,30 @@ select option {
   background: rgba(217, 164, 65, 0.35);
   border: 1px dashed #d9a441;
 }
+/* A platform track's sensor tint: green for empty, red for occupied. */
+.key .tint {
+  width: 18px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(63, 191, 106, 0.7) 50%, rgba(255, 90, 90, 0.7) 50%);
+}
+/* A line in the key, in the colour of one kind of link. */
+.key .line {
+  width: 18px;
+  height: 0;
+  border-top: 3px solid var(--line);
+  border-radius: 2px;
+}
+.key .line.dashed {
+  border-top-style: dashed;
+}
+/* The sensor cone: opening from the train's nose, fading towards its rim. */
+.key .cone {
+  width: 18px;
+  height: 14px;
+  background: linear-gradient(90deg, var(--line), transparent);
+  clip-path: polygon(0 50%, 100% 0, 100% 100%);
+}
 
 .minimap {
   padding: 4px 6px;
@@ -338,6 +362,49 @@ select option {
 .dock select.layout {
   max-width: 10.5em;
   text-overflow: ellipsis;
+}
+
+/* The Show menu: a button in the dock that opens a list of boxes above it. */
+.dock .show {
+  position: relative;
+}
+.dock .show summary {
+  list-style: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.dock .show summary::-webkit-details-marker {
+  display: none;
+}
+.dock .show summary::after {
+  content: ' \25B4';
+  color: var(--ink-2);
+}
+.dock .show[open] summary {
+  background: rgba(255, 255, 255, 0.14);
+}
+.dock .show-list {
+  bottom: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  min-width: 15em;
+  /* Solid, so the key behind it does not show through its words. */
+  background: rgb(16, 22, 30);
+}
+.dock .show-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock .show-list .all {
+  margin-top: 4px;
 }
 
 /* A failure switch reads as a signal lamp: lit green when on, red when switched off. */
