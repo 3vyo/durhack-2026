@@ -5,6 +5,8 @@
 //   npm run demo-check                  starts its own dev server, runs every check
 //   npm run demo-check -- --quick       shorter waits, about half the time
 //   npm run demo-check -- --built       builds the app and checks the built copy instead
+//   npm run demo-check -- --gpu         uses this machine's graphics card, for a real frame rate
+//   npm run demo-check -- --quality=low checks the page as ?quality=low (no shadows or trees)
 //   DEMO_URL=http://localhost:5173/?quality=low npm run demo-check    checks a page you are already serving
 //   CHROME_PATH=/path/to/chrome npm run demo-check                   if Chrome is somewhere unusual
 //
@@ -18,6 +20,8 @@ import { join } from 'node:path';
 const args = new Set(process.argv.slice(2));
 const QUICK = args.has('--quick');
 const BUILT = args.has('--built');
+const GPU = args.has('--gpu');
+const LOW = args.has('--quality=low');
 const OUT = 'demo-check-out';
 const WIDTH = 1500;
 const HEIGHT = 950;
@@ -99,8 +103,8 @@ function launchChrome() {
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows',
-      '--enable-unsafe-swiftshader',
-      '--use-angle=swiftshader',
+      // Software rendering works everywhere, but its frame rate says nothing about a laptop.
+      ...(GPU ? ['--enable-gpu', '--ignore-gpu-blocklist'] : ['--enable-unsafe-swiftshader', '--use-angle=swiftshader']),
       'about:blank',
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
@@ -245,9 +249,10 @@ async function main() {
       })()`);
     const waitForSimTime = async (seconds, ms) => waitFor('time', async () => ((await simTime()) ?? 0) >= seconds, ms);
 
-    console.log(`demo-check: ${server.url}${QUICK ? ' (quick)' : ''}${BUILT ? ' (built)' : ''}`);
+    console.log(`demo-check: ${server.url}${QUICK ? ' (quick)' : ''}${BUILT ? ' (built)' : ''}${GPU ? ' (gpu)' : ''}${LOW ? ' (quality=low)' : ''}`);
     const pageUrl = new URL(server.url);
     pageUrl.searchParams.set('check', '1');
+    if (LOW) pageUrl.searchParams.set('quality', 'low');
     await send('Page.navigate', { url: pageUrl.href });
 
     // 1. The page loads and shows both systems.
@@ -377,7 +382,12 @@ async function main() {
       };
       requestAnimationFrame(tick);
     })`);
-    pass('frame rate measured', `${fps} fps in headless software rendering; measure the real laptop too`);
+    const renderer = await evaluate(`(() => {
+      const gl = document.createElement('canvas').getContext('webgl2');
+      const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      return info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'unknown';
+    })()`);
+    pass('frame rate measured', `${fps} fps at 16x speed on ${renderer}${GPU ? '' : '; software rendering, so measure the real laptop with --gpu'}`);
 
     // 12. Nothing went wrong in the page.
     if (pageErrors.length === 0) pass('no page errors');
