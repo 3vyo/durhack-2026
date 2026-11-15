@@ -1,7 +1,7 @@
 import type { Switches } from '../engine/switches';
 import type { TrainId } from '../shared/types';
 import { radioLabel, SWITCH_KEYS, switchLabel, type SwitchKey } from './controls';
-import type { Row } from './hud';
+import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
 import { TEXT } from './palette';
 
@@ -24,6 +24,8 @@ export interface Panel {
   oursMinimap: HTMLCanvasElement;
   setBanner(title: string, status: string): void;
   setRows(rows: Row[]): void;
+  /** The three big numbers above the scenes. */
+  setTiles(tiles: Tile[]): void;
   /** Shows the decision card for a clicked train over a scene, or hides it with null. */
   setCard(side: 'baseline' | 'ours', lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
@@ -102,9 +104,25 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const legend = el(
     'div',
     'font-size:12px;color:#7d8da1;margin-top:2px;',
-    'Beside the track, left to right: platform keeper, control centre (back), platform sensors, junction keeper. A green lamp means on; dull red with no lamp means off. Click a train to see how it is deciding.',
+    'A device with a green lamp is on; dull red with no lamp is off. Click a train to see how it is deciding.',
   );
   banner.append(title, status, legend);
+
+  // The three big numbers, readable from across a room. Built once; only their text changes.
+  const tilesRow = el('div', 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:10px 16px 0 16px;');
+  const ACCENT: Record<Tile['tone'], string> = { baseline: '#d55181', ours: '#3987e5', neutral: '#9fb0c3' };
+  const tileParts = [0, 1, 2].map(() => {
+    const box = el('div', 'padding:8px 14px;border:1px solid #26303c;border-left-width:4px;border-radius:8px;background:#121821;min-width:0;');
+    const label = el('div', `font-size:14px;color:${TEXT.secondary};`);
+    const value = el('div', `font-size:52px;font-weight:700;line-height:1.05;color:${TEXT.primary};font-variant-numeric:tabular-nums;`);
+    const unit = el('span', `font-size:20px;font-weight:500;color:${TEXT.secondary};margin-left:6px;`, 'min');
+    const number = el('span', '');
+    value.append(number, unit);
+    const sub = el('div', `font-size:13px;color:${TEXT.secondary};`);
+    box.append(label, value, sub);
+    tilesRow.append(box);
+    return { box, label, number, sub };
+  });
 
   const columns = el('div', 'display:flex;gap:12px;padding:12px 16px;flex:1;min-height:0;');
   function column(heading: string): { wrap: HTMLElement; stage: HTMLElement; minimap: HTMLCanvasElement } {
@@ -187,7 +205,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
 
   let shownTrains = '';
 
-  root.append(banner, columns, scoreboard, controls);
+  root.append(banner, tilesRow, columns, scoreboard, controls);
 
   return {
     baselineStage: left.stage,
@@ -197,6 +215,16 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     setBanner(t, s) {
       title.textContent = t;
       status.textContent = s;
+    },
+    setTiles(tiles) {
+      tiles.forEach((t, i) => {
+        const part = tileParts[i];
+        if (!part) return;
+        part.label.textContent = t.label;
+        part.number.textContent = t.value;
+        part.sub.textContent = t.sub;
+        part.box.style.borderLeftColor = ACCENT[t.tone];
+      });
     },
     setRows(rows) {
       table.replaceChildren();

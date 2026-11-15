@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
+  CAMERA_FOV,
+  DEFAULT_CAMERA,
   DEVICE_SITES,
   LANE_SPACING,
   deviceLook,
   junctionBusy,
+  labelAnchors,
+  ndcToCss,
   offDeviceVisible,
   STATION_FRAME,
   UNITS_PER_METRE,
@@ -82,17 +86,58 @@ describe('markersFor', () => {
 });
 
 describe('cameraPreset', () => {
+  const tanHalf = Math.tan((CAMERA_FOV / 2) * (Math.PI / 180));
+
   it('looks straight down from above in overhead mode', () => {
-    const { position, lookAt } = cameraPreset('overhead', frame);
+    const { position, lookAt } = cameraPreset('overhead', STATION_FRAME);
     expect(position[0]).toBe(lookAt[0]);
     expect(position[2]).toBe(lookAt[2]);
     expect(position[1]).toBeGreaterThan(0);
   });
 
-  it('sits off to one side of its target in angled mode', () => {
-    const { position, lookAt } = cameraPreset('angled', frame);
-    expect(position[2]).not.toBe(lookAt[2]);
+  it('sits in front of and above its target in angled mode', () => {
+    const { position, lookAt } = cameraPreset('angled', STATION_FRAME);
+    expect(position[2]).toBeGreaterThan(lookAt[2]);
     expect(position[1]).toBeGreaterThan(0);
+  });
+
+  it('fits the whole frame width on a wide canvas, with little to spare', () => {
+    for (const aspect of [1.4, 1.6, 2]) {
+      const { position, lookAt } = cameraPreset('overhead', STATION_FRAME, aspect);
+      const visibleWidth = 2 * (position[1] - lookAt[1]) * tanHalf * aspect;
+      expect(visibleWidth).toBeGreaterThanOrEqual(STATION_FRAME.width);
+      expect(visibleWidth).toBeLessThan(STATION_FRAME.width * 1.1);
+    }
+  });
+
+  it('backs off on a tall canvas so the depth still fits', () => {
+    const tall = cameraPreset('overhead', STATION_FRAME, 0.5).position[1];
+    const wide = cameraPreset('overhead', STATION_FRAME, 1.6).position[1];
+    expect(tall).toBeGreaterThan(wide);
+  });
+
+  it('opens in overhead', () => {
+    expect(DEFAULT_CAMERA).toBe('overhead');
+  });
+});
+
+describe('ndcToCss', () => {
+  it('maps the centre and the corners', () => {
+    expect(ndcToCss({ x: 0, y: 0 }, 800, 400)).toEqual({ left: 400, top: 200 });
+    expect(ndcToCss({ x: -1, y: 1 }, 800, 400)).toEqual({ left: 0, top: 0 });
+    expect(ndcToCss({ x: 1, y: -1 }, 800, 400)).toEqual({ left: 800, top: 400 });
+  });
+});
+
+describe('labelAnchors', () => {
+  it('labels the seven tracks and the four devices, all inside the frame', () => {
+    const anchors = labelAnchors(STATION_FRAME);
+    expect(anchors.filter((a) => a.kind === 'track').map((a) => a.text)).toEqual(['A', 'B', 'P1', 'P2', 'P3', 'P4', 'EXIT']);
+    expect(anchors.filter((a) => a.kind === 'device')).toHaveLength(4);
+    for (const a of anchors) {
+      expect(a.x).toBeGreaterThanOrEqual(STATION_FRAME.xMin);
+      expect(a.x).toBeLessThanOrEqual(STATION_FRAME.xMax);
+    }
   });
 });
 

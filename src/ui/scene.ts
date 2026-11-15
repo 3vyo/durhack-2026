@@ -3,8 +3,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
 import {
+  DEFAULT_CAMERA,
   LANE_SPACING,
   cameraPreset,
+  labelAnchors,
+  ndcToCss,
+  toScreenX,
   isStopped,
   junctionBusy,
   markersFor,
@@ -254,8 +258,10 @@ export function createScene(
     disposeAll([...t.bodyMaterials, t.marker.material as THREE.SpriteMaterial, t.tag.material as THREE.SpriteMaterial]);
   }
 
+  let cameraMode: CameraMode = DEFAULT_CAMERA;
   function setCamera(mode: CameraMode): void {
-    const { position, lookAt } = cameraPreset(mode, frame);
+    cameraMode = mode;
+    const { position, lookAt } = cameraPreset(mode, frame, camera.aspect);
     camera.position.set(...position);
     // Looking straight down makes "up" ambiguous, so point the top of the picture at -z.
     camera.up.set(0, mode === 'overhead' ? 0 : 1, mode === 'overhead' ? -1 : 0);
@@ -272,6 +278,36 @@ export function createScene(
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    // The camera backs off just enough to fit the frame at this shape of canvas.
+    setCamera(cameraMode);
+  }
+
+  // Labels for the tracks and devices are HTML over the canvas, so they stay sharp and readable.
+  const labelLayer = document.createElement('div');
+  labelLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
+  container.appendChild(labelLayer);
+  const labels = labelAnchors(frame).map((a) => {
+    const node = document.createElement('div');
+    node.textContent = a.text;
+    node.style.cssText =
+      a.kind === 'track'
+        ? 'position:absolute;transform:translate(-50%,-50%);padding:1px 7px;border-radius:9px;font:700 12px system-ui,sans-serif;color:#e6edf3;background:rgba(11,15,20,0.72);'
+        : 'position:absolute;transform:translate(-50%,-100%);padding:1px 6px;border-radius:6px;font:600 11px system-ui,sans-serif;color:#c9d4e0;background:rgba(11,15,20,0.6);white-space:nowrap;';
+    labelLayer.appendChild(node);
+    return { node, at: new THREE.Vector3(toScreenX(a.x, frame), a.kind === 'track' ? 0.2 : 0, a.z) };
+  });
+  function placeLabels(): void {
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    for (const l of labels) {
+      const p = l.at.clone().project(camera);
+      const visible = Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1 && p.z < 1;
+      l.node.style.display = visible ? '' : 'none';
+      if (!visible) continue;
+      const { left, top } = ndcToCss(p, w, h);
+      l.node.style.left = `${left}px`;
+      l.node.style.top = `${top}px`;
+    }
   }
 
   function render(s: Snapshot): void {
@@ -304,6 +340,7 @@ export function createScene(
       }
     }
     renderer.render(scene, camera);
+    placeLabels();
   }
 
   const raycaster = new THREE.Raycaster();
@@ -342,9 +379,10 @@ export function createScene(
     trains.clear();
     renderer.dispose();
     renderer.domElement.remove();
+    labelLayer.remove();
   }
 
-  setCamera('angled');
+  setCamera(DEFAULT_CAMERA);
   resize();
   return { render, setCamera, onPick, trainScreenPoints, resize, dispose };
 }
