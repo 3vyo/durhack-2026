@@ -26,7 +26,7 @@ const OUT = 'demo-check-out';
 const WIDTH = 1500;
 const HEIGHT = 950;
 
-/** The other layouts the check opens with ?layout=<id>, and the entry lines each must offer. */
+/** The other layouts the check opens with ?layout=<id>, and the entry lines a new train may join on each. */
 const OTHER_LAYOUTS = [
   { id: 'hub', lines: ['A', 'B', 'C', 'D'] },
   { id: 'branch', lines: ['A'] },
@@ -375,23 +375,21 @@ async function main() {
       } else fail('double-clicking a train breaks it down', 'no train on screen');
     }
 
-    // 7b. Spawn a train on line B, on both sides at once.
+    // 7b. Spawn a train on a random line, on both sides at once.
     {
-      await evaluate(`(() => {
-        const s = [...document.querySelectorAll('select')].find((x) => x.getAttribute('aria-label') === 'Line for the new train');
-        s.value = 'B';
-        s.dispatchEvent(new Event('change'));
-      })()`);
       const clicked = await click('Spawn train');
       let id = null;
+      let line = null;
       await waitFor('spawn note', async () => {
-        const m = (await bodyText()).match(/Train (\d+) joins line B/);
+        const m = (await bodyText()).match(/Train (\d+) joins line ([A-D])/);
         id = m ? Number(m[1]) : null;
+        line = m ? m[2] : null;
         return id !== null;
       }, 3000);
-      const entered = id !== null && (await waitFor('spawned', () => evaluate(`window.demoCheck.hasTrain(${id})`), 10000));
-      if (clicked && entered) pass('Spawn train adds a train on the chosen line', `train ${id} on line B`);
-      else fail('Spawn train adds a train on the chosen line', id === null ? 'no note after the click' : `train ${id} never entered`);
+      const onLayout = line === 'A' || line === 'B';
+      const entered = id !== null && onLayout && (await waitFor('spawned', () => evaluate(`window.demoCheck.hasTrain(${id})`), 10000));
+      if (clicked && entered) pass('Spawn train adds a train on a line of the layout', `train ${id} on line ${line}`);
+      else fail('Spawn train adds a train on a line of the layout', id === null ? 'no note after the click' : !onLayout ? `line ${line} is not on the layout` : `train ${id} never entered`);
     }
 
     // 8. Switch the camera.
@@ -417,7 +415,7 @@ async function main() {
     await click('All on or off');
     const showOn = await ticked();
     await evaluate(`document.querySelector('.show summary')?.click()`);
-    if (showOpened && showBoxes.length === 7 && showBoxes.every(Boolean) && showOff.every((b) => !b) && showOn.every(Boolean)) {
+    if (showOpened && showBoxes.length === 8 && showBoxes.every(Boolean) && showOff.every((b) => !b) && showOn.every(Boolean)) {
       pass('the Show menu turns each drawing on and off', `${showBoxes.length} boxes`);
     } else {
       fail('the Show menu turns each drawing on and off', JSON.stringify({ showOpened, showBoxes, showOff, showOn }));
@@ -477,16 +475,27 @@ async function main() {
         evaluate(`(() => {
           const pick = (label) => [...document.querySelectorAll('select')].find((x) => x.getAttribute('aria-label') === label);
           const layout = pick('Layout');
-          const line = pick('Line for the new train');
-          if (!layout || !line || !document.querySelector('.clock')) return null;
-          return { layout: layout.value, lines: [...line.options].map((o) => o.value) };
+          if (!layout || !document.querySelector('.clock')) return null;
+          return { layout: layout.value };
         })()`).catch(() => null);
       let shown = null;
       await waitFor('layout', async () => (shown = await chosen()) !== null, 30000);
       if (shown && shown.layout === id) pass(`?layout=${id} opens the ${id} layout, and the page shows it as chosen`);
       else fail(`?layout=${id} opens the ${id} layout, and the page shows it as chosen`, JSON.stringify(shown));
-      if (shown && shown.lines.join() === lines.join()) pass(`the ${id} layout offers its own lines for a new train`, lines.join(', '));
-      else fail(`the ${id} layout offers its own lines for a new train`, JSON.stringify(shown?.lines));
+      // A few spawns, each on a line picked at random, must all land on this layout's own lines.
+      const joined = [];
+      for (let i = 0; i < 6; i++) {
+        await click('Spawn train');
+        await waitFor('spawn note', async () => {
+          const m = (await bodyText()).match(/Train (\d+) joins line ([A-D])/);
+          if (!m || joined.some((j) => j.id === m[1])) return false;
+          joined.push({ id: m[1], line: m[2] });
+          return true;
+        }, 3000);
+      }
+      const used = [...new Set(joined.map((j) => j.line))].sort();
+      if (joined.length === 6 && used.every((l) => lines.includes(l))) pass(`the ${id} layout spawns trains only on its own lines`, `lines used: ${used.join(', ')}`);
+      else fail(`the ${id} layout spawns trains only on its own lines`, JSON.stringify(joined));
       await setSpeed(32);
       // The clock only has to move. The page has just loaded and is still building its scenes
       // and starting its worker, so on a slow machine the first frames take a while: allow a

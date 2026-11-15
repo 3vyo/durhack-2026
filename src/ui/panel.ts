@@ -1,6 +1,6 @@
 import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
-import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
+import { keepLayoutShown, randomLine, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import { barShares, type Board, type BarRow } from './hud';
 import { LINK_KINDS, LINK_STYLE } from './links';
 import { SHOW_ITEMS, type Show, type ShowKey } from './show';
@@ -300,24 +300,18 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const breakdownHint = el('span', 'hint', 'Double-click a train to break it down');
   failures.append(radio, breakdownHint);
 
-  // Extra traffic: a train added at the start of the chosen line.
+  // Extra traffic: a train added at the start of a line picked at random. The note beside the
+  // button says which line it joined.
   const traffic = el('div', 'group');
   traffic.setAttribute('role', 'group');
   traffic.setAttribute('aria-label', 'Traffic');
-  const spawnLine = el('select');
-  spawnLine.setAttribute('aria-label', 'Line for the new train');
-  for (const line of entryLines()) {
-    const option = el('option', '', `Line ${line}`);
-    option.value = line;
-    spawnLine.append(option);
-  }
-  const spawnTrain = (): void => h.onSpawn(spawnLine.value as EntryLine);
+  const spawnTrain = (): void => h.onSpawn(randomLine());
   const spawn = el('button', '', 'Spawn train');
-  spawn.title = 'Add a train at the start of the chosen line (T). It enters once the start of the line is clear';
+  spawn.title = 'Add a train at the start of a random line (T). It enters once the start of the line is clear';
   spawn.addEventListener('click', spawnTrain);
   const spawnNoteText = el('span', 'hint');
   spawnNoteText.setAttribute('aria-live', 'polite');
-  traffic.append(spawn, spawnLine, spawnNoteText);
+  traffic.append(spawn, spawnNoteText);
 
   const run = el('div', 'group push');
   run.setAttribute('role', 'group');
