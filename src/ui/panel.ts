@@ -70,6 +70,8 @@ function legendBox(): HTMLElement {
   };
   for (const item of legendItems()) grid.append(entry(shapeIcon(item.shape, item.css), item.label, item.meaning));
   grid.append(entry(shapeIcon('square', '#8b96a5', 18, 0.55), 'Stopped', 'Dimmed, with a STOPPED tag'));
+  const zone = el('span', 'flex:none;width:18px;height:18px;border-radius:4px;background:rgba(217,164,65,0.35);border:1px dashed #d9a441;');
+  grid.append(entry(zone, 'Junction zone', 'Only one train in it at a time. Brighter while a train is in it'));
   box.append(grid);
   return box;
 }
@@ -100,7 +102,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const legend = el(
     'div',
     'font-size:12px;color:#7d8da1;margin-top:2px;',
-    'Boxes above the track, left to right: platform keeper, control centre (back), platform sensors, junction keeper. Green is on, dull red is off. Click a train to see how it is deciding.',
+    'Beside the track, left to right: platform keeper, control centre (back), platform sensors, junction keeper. A green lamp means on; dull red with no lamp means off. Click a train to see how it is deciding.',
   );
   banner.append(title, status, legend);
 

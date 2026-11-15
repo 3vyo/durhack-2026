@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
+  DEVICE_SITES,
   LANE_SPACING,
+  deviceLook,
+  junctionBusy,
+  offDeviceVisible,
   STATION_FRAME,
   UNITS_PER_METRE,
   cameraPreset,
@@ -124,5 +128,43 @@ describe('isStopped', () => {
     expect(isStopped(0.05)).toBe(true);
     expect(isStopped(0)).toBe(true);
     expect(isStopped(3)).toBe(false);
+  });
+});
+
+describe('devices', () => {
+  const keys = ['centre', 'platformKeeper', 'junctionKeeper', 'sensors'] as const;
+
+  it('puts the four devices in four different places', () => {
+    expect(new Set(keys.map((k) => `${DEVICE_SITES[k].x},${DEVICE_SITES[k].z}`)).size).toBe(4);
+  });
+
+  it('lights the lamp when on and puts it out when off, and changes the body', () => {
+    for (const k of keys) {
+      expect(deviceLook(k, true).light).not.toBeNull();
+      expect(deviceLook(k, false).light).toBeNull();
+      expect(deviceLook(k, true).body).not.toBe(deviceLook(k, false).body);
+    }
+  });
+
+  it('keeps a switched-off device visible against the background', () => {
+    for (const k of keys) expect(offDeviceVisible(k)).toBe(true);
+  });
+});
+
+describe('junctionBusy', () => {
+  const at = (track: TrackId, x: number): Snapshot => {
+    const s = snapshotWith(x);
+    return { ...s, trains: s.trains.map((t) => ({ ...t, pos: { ...t.pos, track } })) };
+  };
+
+  it('is true with a train in the last 100 m of a platform or the first 200 m of EXIT', () => {
+    expect(junctionBusy(at('P2', 6350))).toBe(true);
+    expect(junctionBusy(at('EXIT', 6650))).toBe(true);
+  });
+
+  it('is false with a train before the zone, past it, or on an entry line', () => {
+    expect(junctionBusy(at('P2', 6290))).toBe(false);
+    expect(junctionBusy(at('EXIT', 6750))).toBe(false);
+    expect(junctionBusy(at('A', 5990))).toBe(false);
   });
 });
