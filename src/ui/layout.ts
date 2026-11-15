@@ -235,12 +235,19 @@ export function junctionBusy(s: Snapshot): boolean {
 }
 
 /**
- * Length of the points, in metres. Each entry line splits where it ends, and each branch
- * bends across into its platform over the platform's first POINTS_LENGTH metres. Each
- * platform bends into EXIT over EXIT's first POINTS_LENGTH metres. Trains stop well clear
- * of both bends, so a stopped train always stands straight.
+ * Length of the points into the platforms, in metres. Each entry line splits where it ends,
+ * and each branch bends across into its platform over the platform's first POINTS_LENGTH
+ * metres. Trains stop well clear of it, so a stopped train always stands straight.
  */
 export const POINTS_LENGTH = 120;
+
+/**
+ * The way out joins in two stages, over the start of EXIT: first each pair of platforms joins
+ * (P1 with P2 in A's lane, P3 with P4 in B's lane) over `pairs` metres, then the two pairs
+ * join into EXIT over `join` metres. Drawn only: in the simulation every platform leads
+ * straight onto EXIT.
+ */
+export const EXIT_MERGE = { pairs: 60, join: 120 } as const;
 
 /** The route a train is on, as far as the picture needs it. */
 export interface Route {
@@ -269,15 +276,19 @@ export function pathAt(x: number, route: Route): { z: number; slope: number } {
   const start = entry ? lane(entry) : lane('EXIT');
   const platform = route.platform ? lane(route.platform) : start;
   const exit = lane('EXIT');
-  const bend = (from: number, to: number, x0: number) => {
-    const t = (x - x0) / POINTS_LENGTH;
-    return { z: from + (to - from) * t, slope: (to - from) / POINTS_LENGTH };
+  const bend = (from: number, to: number, x0: number, length = POINTS_LENGTH) => {
+    const t = (x - x0) / length;
+    return { z: from + (to - from) * t, slope: (to - from) / length };
   };
   const intoPlatforms = TRACK_START.P1;
   const intoExit = TRACK_START.EXIT;
   if (x < intoPlatforms) return { z: start, slope: 0 };
   if (x < intoPlatforms + POINTS_LENGTH) return route.platform ? bend(start, platform, intoPlatforms) : { z: start, slope: 0 };
   if (x < intoExit) return { z: platform, slope: 0 };
-  if (x < intoExit + POINTS_LENGTH) return route.platform ? bend(platform, exit, intoExit) : { z: exit, slope: 0 };
+  if (!route.platform) return { z: exit, slope: 0 };
+  // The pair's lane is the entry line's lane, which runs between its two platforms.
+  const pairsJoined = intoExit + EXIT_MERGE.pairs;
+  if (x < pairsJoined) return bend(platform, start, intoExit, EXIT_MERGE.pairs);
+  if (x < pairsJoined + EXIT_MERGE.join) return bend(start, exit, pairsJoined, EXIT_MERGE.join);
   return { z: exit, slope: 0 };
 }

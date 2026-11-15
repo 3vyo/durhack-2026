@@ -17,7 +17,8 @@ Headline: **"When the hub goes dark, every train still decides for itself, and t
 - **Camera.** The page opens in a close angled 3D view of the station (x 5,500 to 6,500 m, 30 degrees above the horizon), where the trains read as models. The button switches to the overhead overview, which fits the whole frame to the canvas whatever its shape.
 - **Labels.** Tracks and devices are labelled in HTML over each scene.
 - **Full-window view.** One side fills the window at a time, with a switch at the top. The title and clock, the delay board, the scoreboard, a one-row key, the minimap and the control dock float over it in small glass panels. Failure switches read as signal lamps. Keys: V, Space, C.
-- **Trains follow the points.** Each entry line splits where it ends and bends into its platforms; each platform bends into EXIT. Every car is placed on that path on its own, so a train bends through the points.
+- **Free camera, double-click to break down, a live title.** Drag to turn the camera, right-drag to slide, scroll to zoom. Double-click a train to break it down. The title says what is down right now. 1x speed is 8 simulated seconds a second.
+- **Trains follow the points.** Each entry line splits where it ends and bends into its platforms. The way out joins in two stages: each pair of platforms, then the two pairs into EXIT. Every car is placed on that path on its own, so a train bends through the points.
 - **Every failure control.** Switches for the centre, both keepers and the sensors, a radio-loss slider, and a breakdown picker. Each acts on both sides at once.
 - **A safety net.** Trains fall back to boxes if a model fails to load. `?quality=low` turns off shadows and trees.
 - **A check.** `npm run demo-check` drives the page in Chrome, including the built copy and the real GPU.

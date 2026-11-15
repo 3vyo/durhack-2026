@@ -44,9 +44,9 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 | `hud.ts` | The scoreboard rows and the three big tiles |
 | `controls.ts` | Switch labels, the banner line, the breakdown picker |
 | `overlay.ts` | The lines on a clicked train's card |
-| `scene.ts` (three) | One scene per side: trains from the models (boxes if they fail), markers, STOPPED tags, HTML labels, the camera |
+| `scene.ts` (three) | One scene per side: trains from the models (boxes if they fail), markers, STOPPED tags, HTML labels, and a free camera (drag to turn, right-drag to slide, scroll to zoom; the camera button resets it) |
 | `world.ts` (three) | The fixed scenery: track, platforms, the four device buildings, the junction zone, trees |
-| `panel.ts`, `page.css` | The page: the full-window view, and the glass panels over it (title and clock, view switch, delay board, scoreboard, key, minimap, control dock). Keys: V switches view, Space pauses, C cuts or restores the centre |
+| `panel.ts`, `page.css` | The page: the full-window view, and the glass panels over it (title and clock, view switch, delay board, scoreboard, key, minimap, control dock). Keys: V switches view, Space pauses, C cuts or restores the centre. Double-click a train to break it down. The title says what is down, from the switches (`statusTitle` in controls.ts). 1x speed is 8 simulated seconds a second |
 | `minimap.ts` | The whole-line strip at the bottom |
 
 ## What the screen reads from the engine

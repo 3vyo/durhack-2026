@@ -1,5 +1,4 @@
 import type { Switches } from '../engine/switches';
-import type { TrainId } from '../shared/types';
 import { radioLabel, SWITCH_KEYS, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
@@ -13,7 +12,6 @@ export interface PanelHandlers {
   onToggle(key: SwitchKey): void;
   /** The radio slider moved. `drop` is the share of train-to-train messages dropped, 0 to 1. */
   onRadioDrop(drop: number): void;
-  onBreakDown(id: TrainId): void;
   onSpeed(speed: number): void;
   onPause(): void;
   onRestart(): void;
@@ -38,13 +36,21 @@ export interface Panel {
   setCameraLabel(text: string): void;
   /** Shows the current switches on the lamps and the radio slider. */
   setSwitches(sw: Switches): void;
-  /** The trains the breakdown picker offers. */
-  setTrains(ids: TrainId[]): void;
   /** Shows one side's view and minimap, and marks it on the view switch. */
   setView(side: Side): void;
 }
 
-const SPEEDS = [1, 4, 8, 16];
+/**
+ * The speed choices. The value is how many simulated seconds pass per real second; the label
+ * is relative to the normal speed, 8 simulated seconds a second, which reads as 1x.
+ */
+export const SPEEDS = [
+  { value: 4, label: '0.5x' },
+  { value: 8, label: '1x' },
+  { value: 16, label: '2x' },
+  { value: 32, label: '4x' },
+] as const;
+export const NORMAL_SPEED = 8;
 
 const SWITCH_NAMES: Record<SwitchKey, string> = {
   centre: 'Control centre',
@@ -142,7 +148,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
 
   // The delay board.
   const board = el('section', 'glass board');
-  board.append(el('div', 'heading', 'Delay per train, so far'));
+  board.append(el('div', 'heading', 'Average delay per train, against a run where nothing fails'));
   const cells = el('div', 'cells');
   const cellParts = [0, 1, 2].map(() => {
     const cell = el('div', 'cell');
@@ -217,16 +223,8 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   slider.setAttribute('aria-label', 'Share of train-to-train radio messages lost');
   slider.addEventListener('input', () => h.onRadioDrop(Number(slider.value) / 100));
   radio.append(radioText, slider);
-  const breakdown = el('label', 'breakdown', 'Train');
-  const picker = el('select');
-  picker.setAttribute('aria-label', 'Train to break down');
-  const breakButton = el('button', '', 'Break down');
-  breakButton.title = 'Break down the chosen train on both sides';
-  breakButton.addEventListener('click', () => {
-    if (picker.value !== '') h.onBreakDown(Number(picker.value));
-  });
-  breakdown.append(picker, breakButton);
-  failures.append(radio, breakdown);
+  const breakdownHint = el('span', 'hint', 'Double-click a train to break it down');
+  failures.append(radio, breakdownHint);
 
   const run = el('div', 'group push');
   run.setAttribute('role', 'group');
@@ -234,10 +232,11 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const speed = el('select');
   speed.setAttribute('aria-label', 'Speed');
   for (const s of SPEEDS) {
-    const option = el('option', '', `${s}x speed`);
-    option.value = String(s);
+    const option = el('option', '', `${s.label} speed`);
+    option.value = String(s.value);
     speed.append(option);
   }
+  speed.value = String(NORMAL_SPEED);
   speed.addEventListener('change', () => h.onSpeed(Number(speed.value)));
   const pause = el('button', '', 'Pause');
   pause.title = 'Pause or resume (Space)';
@@ -266,8 +265,6 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       h.onPause();
     }
   });
-
-  let shownTrains = '';
 
   return {
     baselineStage: stages.baseline,
@@ -334,22 +331,6 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       // Leave the slider alone while it is being dragged, so it does not jump under the pointer.
       const value = String(Math.round(sw.radioDrop * 100));
       if (document.activeElement !== slider && slider.value !== value) slider.value = value;
-    },
-    setTrains(ids) {
-      // Rebuild only when the list changes, so an open dropdown is not closed every frame.
-      const listed = ids.join(',');
-      if (listed === shownTrains) return;
-      shownTrains = listed;
-      const chosen = picker.value;
-      picker.replaceChildren(
-        ...ids.map((id) => {
-          const option = el('option', '', String(id));
-          option.value = String(id);
-          return option;
-        }),
-      );
-      if (ids.map(String).includes(chosen)) picker.value = chosen;
-      breakButton.disabled = ids.length === 0;
     },
     setView(side) {
       for (const s of ['baseline', 'ours'] as const) {

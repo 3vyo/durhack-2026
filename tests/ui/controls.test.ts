@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_ON } from '../../src/engine/switches';
-import { batchRunsText, radioLabel, switchesLine, switchLabel, trainChoices } from '../../src/ui/controls';
+import { batchRunsText, radioLabel, statusTitle, switchesLine, switchLabel, trainChoices } from '../../src/ui/controls';
 
 describe('switchLabel', () => {
   it('names the switch and says whether it is on', () => {
@@ -52,5 +52,26 @@ describe('batchRunsText', () => {
 
   it('says nothing fails in the healthy scenario', () => {
     expect(batchRunsText({ scenario: 'healthy', seeds: 10 })).toBe('10 runs with nothing failing');
+  });
+});
+
+describe('statusTitle', () => {
+  const on = { centre: true, platformKeeper: true, junctionKeeper: true, sensors: true, radioDrop: 0 };
+
+  it('says all is well when nothing is failing', () => {
+    expect(statusTitle(on)).toBe('All systems working');
+  });
+
+  it('names what is down, joined in plain English', () => {
+    expect(statusTitle({ ...on, centre: false })).toBe('Control centre down');
+    expect(statusTitle({ ...on, centre: false, radioDrop: 1 })).toBe('Control centre and radio down');
+    expect(statusTitle({ ...on, centre: false, platformKeeper: false, junctionKeeper: false })).toBe(
+      'Control centre, platform keeper and junction keeper down',
+    );
+  });
+
+  it('gives partial radio loss as a share', () => {
+    expect(statusTitle({ ...on, radioDrop: 0.4 })).toBe('Radio losing 40%');
+    expect(statusTitle({ ...on, sensors: false, radioDrop: 0.25 })).toBe('Platform sensors down, radio losing 25%');
   });
 });

@@ -51,3 +51,29 @@ export function batchRunsText(avg: Pick<ScenarioSummary, 'scenario' | 'seeds'>):
   const minutes = Number((FAILURE_LENGTH / 60).toFixed(1));
   return `${avg.seeds} runs with a scripted ${minutes} min ${scenario.title.toLowerCase()}`;
 }
+
+const DOWN_NAMES: Record<SwitchKey, string> = {
+  centre: 'control centre',
+  platformKeeper: 'platform keeper',
+  junctionKeeper: 'junction keeper',
+  sensors: 'platform sensors',
+};
+
+function listed(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The page title: what is failing right now, read from the switches, such as "All systems
+ * working", "Control centre down" or "Control centre and radio down". Partial radio loss is
+ * given as a share.
+ */
+export function statusTitle(sw: Switches): string {
+  const down = SWITCH_KEYS.filter((k) => !sw[k]).map((k) => DOWN_NAMES[k]);
+  if (sw.radioDrop >= 1) down.push('radio');
+  const partial = sw.radioDrop > 0 && sw.radioDrop < 1 ? `radio losing ${Math.round(sw.radioDrop * 100)}%` : '';
+  if (down.length === 0 && !partial) return 'All systems working';
+  const parts = [down.length > 0 ? `${listed(down)} down` : '', partial].filter(Boolean).join(', ');
+  return parts.charAt(0).toUpperCase() + parts.slice(1);
+}
