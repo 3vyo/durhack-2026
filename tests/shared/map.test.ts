@@ -1,21 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
+  ALL_ENTRIES,
+  ALL_PLATFORMS,
   ASK_POINT,
+  DEFAULT_LAYOUT,
+  ENTRIES,
   EXIT_CLEAR_LENGTH,
   JUNCTION_END_X,
   JUNCTION_EXIT_LENGTH,
   JUNCTION_PLATFORM_LENGTH,
   JUNCTION_START_X,
+  LAYOUT,
+  LAYOUTS,
+  LAYOUT_IDS,
   PLATFORMS,
   PLATFORM_PAIRS,
   PLATFORM_STOP,
   RANGE,
   TRACK_LENGTH,
   TRACK_START,
+  applyLayout,
   entryOf,
   inJunctionZone,
   inRange,
+  isEntryTrack,
+  isLayoutId,
+  isPlatform,
   pairOf,
+  platformReadings,
+  resetLayout,
   successors,
   xOf,
 } from '../../src/shared/map';
@@ -26,10 +39,10 @@ import type { TrackId } from '../../src/shared/types';
 // "The radio" gives the ranges. The design does not say which edges count as inside, so
 // the edge tests for inRange and inJunctionZone follow "Task 3: Map geometry" in #26.
 
-const TRACKS: TrackId[] = ['A', 'B', 'P1', 'P2', 'P3', 'P4', 'EXIT'];
+const TRACKS: TrackId[] = ['A', 'B', 'C', 'D', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'EXIT'];
 
 describe('the map table', () => {
-  it('has the four platforms P1 to P4, lowest first', () => {
+  it('has the four platforms P1 to P4 on the default layout, lowest first', () => {
     expect(PLATFORMS).toEqual(['P1', 'P2', 'P3', 'P4']);
   });
 
@@ -217,7 +230,7 @@ describe('platform ownership', () => {
   });
 
   it('keeps PLATFORM_PAIRS as it was', () => {
-    expect(PLATFORM_PAIRS).toEqual({ A: ['P1', 'P2'], B: ['P3', 'P4'] });
+    expect(PLATFORM_PAIRS).toEqual({ A: ['P1', 'P2'], B: ['P3', 'P4'], C: ['P5', 'P6'], D: ['P7', 'P8'] });
   });
 
   it('gives P1 and P2 to A, and P3 and P4 to B', () => {
@@ -231,5 +244,92 @@ describe('platform ownership', () => {
     for (const p of PLATFORMS) {
       expect(pairOf(entryOf(p))).toContain(p);
     }
+  });
+});
+
+describe('layouts', () => {
+  afterEach(() => resetLayout());
+
+  it('starts on the junction layout, the one the design draws', () => {
+    expect(DEFAULT_LAYOUT).toBe('junction');
+    expect(LAYOUT.id).toBe('junction');
+    expect(ENTRIES).toEqual(['A', 'B']);
+    expect(PLATFORMS).toEqual(['P1', 'P2', 'P3', 'P4']);
+  });
+
+  it('lists the layouts simplest first, each with one more entry track than the last', () => {
+    expect(LAYOUT_IDS).toEqual(['branch', 'junction', 'busy', 'hub']);
+    expect(LAYOUT_IDS.map((id) => LAYOUTS[id].entries.length)).toEqual([1, 2, 3, 4]);
+    for (const id of LAYOUT_IDS) expect(LAYOUTS[id].id).toBe(id);
+  });
+
+  it.each([
+    ['branch', ['A'], ['P1', 'P2']],
+    ['junction', ['A', 'B'], ['P1', 'P2', 'P3', 'P4']],
+    ['busy', ['A', 'B', 'C'], ['P1', 'P2', 'P3', 'P4', 'P5', 'P6']],
+    ['hub', ['A', 'B', 'C', 'D'], ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8']],
+  ] as const)('applyLayout(%s) sets the entry tracks and their platforms', (id, entries, platforms) => {
+    applyLayout(id);
+    expect(LAYOUT.id).toBe(id);
+    expect(ENTRIES).toEqual(entries);
+    expect(PLATFORMS).toEqual(platforms);
+  });
+
+  it('resetLayout goes back to the default', () => {
+    applyLayout('hub');
+    resetLayout();
+    expect(LAYOUT.id).toBe('junction');
+    expect(PLATFORMS).toHaveLength(4);
+  });
+
+  it('knows a layout name from anything else', () => {
+    expect(isLayoutId('busy')).toBe(true);
+    expect(isLayoutId('station')).toBe(false);
+    expect(isLayoutId(3)).toBe(false);
+  });
+
+  it('gives every entry track its own pair, and every platform one owner', () => {
+    const owned = ALL_ENTRIES.flatMap((e) => [...pairOf(e)]);
+    expect(owned).toEqual([...ALL_PLATFORMS]);
+    for (const p of ALL_PLATFORMS) expect(pairOf(entryOf(p))).toContain(p);
+    expect(entryOf('P5')).toBe('C');
+    expect(entryOf('P8')).toBe('D');
+  });
+
+  it('tells entry tracks and platforms apart on every layout', () => {
+    for (const e of ALL_ENTRIES) {
+      expect(isEntryTrack(e)).toBe(true);
+      expect(isPlatform(e)).toBe(false);
+      expect(successors(e)).toEqual([...pairOf(e)]);
+    }
+    for (const p of ALL_PLATFORMS) {
+      expect(isPlatform(p)).toBe(true);
+      expect(isEntryTrack(p)).toBe(false);
+      expect(successors(p)).toEqual(['EXIT']);
+    }
+    expect(isEntryTrack('EXIT')).toBe(false);
+    expect(isPlatform('EXIT')).toBe(false);
+  });
+
+  it('keeps the same x geometry for every track, whatever the layout', () => {
+    for (const e of ALL_ENTRIES) expect([TRACK_START[e], TRACK_LENGTH[e]]).toEqual([0, 6000]);
+    for (const p of ALL_PLATFORMS) expect([TRACK_START[p], TRACK_LENGTH[p]]).toEqual([6000, 400]);
+    expect(inJunctionZone({ track: 'P7', offset: 300 })).toBe(true);
+    expect(inJunctionZone({ track: 'C', offset: 5999 })).toBe(false);
+  });
+});
+
+describe('platformReadings', () => {
+  afterEach(() => resetLayout());
+
+  it('reads the layout platforms as empty and the rest as occupied', () => {
+    expect(platformReadings()).toEqual({ P1: false, P2: false, P3: false, P4: false, P5: true, P6: true, P7: true, P8: true });
+    applyLayout('branch');
+    expect(platformReadings()).toEqual({ P1: false, P2: false, P3: true, P4: true, P5: true, P6: true, P7: true, P8: true });
+  });
+
+  it('takes named readings over the defaults', () => {
+    expect(platformReadings({ P2: true }).P2).toBe(true);
+    expect(platformReadings({ P2: true }).P1).toBe(false);
   });
 });

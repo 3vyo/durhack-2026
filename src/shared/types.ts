@@ -1,6 +1,9 @@
 export type TrainId = number;
-export type TrackId = 'A' | 'B' | 'P1' | 'P2' | 'P3' | 'P4' | 'EXIT';
-export type PlatformId = 'P1' | 'P2' | 'P3' | 'P4';
+// Every track any layout can have. A layout uses the first one to four entry tracks and the
+// two platforms each of them owns. See "Layouts" in docs/design.md and LAYOUTS in map.ts.
+export type EntryId = 'A' | 'B' | 'C' | 'D';
+export type PlatformId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8';
+export type TrackId = EntryId | PlatformId | 'EXIT';
 export type ResourceId = PlatformId | 'JUNCTION';
 
 export interface Position { track: TrackId; offset: number }
@@ -14,7 +17,7 @@ export interface TrainState {
 
 export interface TimetableEntry {
   id: TrainId;
-  entry: 'A' | 'B';
+  entry: EntryId;
   enterAt: number;
   platform: PlatformId;   // default platform, always in the entry track's own pair
   leader: TrainId | null; // the train directly ahead on the same entry track
@@ -64,7 +67,7 @@ export interface TrainAgent {
 export type TrainAgentFactory = (id: TrainId, timetable: TimetableEntry[]) => TrainAgent;
 
 export interface SensorReadings {
-  platformOccupied: Record<PlatformId, boolean>;
+  platformOccupied: Record<PlatformId, boolean>; // a platform outside the layout reads occupied
   junctionOccupied: boolean;
   exitStartClear: boolean;   // true if the first 300 m of EXIT is empty
 }

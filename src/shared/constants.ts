@@ -46,11 +46,11 @@ export let RADIO_RELEASE_GAP = 60; // staff release one stopped train this often
 export let RESTART_GAP = 0; // seconds between releases. 0 releases every train at once
 
 // Clock slots, used while the junction keeper is switched off.
-// slot = floor(now / SLOT_LENGTH) mod SLOT_COUNT. Platform Pk may start during the
-// first SLOT_WINDOW seconds of slot k - 1.
+// slot = floor(now / SLOT_LENGTH) mod the number of platforms in the layout. Platform Pk
+// may start during the first SLOT_WINDOW seconds of slot k - 1. The number of slots is not
+// a constant: it is PLATFORMS.length in map.ts, so every platform of a layout has one slot.
 export let SLOT_LENGTH = 60;
 export let SLOT_WINDOW = 15;
-export let SLOT_COUNT = 4;
 
 /** Every constant above, by name. currentConstants is the one list of them. */
 export type ConstantValues = ReturnType<typeof currentConstants>;
@@ -82,7 +82,6 @@ export function currentConstants() {
     RESTART_GAP,
     SLOT_LENGTH,
     SLOT_WINDOW,
-    SLOT_COUNT,
   };
 }
 
@@ -114,7 +113,6 @@ export function setConstants(values: Partial<ConstantValues>): void {
   RESTART_GAP = v.RESTART_GAP;
   SLOT_LENGTH = v.SLOT_LENGTH;
   SLOT_WINDOW = v.SLOT_WINDOW;
-  SLOT_COUNT = v.SLOT_COUNT;
 }
 
 /** Put every constant back to its value in docs/design.md. */
