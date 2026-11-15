@@ -1,9 +1,10 @@
 import { Engine } from '../engine/engine';
 import type { TrainProgram } from '../engine/ports';
 import type { Switches } from '../engine/switches';
-import { RUN_LENGTH, generateTimetable, type TimetableOptions } from '../engine/timetable';
+import { RUN_LENGTH, generateTimetable, spawnEntry, type TimetableOptions } from '../engine/timetable';
 import type { Scenario } from '../scenarios/scenarios';
 import { TICK } from '../shared/constants';
+import type { TimetableEntry, TrainId } from '../shared/types';
 import { pressesFor } from './failure';
 
 export interface LiveOptions {
@@ -30,6 +31,8 @@ export class LiveSession {
 
   private baselineEngine!: Engine;
   private oursEngine!: Engine;
+  /** The one timetable both engines run. Spawned trains are added to it. */
+  private timetable: TimetableEntry[] = [];
   private carry = 0;
 
   constructor(private readonly options: LiveOptions) {
@@ -65,7 +68,19 @@ export class LiveSession {
     this.oursEngine.press(set);
   }
 
-  /** Back to time 0 with the same seed. Live presses are forgotten. Speed and pause are kept. */
+  /**
+   * Adds a train at the start of `track` in both engines at the same simulated time, due now,
+   * with the timetable's dwell. It enters once the start of the track is clear, behind any
+   * train already waiting there. Returns its ID. A restart forgets it, like a live press.
+   */
+  spawn(track: 'A' | 'B'): TrainId {
+    const entry = spawnEntry(this.timetable, track, this.oursEngine.now, this.options.timetable.dwell);
+    this.baselineEngine.addTrain(entry);
+    this.oursEngine.addTrain(entry);
+    return entry.id;
+  }
+
+  /** Back to time 0 with the same seed. Live presses and spawned trains are forgotten. Speed and pause are kept. */
   restart(): void {
     this.carry = 0;
     this.build();
@@ -74,6 +89,7 @@ export class LiveSession {
   private build(): void {
     const { seed, scenario, programs, timetable: tt, scripted } = this.options;
     const timetable = generateTimetable(seed, tt);
+    this.timetable = timetable;
     const presses = scripted ? pressesFor(scenario, timetable, seed) : [];
     const make = (program: TrainProgram): Engine =>
       new Engine({ timetable, program, seed, runLength: RUN_LENGTH, presses });

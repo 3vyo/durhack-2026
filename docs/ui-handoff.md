@@ -46,12 +46,12 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 | `overlay.ts` | The lines on a clicked train's card |
 | `scene.ts` (three) | One scene per side: trains from the models (boxes if they fail), markers, STOPPED tags, HTML labels, and a free camera (drag to turn, right-drag to slide, scroll to zoom; the camera button resets it) |
 | `world.ts` (three) | The fixed scenery: track, platforms, the four device buildings, the junction zone, trees |
-| `panel.ts`, `page.css` | The page: the full-window view, and the glass panels over it (title and clock, view switch, delay board, scoreboard, key, minimap, control dock). Keys: V switches view, Space pauses, C cuts or restores the centre. Double-click a train to break it down. The title says what is down, from the switches (`statusTitle` in controls.ts). 1x speed is 8 simulated seconds a second |
+| `panel.ts`, `page.css` | The page: the full-window view, and the glass panels over it (title and clock, view switch, delay board, scoreboard, key, minimap, control dock). Keys: V switches view, Space pauses, C cuts or restores the centre, T spawns a train. Double-click a train to break it down. Spawn train adds a train at the start of the chosen line on both sides at once The title says what is down, from the switches (`statusTitle` in controls.ts). 1x speed is 8 simulated seconds a second |
 | `minimap.ts` | The whole-line strip at the bottom |
 
 ## What the screen reads from the engine
 
-- **`LiveSession`** (`src/runner/live.ts`): `baseline` and `ours`, `speed`, `paused`, `tick`, `press`, `restart`.
+- **`LiveSession`** (`src/runner/live.ts`): `baseline` and `ours`, `speed`, `paused`, `tick`, `press`, `spawn`, `restart`. `spawn(line)` adds a train due now with `Engine.addTrain`. It enters in timetable order on its line, so the next train due there follows it. It is not in the healthy reference run, so it adds traffic but has no delay score of its own. A restart forgets it.
 - **`engine.snapshot()`**: `{ now, switches, trains }`. Each train has `id`, `pos`, `x`, `speed`, `mode`, `leaderAge`, `permitAge`, `lastGrants`, and `brokenDown` once broken.
 - **Modes**: `central` (obeys the centre), `radio` (a baseline train moved by staff under radio working), `full`, `stale`, `blind`.
 - **Switches**: `centre`, `platformKeeper`, `junctionKeeper`, `sensors`, `radioDrop`.

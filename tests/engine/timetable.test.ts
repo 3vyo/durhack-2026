@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_TIMETABLE,
+  entersBefore,
   generateTimetable,
   makeRng,
   RUN_LENGTH,
+  spawnEntry,
 } from '../../src/engine/timetable';
+import type { TimetableEntry } from '../../src/shared/types';
 
 describe('makeRng', () => {
   it('gives the same sequence for the same seed', () => {
@@ -84,3 +87,58 @@ describe('RUN_LENGTH', () => {
   });
 });
 
+
+describe('spawnEntry', () => {
+  const timetable: TimetableEntry[] = [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 50, platform: 'P3', leader: null, dwell: 30 },
+    { id: 3, entry: 'A', enterAt: 100, platform: 'P2', leader: 1, dwell: 30 },
+    { id: 4, entry: 'A', enterAt: 300, platform: 'P1', leader: 3, dwell: 30 },
+  ];
+
+  it('takes the next free ID, is due now and uses the dwell given', () => {
+    const entry = spawnEntry(timetable, 'B', 120, 45);
+    expect(entry.id).toBe(5);
+    expect(entry.enterAt).toBe(120);
+    expect(entry.dwell).toBe(45);
+    expect(entry.entry).toBe('B');
+  });
+
+  it('follows the last train on its track that comes before it, not a later one', () => {
+    // Train 4 is not due until 300, so the new train goes in front of it, behind train 3.
+    expect(spawnEntry(timetable, 'A', 120, 30).leader).toBe(3);
+  });
+
+  it('follows a train that is due but still waiting to enter', () => {
+    // Train 3 was due at 100 and may still be outside the map at 100; it enters first.
+    expect(spawnEntry(timetable, 'A', 100, 30).leader).toBe(3);
+  });
+
+  it('alternates the default platform from its leader, within its own pair', () => {
+    expect(spawnEntry(timetable, 'A', 120, 30).platform).toBe('P1'); // leader 3 has P2
+    expect(spawnEntry(timetable, 'B', 120, 30).platform).toBe('P4'); // leader 2 has P3
+  });
+
+  it('has no leader and the first platform of its pair when its track has no train before it', () => {
+    const entry = spawnEntry(timetable, 'B', 10, 30);
+    expect(entry.leader).toBeNull();
+    expect(entry.platform).toBe('P3');
+  });
+
+  it('does not change the timetable', () => {
+    const before = JSON.stringify(timetable);
+    spawnEntry(timetable, 'A', 120, 30);
+    expect(JSON.stringify(timetable)).toBe(before);
+  });
+});
+
+describe('entersBefore', () => {
+  const at = (id: number, enterAt: number): TimetableEntry => ({ id, entry: 'A', enterAt, platform: 'P1', leader: null, dwell: 30 });
+
+  it('puts the earlier enterAt first, and the lower ID on a tie', () => {
+    expect(entersBefore(at(5, 10), at(2, 20))).toBe(true);
+    expect(entersBefore(at(2, 20), at(5, 10))).toBe(false);
+    expect(entersBefore(at(2, 10), at(5, 10))).toBe(true);
+    expect(entersBefore(at(5, 10), at(5, 10))).toBe(false);
+  });
+});

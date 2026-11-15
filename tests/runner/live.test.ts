@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TIMETABLE } from '../../src/engine/timetable';
+import { DEFAULT_TIMETABLE, RUN_LENGTH } from '../../src/engine/timetable';
 import { LiveSession } from '../../src/runner/live';
+import { baselineProgram, ourProgram } from '../../src/runner/programs';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
 import { SCENARIOS } from '../../src/scenarios/scenarios';
 
@@ -125,5 +126,65 @@ describe('LiveSession scripted presses', () => {
     }
     expect(cut).toBe(true);
     expect(s.ours.snapshot().switches.centre).toBe(false);
+  });
+});
+
+describe('LiveSession spawn', () => {
+  it('adds the same train to both engines at the same simulated time', () => {
+    const s = session();
+    s.tick(30); // long enough for the first train to clear the start of its line
+    const id = s.spawn('B');
+    expect(id).toBe(DEFAULT_TIMETABLE.trains + 1);
+    s.tick(0.1);
+    expect(s.baseline.snapshot().trains.map((t) => t.id)).toContain(id);
+    expect(s.ours.snapshot().trains.map((t) => t.id)).toContain(id);
+  });
+
+  it('gives each spawned train its own ID', () => {
+    const s = session();
+    const n = DEFAULT_TIMETABLE.trains;
+    expect([s.spawn('A'), s.spawn('A'), s.spawn('B')]).toEqual([n + 1, n + 2, n + 3]);
+  });
+
+  it('forgets spawned trains on restart', () => {
+    const s = session();
+    const id = s.spawn('A');
+    s.tick(1);
+    s.restart();
+    s.tick(1);
+    expect(s.ours.snapshot().trains.map((t) => t.id)).not.toContain(id);
+    expect(s.spawn('A')).toBe(id);
+  });
+
+  // The real programs with extra trains, including trains added while the control centre
+  // is off, so our trains add them to the platform keeper's queue on their own rules.
+  it.each([1, 2, 3])('runs spawned trains through both real programs with no collision, seed %i', (seed) => {
+    const s = new LiveSession({
+      seed,
+      scenario: SCENARIOS['centre-outage'],
+      programs: { baseline: baselineProgram, ours: ourProgram },
+      timetable: DEFAULT_TIMETABLE,
+    });
+    const plan: Array<{ at: number; act: () => void }> = [
+      { at: 60, act: () => s.spawn('A') },
+      { at: 60, act: () => s.spawn('B') },
+      { at: 240, act: () => s.press({ centre: false }) },
+      { at: 300, act: () => s.spawn('A') },
+      { at: 330, act: () => s.spawn('B') },
+      { at: 360, act: () => s.press({ centre: true }) },
+      { at: 500, act: () => s.spawn('A') },
+    ];
+    for (const step of plan) {
+      s.tick(step.at - s.ours.now);
+      step.act();
+    }
+    s.speed = 1000;
+    while (!(s.ours.finished && s.baseline.finished) && s.ours.now < RUN_LENGTH) s.tick(1);
+    for (const engine of [s.baseline, s.ours]) {
+      const r = engine.result();
+      expect(r.collisions).toBe(0);
+      expect(r.overruns).toBe(0);
+      expect(r.exits.size).toBe(DEFAULT_TIMETABLE.trains + 5);
+    }
   });
 });
