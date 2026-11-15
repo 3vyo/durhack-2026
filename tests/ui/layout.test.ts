@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
+  ANGLED_FOCUS,
   CAMERA_FOV,
   DEFAULT_CAMERA,
   DEVICE_SITES,
@@ -116,8 +117,23 @@ describe('cameraPreset', () => {
     expect(tall).toBeGreaterThan(wide);
   });
 
-  it('opens in overhead', () => {
-    expect(DEFAULT_CAMERA).toBe('overhead');
+  it('opens in the angled view', () => {
+    expect(DEFAULT_CAMERA).toBe('angled');
+  });
+
+  it('puts the angled camera lower and closer than the overhead one', () => {
+    const angled = cameraPreset('angled', STATION_FRAME);
+    const overhead = cameraPreset('overhead', STATION_FRAME);
+    const distance = (p: ReturnType<typeof cameraPreset>) =>
+      Math.hypot(...p.position.map((v, i) => v - p.lookAt[i]));
+    expect(angled.position[1]).toBeLessThan(overhead.position[1]);
+    expect(distance(angled)).toBeLessThan(distance(overhead));
+  });
+
+  it('points the angled camera at the focus stretch, the platforms and the junction', () => {
+    const x = cameraPreset('angled', STATION_FRAME).lookAt[0];
+    expect(x).toBeGreaterThanOrEqual(toScreenX(ANGLED_FOCUS.xMin, STATION_FRAME));
+    expect(x).toBeLessThanOrEqual(toScreenX(ANGLED_FOCUS.xMax, STATION_FRAME));
   });
 });
 
@@ -130,6 +146,14 @@ describe('ndcToCss', () => {
 });
 
 describe('labelAnchors', () => {
+  it('puts every device and the A, B and EXIT labels inside the angled view focus', () => {
+    const anchors = labelAnchors(STATION_FRAME).filter((a) => a.kind === 'device' || ['A', 'B', 'EXIT'].includes(a.text));
+    for (const a of anchors) {
+      expect(a.x).toBeGreaterThanOrEqual(ANGLED_FOCUS.xMin);
+      expect(a.x).toBeLessThanOrEqual(ANGLED_FOCUS.xMax);
+    }
+  });
+
   it('labels the seven tracks and the four devices, all inside the frame', () => {
     const anchors = labelAnchors(STATION_FRAME);
     expect(anchors.filter((a) => a.kind === 'track').map((a) => a.text)).toEqual(['A', 'B', 'P1', 'P2', 'P3', 'P4', 'EXIT']);
