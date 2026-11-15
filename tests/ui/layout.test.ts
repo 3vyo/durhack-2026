@@ -29,6 +29,7 @@ import {
   exitJoinedX,
   stageGrowth,
   stationFrame,
+  sensorSite,
   type Frame,
 } from '../../src/ui/layout';
 import { TRAIN_LENGTH } from '../../src/shared/constants';
@@ -56,6 +57,11 @@ function snapshotWith(x: number): Snapshot {
   return {
     now: 0,
     switches: ALL_ON,
+    sensors: {
+      platformOccupied: { P1: false, P2: false, P3: false, P4: false, P5: true, P6: true, P7: true, P8: true },
+      junctionOccupied: false,
+      exitStartClear: true,
+    },
     trains: [
       {
         id: 1,
@@ -644,7 +650,25 @@ describe('labels and the junction zone in every layout', () => {
 
   it('keeps the devices clear of every lane', () => {
     applyLayout('hub');
-    for (const site of Object.values(DEVICE_SITES)) expect(site.z).toBeLessThan(laneOf('P1') * LANE_SPACING);
+    for (const key of ['centre', 'platformKeeper', 'junctionKeeper'] as const) {
+      expect(DEVICE_SITES[key].z).toBeLessThan(laneOf('P1') * LANE_SPACING);
+    }
+  });
+
+  it('puts each platform sensor box on its island, beside its own track and clear of both lanes', () => {
+    applyLayout('hub');
+    for (const p of PLATFORMS) {
+      const box = sensorSite(p);
+      const own = laneOf(p) * LANE_SPACING;
+      const island = laneOf(entryOf(p)) * LANE_SPACING;
+      expect(Math.abs(box.z - own)).toBeLessThan(Math.abs(island - own));
+      expect(Math.abs(box.z - island)).toBeLessThan(2.1);
+      expect(Math.abs(box.z - own)).toBeGreaterThan(1.5);
+      expect(box.x).toBeGreaterThan(TRACK_START[p]);
+      expect(box.x).toBeLessThan(TRACK_START.EXIT);
+    }
+    expect(new Set(PLATFORMS.map((p) => sensorSite(p).z)).size).toBe(PLATFORMS.length);
+    expect(sensorSite('P1')).toEqual(DEVICE_SITES.sensors);
   });
 
   it('lights the junction zone for a train at the end of P7, and not for one on line C or D', () => {

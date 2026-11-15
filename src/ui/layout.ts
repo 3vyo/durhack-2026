@@ -218,14 +218,32 @@ export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: numb
 /** The four pieces of trackside equipment the scene draws, keyed like the engine's switches. */
 export type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensors';
 
+/** Metres along the x axis of each platform sensor's trackside box: near the platform's far end. */
+export const SENSOR_BOX_X = TRACK_START.P1 + 380;
+/** How far each sensor box sits from the middle of its island, towards its own track, in scene units. */
+const SENSOR_BOX_SIDE = 1.6;
+
+/**
+ * Where a platform sensor's box stands: on the island, at the edge beside its own platform
+ * track. The sensor itself is the whole platform track (a track circuit or axle counters), and
+ * the box is where it reports from. Each island has two, one for each of its tracks.
+ */
+export function sensorSite(p: PlatformId): { x: number; z: number } {
+  const entry = entryOf(p);
+  const side = pairOf(entry)[0] === p ? -1 : 1;
+  return { x: SENSOR_BOX_X, z: laneOf(entry) * LANE_SPACING + side * SENSOR_BOX_SIDE };
+}
+
 /**
  * Where each device stands: x in metres along the line, z in scene units across it. The
- * control centre stands back from the line, the others beside platform P1's track.
+ * control centre stands back from the line, and the keepers beside platform P1's track. The
+ * platform sensors are one box per platform (sensorSite); their entry here is P1's box, where
+ * the label goes.
  */
 export const DEVICE_SITES: Record<DeviceKey, { x: number; z: number }> = {
   centre: { x: 5850, z: -9 },
   platformKeeper: { x: 5740, z: -4 },
-  sensors: { x: 5980, z: -4 },
+  sensors: { x: SENSOR_BOX_X, z: LANE_SPACING - SENSOR_BOX_SIDE },
   junctionKeeper: { x: 6320, z: -4 },
 };
 

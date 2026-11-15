@@ -1169,3 +1169,21 @@ describe('Engine sensor view', () => {
     expect(Math.abs((two()!.sightAhead as number) - (one.x - 100 - two()!.x))).toBeLessThan(5);
   });
 });
+
+describe('Engine sensor readings in the snapshot', () => {
+  it('reads a platform occupied while a train is on it, and every platform occupied with the sensors off', () => {
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: () => ({ decide: () => ({ accel: ACCEL, nextTrack: 'P2', outbox: [], mode: 'blind' }) }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config(one, 400, program));
+    engine.step();
+    expect(engine.snapshot().sensors.platformOccupied).toMatchObject({ P1: false, P2: false, P3: false, P4: false });
+    while (engine.snapshot().trains[0].pos.track !== 'P2') engine.step();
+    expect(engine.snapshot().sensors.platformOccupied).toMatchObject({ P1: false, P2: true, P3: false, P4: false });
+    engine.press({ sensors: false });
+    expect(engine.snapshot().sensors.platformOccupied).toMatchObject({ P1: true, P2: true, P3: true, P4: true });
+  });
+});

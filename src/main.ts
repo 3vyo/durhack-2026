@@ -8,7 +8,7 @@ import { SCENARIOS } from './scenarios/scenarios';
 import { LAYOUT, applyLayout } from './shared/map';
 import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
-import { linksFor } from './ui/links';
+import { linksFor, wiredLinks } from './ui/links';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
@@ -165,7 +165,8 @@ function clock(seconds: number): string {
 function draw(): void {
   const base = session.baseline.snapshot();
   const ours = session.ours.snapshot();
-  const links = (snap: typeof base, side: Side) => (showLinks ? snap.trains.flatMap((t) => linksFor(t, side)) : []);
+  const links = (snap: typeof base, side: Side) =>
+    showLinks ? [...wiredLinks(snap.switches, side), ...snap.trains.flatMap((t) => linksFor(t, side))] : [];
   if (view === 'baseline') {
     baselineView.render(base, links(base, 'baseline'), showLinks);
     baselineMap.render(base);

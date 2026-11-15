@@ -6,6 +6,7 @@ import type {
   PlatformId,
   Position,
   ResourceId,
+  SensorReadings,
   TimetableEntry,
   TrackId,
   TrainAgent,
@@ -92,6 +93,11 @@ export interface TrainView {
 export interface Snapshot {
   now: number;
   switches: Switches;
+  /**
+   * What the trackside sensors read for the trains where they are now, as the keepers see
+   * them on the next tick. A platform whose sensor is switched off reads occupied.
+   */
+  sensors: SensorReadings;
   trains: TrainView[];
 }
 
@@ -380,6 +386,10 @@ export class Engine {
     return {
       now: this.now,
       switches: { ...this.switches },
+      sensors: readSensors(
+        this.active.map((rt) => ({ state: rt.state, prev: rt.prev })),
+        this.switches,
+      ),
       trains: this.active.map((rt) => ({
         id: rt.id,
         pos: { ...rt.state.pos },

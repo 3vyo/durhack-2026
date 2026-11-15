@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainView, TracksideView } from '../../src/engine/engine';
-import { LINK_FADE, LINK_KINDS, LINK_STYLE, linkReach, linksFor } from '../../src/ui/links';
+import { LINK_FADE, LINK_KINDS, LINK_STYLE, linkReach, linksFor, wiredLinks } from '../../src/ui/links';
 
 const quiet: TracksideView = {
   platformKeeper: null,
@@ -86,7 +86,9 @@ describe('linksFor', () => {
 
   it('draws the sensors for a train choosing a platform while the platform keeper is quiet', () => {
     const near = { pos: { track: 'A' as const, offset: 5800 }, x: 5800 };
-    expect(kinds(view({ ...near, trackside: { sensorsAge: 0.3, askedPlatformKeeper: 0.4 } }))).toEqual(['asking', 'sensors']);
+    expect(kinds(view({ ...near, trackside: { sensorsAge: 0.3, askedPlatformKeeper: 0.4 } }))).toEqual(['asking', 'sensors', 'sensors']);
+    const fromBoxes = linksFor(view({ ...near, trackside: { sensorsAge: 0.3 } }), 'ours').map((l) => l.from);
+    expect(fromBoxes).toEqual([{ sensor: 'P1' }, { sensor: 'P2' }]);
     // Not while the platform keeper answers, and not out of the sensors' range.
     expect(kinds(view({ ...near, trackside: { sensorsAge: 0.3, platformKeeper: { age: 0.2, granted: true } } }))).toEqual(['grant']);
     expect(kinds(view({ trackside: { sensorsAge: 0.3 } }))).toEqual([]);
@@ -94,6 +96,21 @@ describe('linksFor', () => {
     expect(kinds(view({ pos: { track: 'P1', offset: 250 }, x: 6250, trackside: { sensorsAge: 0.3 } }))).toEqual([]);
   });
 
+});
+
+describe('wiredLinks', () => {
+  it('runs a cable from every platform sensor to the platform keeper, on our side only', () => {
+    const cables = wiredLinks({ sensors: true, platformKeeper: true }, 'ours');
+    expect(cables.map((c) => c.from)).toEqual([{ sensor: 'P1' }, { sensor: 'P2' }, { sensor: 'P3' }, { sensor: 'P4' }]);
+    for (const c of cables) expect(c).toMatchObject({ kind: 'wired', to: { device: 'platformKeeper' } });
+    expect(wiredLinks({ sensors: true, platformKeeper: true }, 'baseline')).toEqual([]);
+  });
+
+  it('carries nothing while the sensors or the keeper are off', () => {
+    expect(wiredLinks({ sensors: false, platformKeeper: true }, 'ours')[0].strength).toBe(0);
+    expect(wiredLinks({ sensors: true, platformKeeper: false }, 'ours')[0].strength).toBe(0);
+    expect(wiredLinks({ sensors: true, platformKeeper: true }, 'ours')[0].strength).toBeGreaterThan(0);
+  });
 });
 
 describe('linkReach', () => {

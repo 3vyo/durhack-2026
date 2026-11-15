@@ -18,6 +18,7 @@ import {
   routeOf,
   toScreenX,
   DEVICE_SITES,
+  sensorSite,
   type DeviceKey,
   type Route,
   isStopped,
@@ -67,7 +68,11 @@ const MARKER_LIFT_BOX = 2.4; // scene units above the rail, over a box train
 const MARKER_LIFT_MODEL = 2.2; // just over the roof of a model train, which is 1.93 high
 const CAR_GAP = 0.12; // model units between the cars of one unit
 /** Where a link line meets each device: its lamp, in scene units above the ground (world.ts). */
-const DEVICE_TOP: Record<DeviceKey, number> = { centre: 3.5, platformKeeper: 1.6, junctionKeeper: 1.6, sensors: 1.65 };
+const DEVICE_TOP: Record<Exclude<DeviceKey, 'sensors'>, number> = { centre: 3.5, platformKeeper: 1.6, junctionKeeper: 1.6 };
+/** Height of a platform sensor box's lamp, where its radio lines start (world.ts). */
+const SENSOR_LAMP_Y = 1.2;
+/** Height of a cable on the ground, just clear of it. */
+const CABLE_Y = 0.06;
 /** How fast the dot on a link line travels from sender to receiver, in trips per real second. */
 const PULSE_RATE = 0.9;
 /** How many straight pieces make up one link arc. */
@@ -405,6 +410,10 @@ export function createScene(
   /** Where a line meets one end, in scene units, or null for a train that is not drawn. */
   function linkPoint(end: LinkEnd, anchors: Map<number, Anchor>): Anchor | null {
     if ('train' in end) return anchors.get(end.train) ?? null;
+    if ('sensor' in end) {
+      const box = sensorSite(end.sensor);
+      return { at: new THREE.Vector3(toScreenX(box.x, frame), SENSOR_LAMP_Y, box.z), reach: 1 };
+    }
     const site = DEVICE_SITES[end.device];
     return { at: new THREE.Vector3(toScreenX(site.x, frame), DEVICE_TOP[end.device], site.z), reach: 1 };
   }
@@ -415,9 +424,15 @@ export function createScene(
    * close or past the far plane) breaks the run, so a train sliding out of view never flings
    * the line across the sky.
    */
-  function arcRuns(a: THREE.Vector3, b: THREE.Vector3, w: number, h: number): Array<Array<{ left: number; top: number }>> {
+  function arcRuns(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    w: number,
+    h: number,
+    rise = Math.min(9, 1.5 + a.distanceTo(b) * 0.2),
+  ): Array<Array<{ left: number; top: number }>> {
     const mid = a.clone().add(b).multiplyScalar(0.5);
-    mid.y += Math.min(9, 1.5 + a.distanceTo(b) * 0.2);
+    mid.y += rise;
     // The control point that makes the curve pass through the raised middle.
     const c = mid.multiplyScalar(2).sub(a.clone().add(b).multiplyScalar(0.5));
     const points: THREE.Vector3[] = [];
@@ -565,9 +580,12 @@ export function createScene(
       if (!a || !b) return;
       const reach = Math.min(a.reach, b.reach);
       if (reach <= 0) return;
-      const runs = arcRuns(a.at, b.at, w, h);
-      if (runs.length === 0) return;
       const style = LINK_STYLE[link.kind];
+      // A cable lies on the ground; a radio message arcs through the air.
+      const runs = style.ground
+        ? arcRuns(new THREE.Vector3(a.at.x, CABLE_Y, a.at.z), new THREE.Vector3(b.at.x, CABLE_Y, b.at.z), w, h, 0)
+        : arcRuns(a.at, b.at, w, h);
+      if (runs.length === 0) return;
       const alpha = (0.25 + 0.75 * link.strength) * reach;
 
       const curve = () => {
@@ -601,11 +619,16 @@ export function createScene(
       const p0 = points[Math.floor(along)];
       const p1 = points[Math.min(points.length - 1, Math.floor(along) + 1)];
       const f = along - Math.floor(along);
-      g.fillStyle = style.css;
-      g.beginPath();
-      g.arc(p0.left + (p1.left - p0.left) * f, p0.top + (p1.top - p0.top) * f, 3.5, 0, Math.PI * 2);
-      g.fill();
+      // A cable that is switched off carries nothing, so it has no dot.
+      if (link.strength > 0) {
+        g.fillStyle = style.css;
+        g.beginPath();
+        g.arc(p0.left + (p1.left - p0.left) * f, p0.top + (p1.top - p0.top) * f, style.ground ? 2.5 : 3.5, 0, Math.PI * 2);
+        g.fill();
+      }
       g.globalAlpha = 1;
+      // A cable just ends at the keeper's hut, with no ring.
+      if (style.ground) return;
 
       // A ring where the message lands, if the camera can see that end.
       const end = b.at.clone().project(camera);
@@ -658,6 +681,7 @@ export function createScene(
     observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
+    world.setSensors(s.sensors.platformOccupied, s.switches.sensors);
     const views = new Map(s.trains.map((v) => [v.id, v]));
 
     const seen = new Set<number>();

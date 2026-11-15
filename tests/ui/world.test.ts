@@ -105,3 +105,12 @@ describe('the drawn track follows the layout in use', () => {
     for (let i = 1; i < counts.length; i++) expect(counts[i]!).toBeGreaterThan(counts[i - 1]!);
   });
 });
+
+describe('sensorReading', () => {
+  it('shows a switched-off sensor as off, whatever it reads', async () => {
+    const { sensorReading } = await import('../../src/ui/world');
+    expect(sensorReading(false, true)).toBe('empty');
+    expect(sensorReading(true, true)).toBe('occupied');
+    expect(sensorReading(true, false)).toBe('off');
+  });
+});

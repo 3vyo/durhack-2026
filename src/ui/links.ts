@@ -1,7 +1,8 @@
 import type { TrainView } from '../engine/engine';
 import { FRESH, PERMIT_FRESH, REQUEST_REPEAT, TRAIN_LENGTH } from '../shared/constants';
-import { RANGE, inRange, isEntryTrack } from '../shared/map';
-import type { TrainId } from '../shared/types';
+import type { Switches } from '../engine/switches';
+import { PLATFORMS, RANGE, inRange, isEntryTrack, pairOf } from '../shared/map';
+import type { PlatformId, TrainId } from '../shared/types';
 import type { DeviceKey } from './layout';
 
 // The lines the scene draws from each train to whatever it is taking its next move from: the
@@ -12,10 +13,10 @@ import type { DeviceKey } from './layout';
 /** Which program the train runs. A baseline train only ever listens to the centre. */
 export type Program = 'baseline' | 'ours';
 
-export type LinkKind = 'permit' | 'staff' | 'leader' | 'grant' | 'refuse' | 'asking' | 'sensors';
+export type LinkKind = 'permit' | 'staff' | 'leader' | 'grant' | 'refuse' | 'asking' | 'sensors' | 'wired';
 
-/** One end of a line: a piece of trackside equipment or a train. */
-export type LinkEnd = { device: DeviceKey } | { train: TrainId };
+/** One end of a line: a piece of trackside equipment, one platform's sensor box, or a train. */
+export type LinkEnd = { device: Exclude<DeviceKey, 'sensors'> } | { sensor: PlatformId } | { train: TrainId };
 
 export interface Link {
   kind: LinkKind;
@@ -32,6 +33,8 @@ export interface LinkStyle {
   css: string;
   /** True for a dashed line. Dashes move from the sender to the receiver. */
   dashed: boolean;
+  /** True for a cable along the ground, false for a radio message arcing through the air. */
+  ground?: boolean;
   label: string;
   meaning: string;
 }
@@ -43,11 +46,29 @@ export const LINK_STYLE: Record<LinkKind, LinkStyle> = {
   grant: { css: '#2fb8a6', dashed: false, label: 'Grant', meaning: 'A keeper lets the train in' },
   refuse: { css: '#e0703a', dashed: false, label: 'Refused', meaning: 'A keeper says wait' },
   asking: { css: '#aab4c0', dashed: true, label: 'Asking', meaning: 'The train asks a keeper and hears nothing back' },
-  sensors: { css: '#d9c46a', dashed: false, label: 'Sensors', meaning: 'Platform sensors say empty or occupied' },
+  sensors: { css: '#d9c46a', dashed: false, label: 'Sensors', meaning: 'The two platforms of its pair say empty or occupied, by radio' },
+  wired: {
+    css: '#c9d4e0',
+    dashed: false,
+    ground: true,
+    label: 'Wired',
+    meaning: "Each platform's sensor reports to the platform keeper by cable",
+  },
 };
 
 /** The order the key lists the lines in. */
-export const LINK_KINDS: readonly LinkKind[] = ['permit', 'staff', 'leader', 'grant', 'refuse', 'asking', 'sensors'];
+export const LINK_KINDS: readonly LinkKind[] = ['permit', 'staff', 'leader', 'grant', 'refuse', 'asking', 'sensors', 'wired'];
+
+/**
+ * The cables from each platform's sensor box to the platform keeper. The keeper reads them
+ * every tick without radio. Only our program has a platform keeper, so the baseline has none.
+ * A cable is faint while the sensors or the keeper are switched off.
+ */
+export function wiredLinks(sw: Pick<Switches, 'sensors' | 'platformKeeper'>, program: Program): Link[] {
+  if (program === 'baseline') return [];
+  const strength = sw.sensors && sw.platformKeeper ? 0.6 : 0;
+  return PLATFORMS.map((p) => ({ kind: 'wired', from: { sensor: p }, to: { device: 'platformKeeper' }, strength }));
+}
 
 /** A permit older than this has missed at least one of the centre's once-a-second sends. */
 const PERMIT_LATE = 1.5;
@@ -143,7 +164,10 @@ export function linksFor(v: TrainView, program: Program): Link[] {
   const sensorsAge = t.sensorsAge;
   const heardSensors = sensorsAge !== null && sensorsAge <= STATUS_WINDOW;
   if (heardSensors && isEntryTrack(v.pos.track) && keeperQuiet && inRange(v.x, RANGE.sensors)) {
-    links.push({ kind: 'sensors', from: { device: 'sensors' }, to: self, strength: fade(sensorsAge, STATUS_WINDOW * 1.5) });
+    // The train only looks at the two platforms of its own pair.
+    for (const p of pairOf(v.pos.track)) {
+      links.push({ kind: 'sensors', from: { sensor: p }, to: self, strength: fade(sensorsAge, STATUS_WINDOW * 1.5) });
+    }
   }
   return links;
 }

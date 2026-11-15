@@ -11,7 +11,7 @@ import {
   entryOf,
   isPlatform,
 } from '../shared/map';
-import type { TrackId } from '../shared/types';
+import type { PlatformId, TrackId } from '../shared/types';
 import {
   DEVICE_SITES,
   LANE_SPACING,
@@ -21,6 +21,7 @@ import {
   deviceLook,
   exitJoinLength,
   laneOf,
+  sensorSite,
   toScreenX,
   type DeviceKey,
   type Frame,
@@ -38,7 +39,23 @@ export interface World {
   railTop(): number;
   setDevices(sw: Switches): void;
   setJunctionBusy(busy: boolean): void;
+  /** Shows each platform sensor's reading on its track and its box. `on` is the sensors' switch. */
+  setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean): void;
 }
+
+/** What a platform sensor shows: empty, occupied, or switched off (it then reads occupied). */
+export type SensorShown = 'empty' | 'occupied' | 'off';
+
+export function sensorReading(occupied: boolean, on: boolean): SensorShown {
+  if (!on) return 'off';
+  return occupied ? 'occupied' : 'empty';
+}
+
+/** The colour of each reading, on the platform track's tint and the box's lamp. */
+export const SENSOR_TINT: Record<SensorShown, number> = { empty: 0x3fbf6a, occupied: 0xff5a5a, off: 0x8794a6 };
+
+/** Height of the top of a platform island, where the sensor boxes stand. */
+const ISLAND_TOP = 0.55;
 
 const STRIP_HEIGHT = 0.4;
 const STRIP_DEPTH = 2.2;
@@ -152,7 +169,28 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     scene.add(tree);
   }
 
-  // The four devices: a control centre building, a hut for each keeper, a post for the sensors.
+  // Each platform's sensor covers its whole track, from the points to where it joins EXIT. A
+  // see-through strip over the rails shows what it reads.
+  const sensorStrips = new Map<PlatformId, THREE.MeshBasicMaterial>();
+  for (const p of platforms) {
+    const tint = new THREE.MeshBasicMaterial({ color: SENSOR_TINT.empty, transparent: true, opacity: 0.35, depthWrite: false });
+    const piece = (fromX: number, fromZ: number, toX: number, toZ: number) => {
+      const dx = x(toX) - x(fromX);
+      const dz = toZ - fromZ;
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(Math.hypot(dx, dz), 1.7), tint);
+      strip.rotation.set(-Math.PI / 2, 0, -Math.atan2(dz, dx), 'YXZ');
+      strip.position.set((x(fromX) + x(toX)) / 2, 0.16, (fromZ + toZ) / 2);
+      strip.renderOrder = 1;
+      scene.add(strip);
+    };
+    piece(split, z(entryOf(p)), split + POINTS_LENGTH, z(p));
+    piece(split + POINTS_LENGTH, z(p), TRACK_START.EXIT, z(p));
+    sensorStrips.set(p, tint);
+  }
+  const sensorLamps = new Map<PlatformId, THREE.MeshStandardMaterial>();
+
+  // The four devices: a control centre building, a hut for each keeper, and a box per platform
+  // for the sensors.
   const devices = new Map<DeviceKey, Device>();
   const lampMaterial = () => new THREE.MeshStandardMaterial({ color: 0x7be07b, emissive: 0x3bd13b, emissiveIntensity: 1.4 });
   for (const key of Object.keys(DEVICE_SITES) as DeviceKey[]) {
@@ -172,13 +210,20 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
       group.add(body, mast, bulb);
       device = { body: body.material as THREE.MeshStandardMaterial, roof: null, lamp };
     } else if (key === 'sensors') {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 1.5, 10), material(look.body));
-      post.position.y = 0.75;
-      post.castShadow = true;
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10), lamp);
-      bulb.position.y = 1.65;
-      group.add(post, bulb);
-      device = { body: post.material as THREE.MeshStandardMaterial, roof: null, lamp };
+      // One box per platform, on the island beside its own track. They share a body, so the
+      // switch greys them all, and each has its own lamp for its own reading.
+      const body = material(look.body);
+      for (const p of platforms) {
+        const at = sensorSite(p);
+        const box = new THREE.Mesh(new RoundedBoxGeometry(0.6, 0.5, 0.5, 2, 0.08), body);
+        box.position.set(x(at.x), ISLAND_TOP + 0.25, at.z);
+        box.castShadow = true;
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), lampMaterial());
+        bulb.position.set(x(at.x), ISLAND_TOP + 0.65, at.z);
+        scene.add(box, bulb);
+        sensorLamps.set(p, bulb.material as THREE.MeshStandardMaterial);
+      }
+      device = { body, roof: null, lamp };
     } else {
       const hut = roundedBox(1.6, 1.2, 1.4, look.body, 0.2);
       hut.position.y = 0.6;
@@ -284,5 +329,18 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     zoneMaterial.opacity = busy ? 0.32 : 0.12;
   }
 
-  return { useKitRails, railTop: () => top, setDevices, setJunctionBusy };
+  function setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean): void {
+    for (const p of platforms) {
+      const reading = sensorReading(occupied[p], on);
+      sensorStrips.get(p)!.color.setHex(SENSOR_TINT[reading]);
+      sensorStrips.get(p)!.opacity = reading === 'off' ? 0.2 : 0.35;
+      const lamp = sensorLamps.get(p);
+      if (!lamp) continue;
+      lamp.color.setHex(reading === 'off' ? 0x221818 : SENSOR_TINT[reading]);
+      lamp.emissive.setHex(reading === 'off' ? 0x000000 : SENSOR_TINT[reading]);
+      lamp.emissiveIntensity = reading === 'off' ? 0 : 1.2;
+    }
+  }
+
+  return { useKitRails, railTop: () => top, setDevices, setJunctionBusy, setSensors };
 }

@@ -191,6 +191,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   for (const item of legendItems()) keyItem(shapeIcon(item.shape, item.css), item.label, item.meaning);
   keyItem(shapeIcon('square', '#8b96a5', 0.55), 'Stopped', 'Dimmed, with a STOPPED tag');
   keyItem(el('span', 'zone'), 'Junction zone', 'One train at a time');
+  keyItem(el('span', 'tint'), 'Platform track', 'Its own sensor reads it: green empty, red occupied, grey switched off');
   for (const kind of LINK_KINDS) {
     const style = LINK_STYLE[kind];
     const line = el('span', style.dashed ? 'line dashed' : 'line');
