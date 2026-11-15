@@ -44,6 +44,16 @@ export function entryLines(): EntryLine[] {
 }
 
 /**
+ * The line a spawned train starts on: one of the layout's entry lines, each as likely as the
+ * others. `random` returns a number from 0 up to but not including 1, like Math.random. Both
+ * sides get the train on the same line, so they stay comparable.
+ */
+export function randomLine(random: () => number = Math.random): EntryLine {
+  const lines = entryLines();
+  return lines[Math.min(lines.length - 1, Math.floor(random() * lines.length))];
+}
+
+/**
  * The layout the page address asks for with `?layout=<id>`, or the default layout if it names
  * none or one that does not exist.
  */

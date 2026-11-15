@@ -8,6 +8,7 @@ import {
   layoutUrl,
   parseLayout,
   radioLabel,
+  randomLine,
   spawnNote,
   statusTitle,
   switchesLine,
@@ -129,6 +130,28 @@ describe('entryLines', () => {
     applyLayout('hub');
     entryLines().pop();
     expect(entryLines()).toHaveLength(4);
+  });
+});
+
+describe('randomLine', () => {
+  afterEach(() => resetLayout());
+
+  it('gives each entry line of the layout in use an equal share of the range', () => {
+    applyLayout('hub');
+    expect([0, 0.24, 0.25, 0.5, 0.75, 0.999].map((r) => randomLine(() => r))).toEqual(['A', 'A', 'B', 'C', 'D', 'D']);
+    applyLayout('junction');
+    expect([0, 0.49, 0.5, 0.99].map((r) => randomLine(() => r))).toEqual(['A', 'A', 'B', 'B']);
+  });
+
+  it('only ever picks a line of the layout in use', () => {
+    applyLayout('branch');
+    for (const r of [0, 0.3, 0.7, 0.9999]) expect(randomLine(() => r)).toBe('A');
+  });
+
+  it('picks every line sooner or later with the real random numbers', () => {
+    applyLayout('hub');
+    const seen = new Set(Array.from({ length: 400 }, () => randomLine()));
+    expect([...seen].sort()).toEqual(['A', 'B', 'C', 'D']);
   });
 });
 
