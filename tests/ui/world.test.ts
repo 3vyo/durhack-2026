@@ -141,3 +141,20 @@ describe('the junction zone', () => {
     expect(patches.some((m) => m.visible)).toBe(false);
   });
 });
+
+describe('the scenery', () => {
+  /** How many meshes the scene draws, which is about how many draw calls it costs. */
+  function meshCount(trees: number): number {
+    const scene = new THREE.Scene();
+    buildWorld(scene, stationFrame(), trees);
+    let count = 0;
+    scene.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) count += 1;
+    });
+    return count;
+  }
+
+  it('draws any number of trees with the same few meshes', () => {
+    expect(meshCount(24)).toBe(meshCount(2));
+  });
+});

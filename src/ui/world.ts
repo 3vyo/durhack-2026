@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Switches } from '../engine/switches';
 import {
   ENTRIES,
@@ -91,6 +92,44 @@ function roundedBox(w: number, h: number, d: number, color: number, radius = 0.1
   return mesh;
 }
 
+/**
+ * Gathers scenery that never moves or changes colour, and adds it to the scene as one mesh for
+ * each look, so twenty trees cost a few draw calls and not forty. Pieces with the same colour,
+ * roughness and shadow settings share a look. `finish` adds the merged meshes.
+ */
+function sceneryBatch(scene: THREE.Scene): { add(mesh: THREE.Mesh): void; finish(): void } {
+  const looks = new Map<string, { template: THREE.Mesh; geometries: THREE.BufferGeometry[] }>();
+  return {
+    add(mesh) {
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      const key = `${m.color.getHex()} ${m.roughness} ${mesh.castShadow} ${mesh.receiveShadow} ${mesh.geometry.index !== null}`;
+      mesh.updateMatrix();
+      const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrix);
+      mesh.geometry.dispose();
+      const look = looks.get(key);
+      if (look) {
+        look.geometries.push(geometry);
+        m.dispose();
+      } else {
+        looks.set(key, { template: mesh, geometries: [geometry] });
+      }
+    },
+    finish() {
+      for (const { template, geometries } of looks.values()) {
+        const merged = mergeGeometries(geometries);
+        // Pieces that cannot be merged are added one by one, as they were.
+        for (const geometry of merged ? [merged] : geometries) {
+          const mesh = new THREE.Mesh(geometry, template.material);
+          mesh.castShadow = template.castShadow;
+          mesh.receiveShadow = template.receiveShadow;
+          scene.add(mesh);
+        }
+        if (merged) for (const g of geometries) g.dispose();
+      }
+    },
+  };
+}
+
 interface Device {
   body: THREE.MeshStandardMaterial;
   roof: THREE.MeshStandardMaterial | null;
@@ -125,24 +164,25 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   const islandEnd = TRACK_START.EXIT;
   const platformLength = (islandEnd - islandStart) * UNITS_PER_METRE;
   const platformX = x((islandStart + islandEnd) / 2);
+  const scenery = sceneryBatch(scene);
   for (const lane of entries) {
     const island = roundedBox(platformLength, 0.55, 4.2, 0xaebfd6, 0.2);
     island.position.set(platformX, 0.28, z(lane));
-    scene.add(island);
+    scenery.add(island);
     for (const side of [-1, 1]) {
       const edge = roundedBox(platformLength, 0.1, 0.18, 0xeef2f7, 0.04);
       edge.position.set(platformX, 0.58, z(lane) + side * 1.95);
-      scene.add(edge);
+      scenery.add(edge);
     }
     // A small shelter, not a canopy, so the trains stay visible from above.
     const roof = roundedBox(5, 0.22, 1.6, 0xe6c9a0, 0.08);
     roof.position.set(platformX, 2.6, z(lane));
-    scene.add(roof);
+    scenery.add(roof);
     for (const dx of [-2, 2]) {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2, 8), material(0x5b6b80));
       post.position.set(platformX + dx, 1.5, z(lane));
       post.castShadow = true;
-      scene.add(post);
+      scenery.add(post);
     }
   }
 
@@ -172,19 +212,19 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   // placed the same way every time.
   const nearSide = Math.max(...lanes) + 6;
   for (let i = 0; i < trees; i++) {
-    const tree = new THREE.Group();
+    const far = i % 2 === 0;
+    const treeX = ((i * 37) % 100) / 100 * frame.width;
+    const treeZ = far ? -14 - ((i * 7) % 9) : nearSide + ((i * 5) % 9);
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.1, 8), material(0x6b4f3a));
-    trunk.position.y = 0.55;
+    trunk.position.set(treeX, 0.55, treeZ);
     const crown = new THREE.Mesh(new THREE.ConeGeometry(1.25 + (i % 3) * 0.2, 3.2, 9), material(i % 2 ? 0x3d7a55 : 0x4a8a5d));
-    crown.position.y = 2.6;
+    crown.position.set(treeX, 2.6, treeZ);
     for (const m of [trunk, crown]) {
       m.castShadow = true;
-      tree.add(m);
+      scenery.add(m);
     }
-    const far = i % 2 === 0;
-    tree.position.set(((i * 37) % 100) / 100 * frame.width, 0, far ? -14 - ((i * 7) % 9) : nearSide + ((i * 5) % 9));
-    scene.add(tree);
   }
+  scenery.finish();
 
   // Each platform's sensor covers its whole track, from the points to where it joins EXIT. A
   // see-through strip over the rails shows what it reads.
