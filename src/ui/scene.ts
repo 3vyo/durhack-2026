@@ -42,13 +42,20 @@ export interface CameraPose {
   target: [number, number, number];
 }
 
+/** Which of the scene's own drawings are on, from the Show menu. */
+export interface Drawn {
+  sight: boolean;
+  tint: boolean;
+  zone: boolean;
+}
+
 export interface SceneView {
   /**
    * Draws one snapshot and a line for each link (see links.ts). `drawn.sight` adds each train's
    * sensor cone (see sight.ts), and `drawn.tint` colours each platform track by its sensor's
-   * reading. The view only reads them.
+   * reading, and `drawn.zone` shows the junction zone's patch. The view only reads them.
    */
-  render(s: Snapshot, links?: Link[], drawn?: { sight: boolean; tint: boolean }): void;
+  render(s: Snapshot, links?: Link[], drawn?: Drawn): void;
   setCamera(mode: CameraMode): void;
   /** Calls back whenever the viewer moves this camera, with where it now is. */
   onCameraMove(handler: (pose: CameraPose) => void): void;
@@ -704,11 +711,11 @@ export function createScene(
     return middle;
   }
 
-  function render(s: Snapshot, links: Link[] = [], drawn = { sight: false, tint: false }): void {
+  function render(s: Snapshot, links: Link[] = [], drawn: Drawn = { sight: false, tint: false, zone: false }): void {
     const sight = drawn.sight;
     observe(s);
     world.setDevices(s.switches);
-    world.setJunctionBusy(junctionBusy(s));
+    world.setJunctionZone(junctionBusy(s), drawn.zone);
     world.setSensors(s.sensors.platformOccupied, s.switches.sensors, drawn.tint);
     const views = new Map(s.trains.map((v) => [v.id, v]));
 

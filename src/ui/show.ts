@@ -4,14 +4,14 @@ import type { LinkKind } from './links';
 // Show menu, and L turns them all on or off together. They are drawings only: turning one off
 // changes nothing in the run.
 
-export type ShowKey = 'permits' | 'leader' | 'keepers' | 'sensorRadio' | 'cables' | 'cones' | 'tint';
+export type ShowKey = 'permits' | 'leader' | 'keepers' | 'sensorRadio' | 'cables' | 'cones' | 'tint' | 'zone';
 
 export type Show = Record<ShowKey, boolean>;
 
 export interface ShowItem {
   key: ShowKey;
   label: string;
-  /** The line kinds this item covers. The cones and the track tint are not lines. */
+  /** The line kinds this item covers. The cones, the track tint and the zone are not lines. */
   kinds: readonly LinkKind[];
 }
 
@@ -24,6 +24,7 @@ export const SHOW_ITEMS: readonly ShowItem[] = [
   { key: 'cables', label: 'Sensor cables', kinds: ['wired'] },
   { key: 'cones', label: 'Train sensor cones', kinds: [] },
   { key: 'tint', label: 'Platform track readings', kinds: [] },
+  { key: 'zone', label: 'Junction zone', kinds: [] },
 ];
 
 export const SHOW_ALL: Show = {
@@ -34,6 +35,7 @@ export const SHOW_ALL: Show = {
   cables: true,
   cones: true,
   tint: true,
+  zone: true,
 };
 
 /** True if a line of this kind is on show. */
