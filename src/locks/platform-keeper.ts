@@ -1,5 +1,5 @@
 import { REQUEST_REPEAT, RESUME_SETTLE, TICK } from '../shared/constants';
-import { PLATFORMS, pairOf } from '../shared/map';
+import { ALL_PLATFORMS, PLATFORMS, pairOf } from '../shared/map';
 import type {
   LocalActor,
   Message,
@@ -11,9 +11,14 @@ import type {
 } from '../shared/types';
 import { longerThan, stillSettling, wasSwitchedOff } from './resume';
 
-// The platform keeper owns the four platforms and grants one lock per platform.
-// Rules: docs/design.md, "Entering the station" and "Platform sensors switched off".
-// The switched-back-on rule is from the review on pull request #31.
+// The platform keeper owns every platform of the layout in use and grants one lock per
+// platform. Rules: docs/design.md, "Entering the station" and "Platform sensors switched
+// off". The switched-back-on rule is from the review on pull request #31.
+//
+// The layout is read from PLATFORMS in src/shared/map.ts each time a function runs, never
+// copied when this file loads or when the keeper is built. Each entry track owns its own two
+// platforms, and the keeper never grants or offers a platform outside the layout or outside
+// the asking train's pair.
 //
 // The actor uses only `now`, its inbox, the sensor readings and the timetable. In any
 // doubtful case it refuses. A wrong refusal costs time. A wrong grant can cost a collision.
@@ -21,7 +26,7 @@ import { longerThan, stillSettling, wasSwitchedOff } from './resume';
 /**
  * How long a platform must have read empty before it is granted, after it read occupied
  * with no lock on it. Local to this file. It is the same wait as RESUME_SETTLE, for the
- * same reason: it covers a train getting from its stop at the end of A or B to the
+ * same reason: it covers a train getting from its stop at the end of its entry track to the
  * platform sensor.
  */
 export function unlockedSettle(): number {
@@ -62,23 +67,36 @@ export type PlatformKeeperReply =
   | { kind: 'grant'; platform: PlatformId }
   | { kind: 'refuse'; alternative: PlatformId | null };
 
+/**
+ * The memory has a place for every platform any layout can have, so it has the same shape
+ * whichever layout is in use when it is built. A platform outside the layout is never
+ * locked, because canGrantPlatform never grants it.
+ */
 export function initialPlatformKeeperMemory(): PlatformKeeperMemory {
-  return {
-    locks: { P1: null, P2: null, P3: null, P4: null },
-    unlockedOccupiedAt: { P1: null, P2: null, P3: null, P4: null },
-    lastStepAt: null,
-    resumedAt: null,
-  };
+  const locks = {} as Record<PlatformId, PlatformLock | null>;
+  const unlockedOccupiedAt = {} as Record<PlatformId, number | null>;
+  for (const platform of ALL_PLATFORMS) {
+    locks[platform] = null;
+    unlockedOccupiedAt[platform] = null;
+  }
+  return { locks, unlockedOccupiedAt, lastStepAt: null, resumedAt: null };
+}
+
+/** True if the platform is in the layout in use. */
+function inLayout(platform: PlatformId): boolean {
+  return PLATFORMS.includes(platform);
 }
 
 /**
  * "Entering the station": the station only offers platforms from the train's own pair.
- * Looks up the train's entry track in the timetable and returns that track's two platforms.
- * A train that is not in the timetable has no pair, so it is offered nothing.
+ * Looks up the train's entry track in the timetable and returns that track's two platforms:
+ * P1 and P2 for A, P3 and P4 for B, P5 and P6 for C, P7 and P8 for D. A train that is not in
+ * the timetable has no pair, so it is offered nothing. Nor is a train whose entry track is
+ * not in the layout in use, since its platforms do not exist.
  */
 export function ownPair(timetable: TimetableEntry[], train: TrainId): PlatformId[] {
   const entry = timetable.find((e) => e.id === train);
-  return entry ? [...pairOf(entry.entry)] : [];
+  return entry ? pairOf(entry.entry).filter(inLayout) : [];
 }
 
 /**
@@ -93,7 +111,6 @@ export function answerOrder(trains: TrainId[], timetable: TimetableEntry[]): Tra
   return [...trains].sort((a, b) => enterAt(a) - enterAt(b) || a - b);
 }
 
-/** The platform this train holds the lock on, or null. */
 /**
  * How long a train without a lock may be silent before the platform keeper stops counting it as
  * waiting. Two repeats, so one late request does not lose a train its place.
@@ -131,6 +148,7 @@ export function trainAheadIsWaiting(memory: PlatformKeeperMemory, timetable: Tim
   });
 }
 
+/** The platform of the layout in use that this train holds the lock on, or null. */
 export function heldBy(memory: PlatformKeeperMemory, train: TrainId): PlatformId | null {
   return PLATFORMS.find((p) => memory.locks[p]?.holder === train) ?? null;
 }
@@ -152,8 +170,11 @@ function unlockedTrainMayBeNear(memory: PlatformKeeperMemory, platform: Platform
 
 /**
  * "Entering the station" and "Platform sensors switched off": a new grant. Grant a
- * platform only if it is in the train's pair, its sensor says empty (a dead sensor reads
- * occupied), nobody holds its lock, and the train holds no lock already.
+ * platform only if it is in the layout in use and in the train's pair, its sensor says empty
+ * (a dead sensor reads occupied), nobody holds its lock, and the train holds no lock already.
+ *
+ * A platform outside the layout should already read occupied in the sensor readings. The
+ * check here does not depend on that.
  *
  * One more guard. A platform that read occupied with no lock on it had a train that came
  * in by the fixed split, or a dead sensor. When that reading turns empty, the sensors may
@@ -162,6 +183,7 @@ function unlockedTrainMayBeNear(memory: PlatformKeeperMemory, platform: Platform
  */
 export function canGrantPlatform(check: GrantCheck): boolean {
   const { now, train, platform, pair, memory, sensors } = check;
+  if (!inLayout(platform)) return false;
   if (!pair.includes(platform)) return false;
   if (sensors.platformOccupied[platform]) return false;
   if (memory.locks[platform] !== null) return false;

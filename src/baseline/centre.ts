@@ -19,10 +19,13 @@ import {
   TRACK_LENGTH,
   TRACK_START,
   entryOf,
+  isEntryTrack,
+  isPlatform,
   pairOf,
   xOf,
 } from '../shared/map';
 import type {
+  EntryId,
   Message,
   PlatformId,
   ResourceId,
@@ -54,6 +57,12 @@ import type {
 // Radio working: once the centre has been down for RADIO_WORKING_DELAY, staff move the
 // stopped trains by radio. radioStep makes the same decisions as step, but releases one
 // stopped train every RADIO_RELEASE_GAP and marks its permits `caution`.
+//
+// Layouts: the map has one to four entry tracks, each with its own pair of platforms. The
+// centre reads the layout in use from the map when it decides, never when this file loads.
+// It sends a train only to a platform of its own entry track's pair, and never to a platform
+// outside the layout. There is one junction zone on every layout, so one train at a time goes
+// through it however many platforms feed it. Design: "Layouts".
 
 export type Permit = Extract<Message, { type: 'permit' }>;
 
@@ -157,14 +166,19 @@ export function makePermit(
   return caution ? { ...permit, caution: true } : permit;
 }
 
-// Map helpers.
+// Map helpers. isEntryTrack and isPlatform come from the map and cover every layout.
 
-function isPlatform(track: TrackId): track is PlatformId {
-  return (PLATFORMS as readonly TrackId[]).includes(track);
+/** True if the layout in use has this platform. Read when called, so it follows applyLayout. */
+function inLayout(platform: PlatformId): boolean {
+  return PLATFORMS.includes(platform);
 }
 
-function isEntryTrack(track: TrackId): track is 'A' | 'B' {
-  return track === 'A' || track === 'B';
+/**
+ * True if the centre's train detection shows this platform empty. A platform outside the
+ * layout never reads empty, and nor does one with no reading. Design: "Layouts".
+ */
+function readsEmpty(platform: PlatformId, sensors: SensorReadings): boolean {
+  return inLayout(platform) && sensors.platformOccupied[platform] === false;
 }
 
 function endX(track: TrackId): number {
@@ -240,9 +254,10 @@ function updatePlan(
 
 /**
  * The platform each train on the map is sent to or is on, after what this step shows. A
- * train on A or B whose route is set into a platform of its own pair is sent there, even if
- * the centre chose another one: our trains choose platforms themselves while the centre is
- * off, and the centre takes over from where they are.
+ * train on an entry track whose route is set into a platform of its own pair is sent there,
+ * even if the centre chose another one: our trains choose platforms themselves while the
+ * centre is off, and the centre takes over from where they are. It ignores a route into
+ * another track's pair or into a platform outside the layout.
  */
 function updatePlatforms(memory: CentreMemory, trains: TrainState[], routes: Routes): Map<TrainId, PlatformId> {
   const platformFor = new Map<TrainId, PlatformId>();
@@ -251,13 +266,18 @@ function updatePlatforms(memory: CentreMemory, trains: TrainState[], routes: Rou
     const known = memory.platformFor.get(train.id);
     const route = routes.get(train.id) ?? null;
     if (isPlatform(track)) platformFor.set(train.id, track);
-    else if (isEntryTrack(track) && route !== null && isPlatform(route) && pairOf(track).includes(route)) {
+    else if (isEntryTrack(track) && route !== null && isOwnPlatform(track, route)) {
       platformFor.set(train.id, route);
     } else if (known && (isEntryTrack(track) || rearX(train) < TRACK_START.EXIT)) {
       platformFor.set(train.id, known);
     }
   }
   return platformFor;
+}
+
+/** True if `route` is a platform of the layout that this entry track owns. */
+function isOwnPlatform(entry: EntryId, route: TrackId): route is PlatformId {
+  return isPlatform(route) && inLayout(route) && pairOf(entry).includes(route);
 }
 
 /**
@@ -397,20 +417,24 @@ function isSentTo(platform: PlatformId, memory: CentreMemory): boolean {
 
 /**
  * Says whether the centre may permit a train onto a piece of track, from the true
- * occupancy its own train detection gives. Design: "Today's rule, for comparison".
+ * occupancy its own train detection gives. A platform outside the layout is never available.
+ * Design: "Today's rule, for comparison" and "Layouts".
  */
 export function isAvailable(resource: ResourceId, memory: CentreMemory, sensors: SensorReadings): boolean {
   if (resource === 'JUNCTION') {
     const clear = !sensors.junctionOccupied && sensors.exitStartClear;
     return clear && memory.junctionHolder === null;
   }
-  return !sensors.platformOccupied[resource] && !isSentTo(resource, memory);
+  return readsEmpty(resource, sensors) && !isSentTo(resource, memory);
 }
 
 /**
  * Picks the platform the centre sends a train to, or null if none is free. It picks from
  * the entry track's own pair, the timetable's default first, and keeps a choice once made.
- * Design: "Today's rule, for comparison".
+ * The pair is the one the train's entry track owns: A owns P1 and P2, B owns P3 and P4,
+ * C owns P5 and P6, D owns P7 and P8. The centre sees the true state, so it goes by the
+ * track the train is on.
+ * Design: "Today's rule, for comparison" and "Layouts".
  */
 export function choosePlatform(
   train: TrainState,
@@ -420,7 +444,8 @@ export function choosePlatform(
 ): PlatformId | null {
   const kept = memory.platformFor.get(train.id);
   if (kept) return kept;
-  const pair = pairOf(entry.entry);
+  const { track } = train.pos;
+  const pair = pairOf(isEntryTrack(track) ? track : entry.entry);
   const candidates = [...pair.filter((p) => p === entry.platform), ...pair.filter((p) => p !== entry.platform)];
   return candidates.find((platform) => isAvailable(platform, memory, sensors)) ?? null;
 }
@@ -496,7 +521,7 @@ function grantJunction(memory: CentreMemory, trains: TrainState[], sensors: Sens
 
 /**
  * Picks the track a train should take at the end of its current track.
- * - On A or B: the platform the centre chose for it, or null.
+ * - On an entry track: the platform the centre chose for it, or null.
  * - In a platform: EXIT, once the train holds the junction.
  * - On EXIT: null.
  * Design: "Today's rule, for comparison".
@@ -508,7 +533,11 @@ export function nextTrackFor(train: TrainState, memory: CentreMemory): TrackId |
   return memory.junctionHolder === train.id ? 'EXIT' : null;
 }
 
-/** The tracks a train's body is on. Its rear is on the track before for the first 100 m. */
+/**
+ * The tracks a train's body is on. Its rear is on the track before for the first 100 m. A
+ * train on EXIT whose platform the centre does not know may have its rear in any platform of
+ * the layout, so it counts as on all of them.
+ */
 function tracksUnder(train: TrainState, memory: CentreMemory): TrackId[] {
   const { track } = train.pos;
   if (isEntryTrack(track) || rearX(train) >= TRACK_START[track]) return [track];
@@ -548,8 +577,8 @@ function rearAheadX(train: TrainState, trains: TrainState[], memory: CentreMemor
 }
 
 /**
- * True if a train on A or B may run into the platform it is sent to. A train that was
- * permitted in and can no longer stop before the end of its entry track is let run in.
+ * True if a train on an entry track may run into the platform it is sent to. A train that
+ * was permitted in and can no longer stop before the end of its entry track is let run in.
  */
 function mayEnterPlatform(
   train: TrainState,
@@ -557,7 +586,7 @@ function mayEnterPlatform(
   memory: CentreMemory,
   sensors: SensorReadings,
 ): boolean {
-  if (!sensors.platformOccupied[platform]) return true;
+  if (readsEmpty(platform, sensors)) return true;
   const entryEnd = endX(train.pos.track);
   const permitted = memory.plans.get(train.id)?.untilX ?? xOf(train.pos);
   return permitted > entryEnd && reachOf(train) > entryEnd;

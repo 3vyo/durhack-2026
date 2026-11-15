@@ -4,22 +4,21 @@ import {
   PERMIT_FRESH,
   POSITION_INTERVAL,
   REQUEST_REPEAT,
-  SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
   PLATFORM_KEEPER_TIMEOUT,
   TICK,
 } from '../shared/constants';
 import { ASK_POINT, PLATFORMS, PLATFORM_PAIRS, PLATFORM_STOP, RANGE, TRACK_LENGTH, xOf } from '../shared/map';
-import type { PlatformId, Position } from '../shared/types';
+import type { EntryId, PlatformId, Position } from '../shared/types';
 
 // The map and timing numbers the train rules need, taken from src/shared/. No number the
 // design names is written in src/train/. Each rule function takes the numbers it needs as
 // an input, picked from this type, so a test can pass its own.
 //
-// A parameter file can replace the shared constants before a run (setConstants). So
-// nothing here copies one when the file loads: trainNumbers() reads them on every call,
-// and the agent calls it on every decide.
+// A parameter file can replace the shared constants before a run (setConstants), and pick
+// another layout (applyLayout). So nothing here copies one when the file loads:
+// trainNumbers() reads them on every call, and the agent calls it on every decide.
 
 export interface TrainNumbers {
   // Timing, in seconds.
@@ -33,18 +32,18 @@ export interface TrainNumbers {
   grantLife: number; // a junction grant must be used within this long, or the train drops it
   slotLength: number;
   slotWindow: number; // a platform may start during the first slotWindow seconds of its slot
-  slotCount: number;
+  slotCount: number; // one slot for each platform of the layout in use
   slotOrder: readonly PlatformId[]; // the platform at index k may start in slot k
 
   // Map, in metres.
-  askPoint: number; // offset on A and B where the train first asks for a platform
-  entryLength: number; // length of A and B
+  askPoint: number; // offset on every entry track where the train first asks for a platform
+  entryLength: number; // length of every entry track
   exitLength: number; // length of EXIT. A train whose front reaches its end leaves the map
   platformStop: number; // offset in a platform where the train stops
   stopClose: number; // a train stopped within this distance of a stop point is "at" it
   hearSensorsFrom: number; // x range where a train should hear the platform sensors
   hearSensorsTo: number;
-  pairs: Record<'A' | 'B', readonly PlatformId[]>; // the platforms each entry track owns
+  pairs: Readonly<Record<EntryId, readonly PlatformId[]>>; // the two platforms each entry track owns, in any layout
   xOf: (pos: Position) => number; // a position on the shared x axis
 }
 
@@ -92,10 +91,12 @@ export function trainNumbers(): TrainNumbers {
     grantLife: JUNCTION_KEEPER_TIMEOUT - REQUEST_REPEAT,
     slotLength: SLOT_LENGTH,
     slotWindow: SLOT_WINDOW,
-    slotCount: SLOT_COUNT,
+    // One clock slot for each platform of the layout in use, lowest number first. Both are
+    // read here, on every call, so they always describe the same layout.
+    slotCount: PLATFORMS.length,
     slotOrder: PLATFORMS,
     askPoint: ASK_POINT,
-    entryLength: TRACK_LENGTH.A,
+    entryLength: TRACK_LENGTH.A, // every entry track has the same length
     exitLength: TRACK_LENGTH.EXIT,
     platformStop: PLATFORM_STOP,
     stopClose: STOP_CLOSE,

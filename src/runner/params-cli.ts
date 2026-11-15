@@ -6,10 +6,13 @@
 // Each file is run with our program and with the baseline, on the same timetable and the
 // same failures. Both are scored against the baseline with nothing failed. The command
 // exits non-zero if a file is invalid or if our program has a collision.
+//
+// A file can pick its layout with "layout". The report names it, and every file starts from
+// the default layout again, so one file's layout or values never carry into the next.
 
 // @ts-expect-error Node's own types are not installed. This file only runs under vite-node.
 import { readFileSync } from 'node:fs';
-import { ParamsError, parseParams } from '../shared/params';
+import { ParamsError, parseParams, resetParams } from '../shared/params';
 import { compareParams, formatParamsReport } from './params';
 import { PROGRAMS } from './programs';
 
@@ -23,6 +26,8 @@ function runFile(path: string): boolean {
   } catch (e) {
     console.log(`\n${path}\n${e instanceof ParamsError ? e.message : `Could not run the file: ${String(e)}`}`);
     return false;
+  } finally {
+    resetParams();
   }
 }
 

@@ -3,7 +3,6 @@ import {
   JUNCTION_KEEPER_TIMEOUT,
   REQUEST_REPEAT,
   SIGHT_SPEED,
-  SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
   TICK,
@@ -303,8 +302,9 @@ describe('Junction keeper switched off: the slots', () => {
   }
 
   it('slot is floor(now / 60) mod 4', () => {
+    expect(N.slotCount).toBe(4);
     for (const now of [0, 59, 60, 130, 185, 240, 250, 487, 12345]) {
-      const slot = Math.floor(now / SLOT_LENGTH) % SLOT_COUNT;
+      const slot = Math.floor(now / SLOT_LENGTH) % platforms.length;
       const inWindow = now % SLOT_LENGTH < SLOT_WINDOW;
       expect(open(now)).toEqual(inWindow ? [platforms[slot]] : []);
     }
@@ -337,7 +337,7 @@ describe('Junction keeper switched off: the slots', () => {
   });
 
   it('the slots repeat every 240 seconds', () => {
-    const cycle = SLOT_LENGTH * SLOT_COUNT;
+    const cycle = SLOT_LENGTH * platforms.length;
     for (const now of [0, 5, 70, 125, 190, 200]) {
       expect(open(now + cycle)).toEqual(open(now));
       expect(open(now + 7 * cycle)).toEqual(open(now));

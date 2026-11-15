@@ -15,6 +15,8 @@ npm install
 npm run dev                          # the live page, usually http://localhost:5173
 npm test                             # every test
 npm run batch                        # 50 seeds of every scenario, no screen
+npm run batch -- --layout=hub        # the same on one layout: branch, junction (the default), busy or hub
+npm run batch -- 10 --layout=all     # 10 seeds on every layout, one block each
 npm run demo-check                   # drives the page in headless Chrome, saves screenshots
 npm run demo-check -- --quick        # shorter waits
 npm run demo-check -- --built        # builds and checks the built copy
@@ -25,6 +27,21 @@ npm run demo-check -- --quality=low  # checks the page as ?quality=low
 `demo-check` fails on page errors, console errors and failed downloads, presses every control, clicks a real train, and saves screenshots to `demo-check-out/` (git-ignored), including a close-up of our scene. **Open the screenshots and look at them.** A passing check does not mean it looks right.
 
 Present from a built copy: `npm run build`, then `npx vite preview`. The dev server is for development.
+
+## Layouts
+
+The page draws and runs any of the four layouts in [design.md](design.md): `branch`, `junction` (the default), `busy` and `hub`.
+
+- The page address picks the layout: `?layout=hub`. `src/main.ts` reads it first and calls `applyLayout` before anything else is built. A name that is not a layout gives the default.
+- The Layout list in the control dock shows the layout in use. Choosing another reloads the page with the new `?layout=`, and keeps the rest of the address, such as `?quality=low`. `parseLayout` and `layoutUrl` in `controls.ts` do this.
+- Nothing in `src/ui/` keeps a copy of the layout. Lanes, labels, cameras, scenery and the spawn list read `ENTRIES` and `PLATFORMS` when they are called, so each is right for the layout in use. A scene is built once, for the layout in use at that moment.
+- Lanes run P1, A, P2, P3, B, P4, P5, C, P6, P7, D, P8, and EXIT runs down the middle of the lanes the layout has. With one or three lines, EXIT is in line with the middle entry line.
+- The way out joins in two stages. Each pair of platforms joins in its entry line's lane over 60 m. Then each pair bends into EXIT at the same angle the default layout uses, about 32 degrees, so a pair further from EXIT takes longer: 360 m for lines A and D of `hub`. `exitJoinLength` in `layout.ts` gives the length, and both the drawn track (`world.ts`) and the trains (`pathAt`) use it.
+- `stationFrame()` is the stretch a scene shows for the layout in use. It is `STATION_FRAME` (x 5000 to 6800), made longer on the right for `busy` and `hub` so the whole join is in the picture.
+- Both cameras centre on the lanes the layout has. The angled camera backs off in proportion for a layout deeper than the default.
+- `demo-check` opens `?layout=hub` and `?layout=branch` near its end and saves an angled and an overhead screenshot of each.
+- The 50-run averages come from a worker, which has its own copy of the layout. `src/main.ts` sends it the layout with the scenario (`BatchRequest` in `src/runner/run.ts`).
+- `npm run batch` and `npm run sim` name the layout at the top of what they print. A parameter file picks its layout with `"layout"`; `params/layout-branch.json`, `layout-busy.json` and `layout-hub.json` are examples.
 
 ## How the pieces fit
 
@@ -38,11 +55,11 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 |---|---|
 | `palette.ts` | The five mode colours, checked together with the data-viz palette checker, and a shape per mode. The one source of mode colours |
 | `markers.ts` | The marker over each train, stopped dimming, the legend entries, and drawing the shapes |
-| `layout.ts` | The path through the points (`pathAt`, `routeOf`), so each car follows the rails. Real-scale units (0.08 per metre), the frame (x 5000 to 6800), lanes, the two cameras (a close angled view of `ANGLED_FOCUS`, x 5500 to 6500, opens first; overhead fits the whole frame), label anchors, device sites and looks, `junctionBusy` |
+| `layout.ts` | The path through the points (`pathAt`, `routeOf`), so each car follows the rails. Real-scale units (0.08 per metre), the frame (`stationFrame()`, x 5000 to 6800 in the default layout), lanes for the layout in use (`laneOf`), the two cameras (a close angled view of `ANGLED_FOCUS`, x 5650 to 6650, opens first; overhead fits the whole frame), label anchors, device sites and looks, `junctionBusy` |
 | `assets.ts`, `kit.ts`, `consist.ts`, `rails.ts` | Kenney model paths, loading with a fallback, laying cars end to end, laying track pieces |
 | `environment.ts` | The sky, light and fog values, and `?quality=low` |
 | `hud.ts` | The scoreboard rows and the three big tiles |
-| `controls.ts` | Switch labels, the banner line, the breakdown picker |
+| `controls.ts` | Switch labels, the banner line, the breakdown picker, the lines a train can be spawned on (`entryLines`), and the layout in the page address (`parseLayout`, `layoutUrl`) |
 | `overlay.ts` | The lines on a clicked train's card |
 | `scene.ts` (three) | One scene per side: trains from the models (boxes if they fail), markers, STOPPED tags, HTML labels, and a free camera (drag to turn, right-drag to slide, scroll to zoom; the camera button resets it) |
 | `world.ts` (three) | The fixed scenery: track, platforms, the four device buildings, the junction zone, trees |

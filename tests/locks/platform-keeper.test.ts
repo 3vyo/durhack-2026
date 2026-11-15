@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   unlockedSettle,
   answerOrder,
@@ -22,7 +22,16 @@ import {
   type PlatformKeeperMemory,
 } from '../../src/locks/platform-keeper';
 import { REQUEST_REPEAT, RESUME_SETTLE, TICK } from '../../src/shared/constants';
-import { PLATFORMS } from '../../src/shared/map';
+import {
+  ALL_PLATFORMS,
+  LAYOUT_IDS,
+  LAYOUTS,
+  PLATFORMS,
+  applyLayout,
+  pairOf,
+  platformReadings,
+  resetLayout,
+} from '../../src/shared/map';
 import type {
   LocalActor,
   Message,
@@ -44,20 +53,18 @@ const timetable: TimetableEntry[] = [
 
 const pairA: PlatformId[] = ['P1', 'P2'];
 
-/** Sensor readings with the named platforms occupied and the rest empty. */
+/**
+ * Sensor readings with the named platforms occupied and the rest of the layout in use empty.
+ * A platform outside the layout reads occupied. Built when called, so it follows the layout.
+ */
 function sensors(occupied: PlatformId[] = []): SensorReadings {
-  return {
-    platformOccupied: {
-      P1: occupied.includes('P1'),
-      P2: occupied.includes('P2'),
-      P3: occupied.includes('P3'),
-      P4: occupied.includes('P4'),
-    },
-    junctionOccupied: false,
-    exitStartClear: true,
-  };
+  const taken: Partial<Record<PlatformId, boolean>> = {};
+  for (const platform of occupied) taken[platform] = true;
+  return { platformOccupied: platformReadings(taken), junctionOccupied: false, exitStartClear: true };
 }
 
+// These two are built when this file loads, so they are for the default layout only. Tests
+// that change the layout call sensors() after applyLayout.
 const allEmpty = sensors();
 /** Every sensor switched off reads occupied. */
 const allDead = sensors([...PLATFORMS]);
@@ -95,7 +102,7 @@ function answer(
   train: TrainId,
   platform: PlatformId,
   memory: PlatformKeeperMemory = initialPlatformKeeperMemory(),
-  readings: SensorReadings = allEmpty,
+  readings: SensorReadings = sensors(),
 ) {
   const pair = ownPair(timetable, train);
   return answerPlatformRequest({
@@ -119,13 +126,13 @@ function drive(actor: LocalActor) {
     get now() {
       return now;
     },
-    step(inbox: Message[] = [], readings: SensorReadings = allEmpty): Outgoing[] {
+    step(inbox: Message[] = [], readings: SensorReadings = sensors()): Outgoing[] {
       const out = actor.step(now, inbox, readings);
       now += TICK;
       return out;
     },
     /** Steps with an empty inbox for this many seconds. Returns everything sent. */
-    idle(seconds: number, readings: SensorReadings = allEmpty): Outgoing[] {
+    idle(seconds: number, readings: SensorReadings = sensors()): Outgoing[] {
       const out: Outgoing[] = [];
       for (let i = 0; i < Math.round(seconds / TICK); i++) out.push(...this.step([], readings));
       return out;
@@ -134,7 +141,7 @@ function drive(actor: LocalActor) {
      * Steps for this many seconds while a train repeats its request every REQUEST_REPEAT.
      * Returns everything sent.
      */
-    repeat(seconds: number, request: Message, readings: SensorReadings = allEmpty): Outgoing[] {
+    repeat(seconds: number, request: Message, readings: SensorReadings = sensors()): Outgoing[] {
       const out: Outgoing[] = [];
       const every = Math.round(REQUEST_REPEAT / TICK);
       for (let i = 0; i < Math.round(seconds / TICK); i++) {
@@ -156,9 +163,10 @@ describe('platform keeper frame', () => {
   });
 
   it('starts with no locks, no step seen and no resume', () => {
+    const none = { P1: null, P2: null, P3: null, P4: null, P5: null, P6: null, P7: null, P8: null };
     expect(initialPlatformKeeperMemory()).toEqual({
-      locks: { P1: null, P2: null, P3: null, P4: null },
-      unlockedOccupiedAt: { P1: null, P2: null, P3: null, P4: null },
+      locks: none,
+      unlockedOccupiedAt: none,
       lastStepAt: null,
       resumedAt: null,
     });
@@ -431,7 +439,7 @@ describe('Platform sensors switched off', () => {
   it('does not grant a platform that a train without a lock has just left until it has read empty for unlockedSettle()', () => {
     const memory: PlatformKeeperMemory = {
       ...initialPlatformKeeperMemory(),
-      unlockedOccupiedAt: { P1: 100, P2: null, P3: null, P4: null },
+      unlockedOccupiedAt: { ...initialPlatformKeeperMemory().unlockedOccupiedAt, P1: 100 },
     };
     const check = { train: 1, platform: 'P1' as const, pair: pairA, memory, sensors: allEmpty };
     expect(canGrantPlatform({ ...check, now: 100 + unlockedSettle() })).toBe(false);
@@ -699,11 +707,7 @@ describe('the queue on an entry track', () => {
     { id: 3, entry: 'A', enterAt: 60, platform: 'P2', leader: 1, dwell: 30 },
     { id: 5, entry: 'A', enterAt: 120, platform: 'P1', leader: 3, dwell: 30 },
   ];
-  const free: SensorReadings = {
-    platformOccupied: { P1: false, P2: false, P3: false, P4: false },
-    junctionOccupied: false,
-    exitStartClear: true,
-  };
+  const free: SensorReadings = sensors();
   const asks = (train: number, resource: PlatformId): Message => ({ type: 'lockRequest', from: train, resource });
   const repliesTo = (out: Outgoing[], train: number) => out.map((o) => o.msg).filter((m) => 'to' in m && m.to === train);
   // The engine steps an actor every tick. A gap would look like the actor being switched
@@ -762,5 +766,316 @@ describe('the queue on an entry track', () => {
     const busy = { ...free, platformOccupied: { ...free.platformOccupied, P2: true } };
     const second = stepAt(first.memory, 6, 25, [asks(3, 'P2'), asks(5, 'P1')], busy);
     expect(repliesTo(second.out, 5)).toEqual([{ type: 'lockGrant', to: 5, resource: 'P1', follow: null }]);
+  });
+});
+
+describe('Layouts', () => {
+  afterEach(() => resetLayout());
+
+  // Trains 1 to 4 are the first trains on A, B, C and D. Trains 5 to 8 are the second, and
+  // trains 9 and 10 are the third on C and D.
+  const everyLine: TimetableEntry[] = [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    { id: 3, entry: 'C', enterAt: 0, platform: 'P5', leader: null, dwell: 30 },
+    { id: 4, entry: 'D', enterAt: 0, platform: 'P7', leader: null, dwell: 30 },
+    { id: 5, entry: 'A', enterAt: 60, platform: 'P2', leader: 1, dwell: 30 },
+    { id: 6, entry: 'B', enterAt: 60, platform: 'P4', leader: 2, dwell: 30 },
+    { id: 7, entry: 'C', enterAt: 60, platform: 'P6', leader: 3, dwell: 30 },
+    { id: 8, entry: 'D', enterAt: 60, platform: 'P8', leader: 4, dwell: 30 },
+    { id: 9, entry: 'C', enterAt: 120, platform: 'P5', leader: 7, dwell: 30 },
+    { id: 10, entry: 'D', enterAt: 120, platform: 'P7', leader: 8, dwell: 30 },
+  ];
+
+  /** Applies the layout and builds a keeper for the trains on that layout's entry tracks. */
+  function keeperOn(layout: (typeof LAYOUT_IDS)[number]) {
+    applyLayout(layout);
+    const entries = LAYOUTS[layout].entries;
+    return drive(createPlatformKeeper(everyLine.filter((e) => entries.includes(e.entry))));
+  }
+
+  /**
+   * Readings where every platform reads empty, even one outside the layout. The engine never
+   * sends this. It checks that the keeper does not lean on the readings to know the layout.
+   */
+  function everyPlatformReadsEmpty(): SensorReadings {
+    const none: Partial<Record<PlatformId, boolean>> = {};
+    for (const platform of ALL_PLATFORMS) none[platform] = false;
+    return { platformOccupied: platformReadings(none), junctionOccupied: false, exitStartClear: true };
+  }
+
+  it('has a place in its memory for every platform, whichever layout is in use', () => {
+    for (const layout of LAYOUT_IDS) {
+      applyLayout(layout);
+      const memory = initialPlatformKeeperMemory();
+      expect(Object.keys(memory.locks)).toEqual([...ALL_PLATFORMS]);
+      expect(Object.keys(memory.unlockedOccupiedAt)).toEqual([...ALL_PLATFORMS]);
+      expect(Object.values(memory.locks).every((lock) => lock === null)).toBe(true);
+    }
+  });
+
+  it('ownPair gives each entry track its own two platforms on hub', () => {
+    applyLayout('hub');
+    expect(ownPair(everyLine, 1)).toEqual(['P1', 'P2']);
+    expect(ownPair(everyLine, 2)).toEqual(['P3', 'P4']);
+    expect(ownPair(everyLine, 3)).toEqual(['P5', 'P6']);
+    expect(ownPair(everyLine, 4)).toEqual(['P7', 'P8']);
+  });
+
+  it('ownPair gives no platforms to a train whose entry track is not in the layout', () => {
+    applyLayout('branch');
+    expect(ownPair(everyLine, 1)).toEqual(['P1', 'P2']);
+    expect(ownPair(everyLine, 2)).toEqual([]);
+    applyLayout('busy');
+    expect(ownPair(everyLine, 3)).toEqual(['P5', 'P6']);
+    expect(ownPair(everyLine, 4)).toEqual([]);
+  });
+
+  // ownPair already leaves out a platform outside the layout. This checks the grant rule's own
+  // guard, by handing it a pair that names such a platform and readings that wrongly show it empty.
+  it('never grants or offers a platform outside the layout, even when it is handed one as part of the pair', () => {
+    applyLayout('junction');
+    const check = { now: 100, train: 3, pair: [...pairOf('C')], memory: initialPlatformKeeperMemory(), sensors: everyPlatformReadsEmpty() };
+    expect(canGrantPlatform({ ...check, platform: 'P5' })).toBe(false);
+    expect(canGrantPlatform({ ...check, platform: 'P6' })).toBe(false);
+    expect(chooseAlternative({ ...check, requested: 'P5' })).toBeNull();
+    // The same check grants once the layout has line C.
+    applyLayout('busy');
+    expect(canGrantPlatform({ ...check, platform: 'P5' })).toBe(true);
+    expect(chooseAlternative({ ...check, requested: 'P5' })).toBe('P6');
+  });
+
+  it('on busy, grants a train from C the platform of its pair that it asks for', () => {
+    expect(keeperOn('busy').step([ask(3, 'P5')])).toEqual([grant(3, 'P5')]);
+    expect(keeperOn('busy').step([ask(3, 'P6')])).toEqual([grant(3, 'P6')]);
+  });
+
+  it('on busy, offers a train from C the other platform of its pair, and nothing when both are taken', () => {
+    expect(keeperOn('busy').step([ask(3, 'P5')], sensors(['P5']))).toEqual([refuse(3, 'P5', 'P6')]);
+    expect(keeperOn('busy').step([ask(3, 'P6')], sensors(['P6']))).toEqual([refuse(3, 'P6', 'P5')]);
+    // P1 to P4 are free, but they belong to A and B.
+    expect(keeperOn('busy').step([ask(3, 'P5')], sensors(['P5', 'P6']))).toEqual([refuse(3, 'P5', null)]);
+  });
+
+  it('on hub, grants a train from D P7 or P8 and offers it nothing else', () => {
+    expect(keeperOn('hub').step([ask(4, 'P7')])).toEqual([grant(4, 'P7')]);
+    expect(keeperOn('hub').step([ask(4, 'P8')])).toEqual([grant(4, 'P8')]);
+    expect(keeperOn('hub').step([ask(4, 'P7')], sensors(['P7']))).toEqual([refuse(4, 'P7', 'P8')]);
+    expect(keeperOn('hub').step([ask(4, 'P7')], sensors(['P7', 'P8']))).toEqual([refuse(4, 'P7', null)]);
+  });
+
+  it("on every layout, never grants or offers a platform outside the layout or outside the asking train's pair", () => {
+    let grants = 0;
+    for (const layout of LAYOUT_IDS) {
+      applyLayout(layout);
+      for (const train of [1, 2, 3, 4]) {
+        const entry = everyLine.find((e) => e.id === train)!.entry;
+        const pair = pairOf(entry);
+        const allowed = pair.filter((p) => PLATFORMS.includes(p));
+        const readings = [sensors(), everyPlatformReadsEmpty(), sensors([pair[0]]), sensors([pair[1]])];
+        for (const asked of ALL_PLATFORMS) {
+          for (const reading of readings) {
+            // The whole timetable, so a train from a track outside the layout asks too.
+            const out = drive(createPlatformKeeper(everyLine)).step([ask(train, asked)], reading);
+            expect(out).toHaveLength(1);
+            const msg = out[0].msg;
+            if (msg.type === 'lockGrant') {
+              grants++;
+              expect(msg.resource).toBe(asked);
+              expect(allowed).toContain(msg.resource);
+            } else if (msg.type === 'lockRefuse') {
+              if (msg.alternative !== null) expect(allowed).toContain(msg.alternative);
+            } else {
+              throw new Error('the keeper sent something that is not a reply');
+            }
+          }
+        }
+      }
+    }
+    // The loop is not empty of grants: every train on a track of its layout gets some.
+    expect(grants).toBeGreaterThan(0);
+  });
+
+  it('on every layout, grants each platform of the layout to the first train on its entry track', () => {
+    for (const layout of LAYOUT_IDS) {
+      applyLayout(layout);
+      for (const platform of PLATFORMS) {
+        const train = everyLine.find((e) => pairOf(e.entry).includes(platform))!.id;
+        expect(drive(createPlatformKeeper(everyLine)).step([ask(train, platform)])).toEqual([grant(train, platform)]);
+      }
+    }
+  });
+
+  it('on busy, refuses a request for a platform outside the layout', () => {
+    const keeper = keeperOn('busy');
+    // P7 is not in busy. Train 3 is from C, so it is offered P5 from its own pair.
+    expect(keeper.step([ask(3, 'P7')])).toEqual([refuse(3, 'P7', 'P5')]);
+    expect(keeper.step([ask(3, 'P7')], everyPlatformReadsEmpty())).toEqual([refuse(3, 'P7', 'P5')]);
+    expect(heldBy(recordGrant(initialPlatformKeeperMemory(), 3, 'P7', 0), 3)).toBeNull();
+  });
+
+  it('on busy, refuses a train from D, whose entry track is not in the layout', () => {
+    applyLayout('busy');
+    const keeper = drive(createPlatformKeeper(everyLine));
+    expect(keeper.step([ask(4, 'P7')], everyPlatformReadsEmpty())).toEqual([refuse(4, 'P7', null)]);
+    expect(keeper.step([ask(4, 'P5')], everyPlatformReadsEmpty())).toEqual([refuse(4, 'P5', null)]);
+  });
+
+  it("on busy, refuses a request for a platform outside the train's pair", () => {
+    const keeper = keeperOn('busy');
+    expect(keeper.step([ask(3, 'P1')])).toEqual([refuse(3, 'P1', 'P5')]);
+    expect(keeper.step([ask(1, 'P5')])).toEqual([refuse(1, 'P5', 'P1')]);
+    expect(keeper.step([ask(2, 'P6')])).toEqual([refuse(2, 'P6', 'P3')]);
+  });
+
+  it('on branch, serves A and refuses a request for P3', () => {
+    const keeper = keeperOn('branch');
+    expect(keeper.step([ask(1, 'P3')])).toEqual([refuse(1, 'P3', 'P1')]);
+    expect(keeper.step([ask(1, 'P3')], everyPlatformReadsEmpty())).toEqual([refuse(1, 'P3', 'P1')]);
+    expect(keeper.step([ask(1, 'P1')])).toEqual([grant(1, 'P1')]);
+    expect(keeper.step([ask(5, 'P1')])).toEqual([refuse(5, 'P1', 'P2')]);
+    expect(keeper.step([ask(5, 'P2')])).toEqual([grant(5, 'P2')]);
+  });
+
+  it('on branch, refuses a train from B, whose entry track is not in the layout', () => {
+    applyLayout('branch');
+    const keeper = drive(createPlatformKeeper(everyLine));
+    expect(keeper.step([ask(2, 'P3')], everyPlatformReadsEmpty())).toEqual([refuse(2, 'P3', null)]);
+    expect(keeper.step([ask(2, 'P1')], everyPlatformReadsEmpty())).toEqual([refuse(2, 'P1', null)]);
+  });
+
+  it('on hub, trains on all four entry tracks are granted their own platforms on the same tick', () => {
+    const out = keeperOn('hub').step([ask(4, 'P7'), ask(3, 'P5'), ask(2, 'P3'), ask(1, 'P1')]);
+    expect(out).toEqual([grant(1, 'P1'), grant(2, 'P3'), grant(3, 'P5'), grant(4, 'P7')]);
+  });
+
+  it('on hub, fills all eight platforms, one lock each', () => {
+    const keeper = keeperOn('hub');
+    keeper.step([ask(1, 'P1'), ask(2, 'P3'), ask(3, 'P5'), ask(4, 'P7')]);
+    const out = keeper.step([ask(5, 'P2'), ask(6, 'P4'), ask(7, 'P6'), ask(8, 'P8')]);
+    expect(out).toEqual([grant(5, 'P2'), grant(6, 'P4'), grant(7, 'P6'), grant(8, 'P8')]);
+    // Every platform is locked now, so the third trains on C and D get nothing.
+    expect(keeper.step([ask(9, 'P5'), ask(10, 'P7')])).toEqual([refuse(9, 'P5', null), refuse(10, 'P7', null)]);
+  });
+
+  it('on hub, serves trains on C and D independently', () => {
+    const keeper = keeperOn('hub');
+    const cFull = sensors(['P5', 'P6']);
+    // Both platforms of C are taken. Train 3 waits at the front of C. D is not held up.
+    expect(keeper.step([ask(3, 'P5'), ask(4, 'P7')], cFull)).toEqual([refuse(3, 'P5', null), grant(4, 'P7')]);
+    expect(keeper.step([ask(3, 'P5'), ask(8, 'P8')], cFull)).toEqual([refuse(3, 'P5', null), grant(8, 'P8')]);
+    // And the other way round: D is full now. C is served once its platforms have read
+    // empty for unlockedSettle(), since they read occupied with no lock on them.
+    keeper.idle(unlockedSettle() + 2 * TICK);
+    expect(keeper.step([ask(3, 'P5'), ask(10, 'P7')])).toEqual([grant(3, 'P5'), refuse(10, 'P7', null)]);
+  });
+
+  it('on busy, refuses a train further back on C while the train in front of it has no platform', () => {
+    const keeper = keeperOn('busy');
+    const p6Taken = sensors(['P6']);
+    // Train 7 is at the front of C and asks for P6, which is taken. Train 9 behind it asks
+    // for the free P5 and is refused. Train 5 on A is not held up.
+    expect(keeper.step([ask(9, 'P5'), ask(7, 'P6'), ask(5, 'P2')], p6Taken)).toEqual([
+      grant(5, 'P2'),
+      refuse(7, 'P6', 'P5'),
+      refuse(9, 'P5', null),
+    ]);
+    // The front train takes the alternative. Nothing is left for the one behind.
+    expect(keeper.step([ask(9, 'P5'), ask(7, 'P5')], p6Taken)).toEqual([grant(7, 'P5'), refuse(9, 'P5', null)]);
+    // P6 is free again and the front train has its lock, so the train behind is served.
+    keeper.idle(unlockedSettle() + 2 * TICK);
+    expect(keeper.step([ask(9, 'P5')])).toEqual([refuse(9, 'P5', 'P6')]);
+    expect(keeper.step([ask(9, 'P6')])).toEqual([grant(9, 'P6')]);
+  });
+
+  it('on busy, the queue rule on C uses the timetable order of C only', () => {
+    applyLayout('busy');
+    const memory = recordWaiting(initialPlatformKeeperMemory(), [ask(7, 'P6')], 100);
+    expect(trainAheadIsWaiting(memory, everyLine, 9)).toBe(true); // behind train 7 on C
+    expect(trainAheadIsWaiting(memory, everyLine, 3)).toBe(false); // ahead of train 7 on C
+    expect(trainAheadIsWaiting(memory, everyLine, 5)).toBe(false); // on A
+    expect(trainAheadIsWaiting(memory, everyLine, 6)).toBe(false); // on B
+  });
+
+  it('on hub, when two trains on D ask for P7 on one tick, grants it to the train with the earlier enterAt', () => {
+    expect(keeperOn('hub').step([ask(10, 'P7'), ask(8, 'P7')])).toEqual([grant(8, 'P7'), refuse(10, 'P7', 'P8')]);
+  });
+
+  it('on hub, never gives a train from D locks on both P7 and P8', () => {
+    const keeper = keeperOn('hub');
+    keeper.step([ask(4, 'P7')]);
+    expect(keeper.step([ask(4, 'P8')])).toEqual([grant(4, 'P7')]);
+    expect(keeper.step([ask(8, 'P8')])).toEqual([grant(8, 'P8')]);
+  });
+
+  it('on hub, releases the lock on P7 once its train has arrived and left', () => {
+    const keeper = keeperOn('hub');
+    keeper.step([ask(4, 'P7')]);
+    keeper.idle(30, sensors(['P7']));
+    expect(keeper.step([ask(8, 'P7')], sensors(['P7']))).toEqual([refuse(8, 'P7', 'P8')]);
+    keeper.step([]);
+    expect(keeper.step([ask(8, 'P7')])).toEqual([grant(8, 'P7')]);
+  });
+
+  it('on busy, keeps the lock on P5 while its holder repeats its request and a dead sensor comes and goes', () => {
+    const keeper = keeperOn('busy');
+    keeper.step([ask(3, 'P5')]);
+    const dead = sensors([...PLATFORMS]);
+    expect(keeper.repeat(20, ask(3, 'P5'), dead).every((o) => o.msg.type === 'lockGrant')).toBe(true);
+    // The sensors are back. P6 read occupied with no lock on it, so it must read empty for
+    // unlockedSettle() before it is offered. Train 3 has kept P5 all along.
+    keeper.repeat(unlockedSettle() + 2 * TICK, ask(3, 'P5'));
+    expect(keeper.step([ask(7, 'P5')])).toEqual([refuse(7, 'P5', 'P6')]);
+  });
+
+  it('on hub, refuses every request with alternative null when every sensor is dead', () => {
+    const keeper = keeperOn('hub');
+    const out = keeper.step([ask(1, 'P1'), ask(2, 'P3'), ask(3, 'P5'), ask(4, 'P7')], sensors([...PLATFORMS]));
+    expect(out).toEqual([refuse(1, 'P1', null), refuse(2, 'P3', null), refuse(3, 'P5', null), refuse(4, 'P7', null)]);
+  });
+
+  it('on busy, does not grant P5 after it read occupied with no lock until it has read empty for unlockedSettle()', () => {
+    const keeper = keeperOn('busy');
+    keeper.idle(20, sensors([...PLATFORMS]));
+    const out = keeper.repeat(unlockedSettle(), ask(3, 'P5'));
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every((o) => o.msg.type === 'lockRefuse' && o.msg.alternative === null)).toBe(true);
+    keeper.idle(2 * TICK);
+    expect(keeper.step([ask(3, 'P5')])).toEqual([grant(3, 'P5')]);
+  });
+
+  it('on hub, grants nothing on C and D until resumedAt + settle, and keeps the locks it had', () => {
+    const keeper = keeperOn('hub');
+    keeper.step([ask(3, 'P5')]);
+    keeper.off(60);
+    // Train 3 holds P5 and is refused too. It keeps its lock and ignores the refusal.
+    const first = keeper.step([ask(3, 'P5'), ask(4, 'P7'), ask(7, 'P6')]);
+    expect(first).toEqual([refuse(3, 'P5', null), refuse(4, 'P7', null), refuse(7, 'P6', null)]);
+    keeper.idle(RESUME_SETTLE - 2 * TICK);
+    expect(keeper.step([ask(4, 'P7')])).toEqual([refuse(4, 'P7', null)]);
+    expect(keeper.step([ask(4, 'P7'), ask(3, 'P5')])).toEqual([grant(3, 'P5'), grant(4, 'P7')]);
+    // Train 3 still holds P5, so train 7 behind it is offered P6.
+    expect(keeper.step([ask(7, 'P5')])).toEqual([refuse(7, 'P5', 'P6')]);
+  });
+
+  it('on hub, releases a lock on P8 whose train never arrived, after the window, if the holder stays silent', () => {
+    const keeper = keeperOn('hub');
+    keeper.step([ask(4, 'P8')]);
+    keeper.off(120);
+    keeper.idle(RESUME_SETTLE - TICK);
+    expect(keeper.step([ask(8, 'P8')])).toEqual([refuse(8, 'P8', null)]);
+    expect(keeper.step([ask(8, 'P8')])).toEqual([grant(8, 'P8')]);
+  });
+
+  it('follows the layout in use when it steps, not the layout it was built on', () => {
+    // Built on the default layout, then the layout is applied, as a careless caller might.
+    const early = drive(createPlatformKeeper(everyLine));
+    applyLayout('hub');
+    expect(early.step([ask(4, 'P7')])).toEqual([grant(4, 'P7')]);
+    // Built on hub, stepped on branch.
+    const late = drive(createPlatformKeeper(everyLine));
+    applyLayout('branch');
+    expect(late.step([ask(2, 'P3')], everyPlatformReadsEmpty())).toEqual([refuse(2, 'P3', null)]);
+    expect(late.step([ask(1, 'P2')])).toEqual([grant(1, 'P2')]);
   });
 });

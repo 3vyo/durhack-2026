@@ -13,7 +13,7 @@ import type {
   TrainState,
 } from '../shared/types';
 import type { Body } from './footprint';
-import { xOf } from '../shared/map';
+import { ENTRIES, LAYOUT, PLATFORMS, xOf } from '../shared/map';
 import { advanceTrain } from './physics';
 import type { ControlCentre, TrainProgram } from './ports';
 import { route, type Recipient, type Sender } from './radio';
@@ -88,8 +88,6 @@ interface Sent {
   from: Sender;
 }
 
-const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
-
 /**
  * The optional display-only `reason` on a train's output. It is read as an unknown field so
  * the engine compiles before and after `reason` is added to the shared types (Task 2). The
@@ -98,6 +96,16 @@ const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
 function displayReason(out: TrainOutput): string | undefined {
   const reason = (out as { reason?: unknown }).reason;
   return typeof reason === 'string' ? reason : undefined;
+}
+
+/**
+ * A timetable is built for one layout. A train whose entry track is not in the layout in use
+ * would run onto platforms that have no sensor and that no keeper grants, so refuse it loudly.
+ */
+function checkInLayout(entry: TimetableEntry): void {
+  if (!ENTRIES.includes(entry.entry)) {
+    throw new Error(`train ${entry.id} enters on ${entry.entry}, which is not in the ${LAYOUT.id} layout`);
+  }
 }
 
 /**
@@ -127,6 +135,7 @@ export class Engine {
   private actorInboxes = new Map<'platformKeeper' | 'junctionKeeper', Message[]>();
 
   constructor(private readonly cfg: EngineConfig) {
+    for (const entry of cfg.timetable) checkInLayout(entry);
     this.runTicks = Math.ceil(cfg.runLength / TICK - 1e-9);
     this.pending = [...cfg.timetable].sort((a, b) => a.enterAt - b.enterAt || a.id - b.id);
     this.scriptedPresses = [...cfg.presses].sort((a, b) => a.at - b.at);
@@ -161,6 +170,7 @@ export class Engine {
    * add the same entry: it goes in once.
    */
   addTrain(entry: TimetableEntry): void {
+    checkInLayout(entry);
     const timetable = this.cfg.timetable;
     const existing = timetable.find((e) => e.id === entry.id);
     if (existing !== undefined && existing !== entry) throw new Error(`train ${entry.id} is already in the timetable`);
@@ -207,7 +217,8 @@ export class Engine {
     this.actorInboxes = new Map();
     const sent: Sent[] = [];
 
-    // Platform sensors broadcast once a second while they are switched on.
+    // Platform sensors broadcast once a second while they are switched on. Only the platforms
+    // of the layout in use have a sensor.
     if (this.switches.sensors && onSecond) {
       for (const platform of PLATFORMS) {
         sent.push({

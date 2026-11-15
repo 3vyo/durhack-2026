@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ScenarioSummary, Stats } from '../../src/runner/run';
-import { formatSummaries } from '../../src/runner/report';
+import { describeLayout, formatSummaries } from '../../src/runner/report';
 
 const base: Stats = {
   meanDelay: 600,
@@ -52,5 +52,24 @@ describe('formatSummaries', () => {
     const text = formatSummaries([bad], 1);
     expect(text).toContain('FAIL: collisions found');
     expect(text).not.toContain('OK: zero collisions');
+  });
+});
+
+describe('the layout in a report', () => {
+  it('describes each layout by its entry lines and platforms', () => {
+    expect(describeLayout('branch')).toBe('layout branch: 1 entry line, 2 platforms');
+    expect(describeLayout('junction')).toBe('layout junction: 2 entry lines, 4 platforms');
+    expect(describeLayout('busy')).toBe('layout busy: 3 entry lines, 6 platforms');
+    expect(describeLayout('hub')).toBe('layout hub: 4 entry lines, 8 platforms');
+  });
+
+  it('starts the batch text with the layout it ran on', () => {
+    const text = formatSummaries([summary], 1, 'hub');
+    expect(text.split('\n')[0]).toBe('layout hub: 4 entry lines, 8 platforms');
+    expect(text).toContain('centre-outage (50 seeds)');
+  });
+
+  it('names no layout when it is not told one', () => {
+    expect(formatSummaries([summary], 1)).not.toContain('layout');
   });
 });

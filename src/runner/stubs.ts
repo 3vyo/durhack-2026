@@ -1,10 +1,11 @@
 import type { ControlCentre, TrainProgram } from '../engine/ports';
 import { ACCEL, BRAKE, FRESH, MARGIN, safeSpeed } from '../shared/constants';
+import { TRACK_LENGTH, TRACK_START, isEntryTrack } from '../shared/map';
 import type { PlatformId, TimetableEntry, TrackId } from '../shared/types';
 
-/** Where a stub train heads at the end of its current track. */
+/** Where a stub train heads at the end of its current track. Any entry track of any layout leads to the train's platform. */
 function nextFor(track: TrackId, platform: PlatformId): TrackId | null {
-  if (track === 'A' || track === 'B') return platform;
+  if (isEntryTrack(track)) return platform;
   if (track === 'EXIT') return null;
   return 'EXIT';
 }
@@ -40,7 +41,13 @@ export const stubOurs: TrainProgram = {
 /** A stand-in centre that permits every train to the end of the line, every second. */
 const permitEverything: ControlCentre = {
   step: (now, trains) =>
-    trains.map((t) => ({ type: 'permit', to: t.id, untilX: 12400, nextTrack: null, sentAt: now })),
+    trains.map((t) => ({
+      type: 'permit',
+      to: t.id,
+      untilX: TRACK_START.EXIT + TRACK_LENGTH.EXIT,
+      nextTrack: null,
+      sentAt: now,
+    })),
 };
 
 /**

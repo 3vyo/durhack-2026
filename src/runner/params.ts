@@ -5,14 +5,21 @@ import type { Press } from '../engine/switches';
 import { generateTimetable } from '../engine/timetable';
 import { applyParams, resetParams, type SimParams } from '../shared/params';
 import type { TimetableEntry } from '../shared/types';
+import { describeLayout } from './report';
+import { onLayout } from './run';
 
-// Runs built from a parameter file (src/shared/params.ts). The file sets the physics and
-// timer values, the timetable, the starting switches, the failures and the run length.
+// Runs built from a parameter file (src/shared/params.ts). The file sets the layout, the
+// physics and timer values, the timetable, the starting switches, the failures and the run
+// length.
 
-/** The timetable a parameter file asks for. The same seed always gives the same one. */
+/**
+ * The timetable a parameter file asks for. The same seed and layout always give the same one.
+ * The trains are spread over the entry tracks of the file's own layout, whatever layout is in
+ * use when this is called, and the layout in use is left as it was.
+ */
 export function timetableFor(params: SimParams): TimetableEntry[] {
   const { seed, trains, minHeadway, dwell } = params.timetable;
-  return generateTimetable(seed, { trains, minHeadway, dwell });
+  return onLayout(params.layout, () => generateTimetable(seed, { trains, minHeadway, dwell }));
 }
 
 /** The file's starting switches and failures as engine presses, in time order. */
@@ -32,8 +39,10 @@ export function lastFailureAt(params: SimParams): number | null {
 }
 
 /**
- * An engine set up from a parameter file. This makes the file's physics and timer values
- * the ones every part of the build reads, until resetParams() or the next applyParams().
+ * An engine set up from a parameter file. This makes the file's layout and its physics and
+ * timer values the ones every part of the build reads, until resetParams() or the next
+ * applyParams(). Call resetParams() when the engine is done with, or the file's layout and
+ * values stay in use for whatever runs next.
  */
 export function engineFromParams(params: SimParams, program: TrainProgram): Engine {
   applyParams(params);
@@ -46,7 +55,11 @@ export function engineFromParams(params: SimParams, program: TrainProgram): Engi
   });
 }
 
-/** One whole run from a parameter file, with no screen. Leaves the constants at their defaults. */
+/**
+ * One whole run from a parameter file, with no screen. Afterwards the constants and the
+ * layout are back at their defaults, even if the run throws, so one file's layout cannot leak
+ * into the next run.
+ */
 export function runParams(params: SimParams, program: TrainProgram): RunResult {
   try {
     const engine = engineFromParams(params, program);
@@ -123,6 +136,7 @@ export function formatParamsReport(r: ParamsReport): string {
   }
   return [
     `${r.params.name}`,
+    `  ${describeLayout(r.params.layout)}`,
     `  ${t.trains} trains, seed ${t.seed}, ${r.params.failures.length} failure event(s), run length ${r.params.runLength} s`,
     line(head),
     row('ours', r.ours),

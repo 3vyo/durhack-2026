@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_CENTRE_OPTIONS,
   freeRunX,
@@ -25,7 +25,23 @@ import {
   type TrainPlan,
 } from '../../src/baseline/centre';
 import { BRAKE, DEFAULT_CONSTANTS, MARGIN, MAX_SPEED, TRAIN_LENGTH, resetConstants, setConstants } from '../../src/shared/constants';
-import { JUNCTION_END_X, JUNCTION_START_X, PLATFORM_STOP, TRACK_LENGTH, TRACK_START, xOf } from '../../src/shared/map';
+import {
+  ALL_PLATFORMS,
+  JUNCTION_END_X,
+  JUNCTION_START_X,
+  LAYOUT_IDS,
+  PLATFORMS,
+  PLATFORM_STOP,
+  TRACK_LENGTH,
+  TRACK_START,
+  applyLayout,
+  entryOf,
+  isPlatform,
+  pairOf,
+  platformReadings,
+  resetLayout,
+  xOf,
+} from '../../src/shared/map';
 import type {
   Message,
   PlatformId,
@@ -50,11 +66,16 @@ const timetable: TimetableEntry[] = [
   { id: 4, entry: 'A', enterAt: 120, platform: 'P1', leader: 2, dwell: 30 },
 ];
 
-const clear: SensorReadings = {
-  platformOccupied: { P1: false, P2: false, P3: false, P4: false },
-  junctionOccupied: false,
-  exitStartClear: true,
-};
+/**
+ * Readings with every platform of the layout in use empty, unless `occupied` says otherwise.
+ * Platforms outside the layout read occupied. Call it after applyLayout.
+ */
+function readings(occupied: Partial<Record<PlatformId, boolean>> = {}): SensorReadings {
+  return { platformOccupied: platformReadings(occupied), junctionOccupied: false, exitStartClear: true };
+}
+
+/** Clear readings for the default layout, which is the one in use when this file loads. */
+const clear: SensorReadings = readings();
 
 /** No train has set a route. */
 const none: Routes = new Map();
@@ -878,5 +899,459 @@ describe('radio working (design: "Radio working")', () => {
     const back = centre.step(DELAY + 1, trains, clear, none);
     expect(back.some((m) => m.type === 'permit' && m.caution)).toBe(false);
     expect(permitFor(back, 2).untilX).toBeGreaterThan(xOf(trains[1].pos));
+  });
+});
+
+describe('layouts (design: "Layouts")', () => {
+  afterEach(() => {
+    resetLayout();
+  });
+
+  // Two trains for each of the four entry tracks. Train 4 defaults to P8, the others to the
+  // first platform of their pair.
+  const hub: TimetableEntry[] = [
+    { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+    { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    { id: 3, entry: 'C', enterAt: 0, platform: 'P5', leader: null, dwell: 30 },
+    { id: 4, entry: 'D', enterAt: 0, platform: 'P8', leader: null, dwell: 30 },
+    { id: 5, entry: 'C', enterAt: 60, platform: 'P6', leader: 3, dwell: 30 },
+    { id: 6, entry: 'C', enterAt: 120, platform: 'P5', leader: 5, dwell: 30 },
+    { id: 7, entry: 'D', enterAt: 60, platform: 'P7', leader: 4, dwell: 30 },
+    { id: 8, entry: 'D', enterAt: 120, platform: 'P8', leader: 7, dwell: 30 },
+  ];
+  const entryOfTrain = (id: number) => hub.find((e) => e.id === id)!;
+
+  /** The memory after one step that sees these trains on the hub timetable. */
+  const seenOn = (trains: TrainState[], now = 0, from = initialMemory(hub), set = none) =>
+    updateMemory(from, now, trains, readings(), set);
+
+  /** Readings with the platforms these trains are on occupied, and the rest of the layout empty. */
+  function readingsFor(trains: TrainState[]): SensorReadings {
+    const taken: Partial<Record<PlatformId, boolean>> = {};
+    for (const t of trains) {
+      if (isPlatform(t.pos.track)) taken[t.pos.track] = true;
+    }
+    return readings(taken);
+  }
+
+  describe('choosing a platform', () => {
+    it('on busy, sends a train on line C to P5 or P6 only', () => {
+      applyLayout('busy');
+      const memory = initialMemory(hub);
+      const c = train(3, 'C', 0);
+      expect(choosePlatform(c, entryOfTrain(3), memory, readings())).toBe('P5');
+      expect(choosePlatform(c, entryOfTrain(3), memory, readings({ P5: true }))).toBe('P6');
+      expect(choosePlatform(c, entryOfTrain(3), sentTo(memory, { 9: 'P5' }), readings())).toBe('P6');
+      // P1 to P4 are empty, and it still waits for its own pair.
+      expect(choosePlatform(c, entryOfTrain(3), memory, readings({ P5: true, P6: true }))).toBeNull();
+    });
+
+    it('on busy, sends three trains on line C to P5, P6 and nowhere, in that order', () => {
+      applyLayout('busy');
+      const trains = [train(3, 'C', 4000), train(5, 'C', 2000), train(6, 'C', 0)];
+      const messages = makeCentre(hub).step(0, trains, readings(), none);
+      expect(permitFor(messages, 3)).toMatchObject({ nextTrack: 'P5', untilX: STOP_X });
+      expect(permitFor(messages, 5).nextTrack).toBe('P6');
+      expect(permitFor(messages, 6).nextTrack).toBeNull();
+    });
+
+    it('on hub, sends a train on line D to P7 or P8 only', () => {
+      applyLayout('hub');
+      const memory = initialMemory(hub);
+      const d = train(4, 'D', 0);
+      expect(choosePlatform(d, entryOfTrain(4), memory, readings())).toBe('P8');
+      expect(choosePlatform(d, entryOfTrain(4), memory, readings({ P8: true }))).toBe('P7');
+      expect(choosePlatform(d, entryOfTrain(4), sentTo(memory, { 9: 'P8' }), readings())).toBe('P7');
+      // P1 to P6 are empty, and it still waits for its own pair.
+      expect(choosePlatform(d, entryOfTrain(4), memory, readings({ P7: true, P8: true }))).toBeNull();
+    });
+
+    it('on hub, sends three trains on line D to P8, P7 and nowhere, in that order', () => {
+      applyLayout('hub');
+      const trains = [train(4, 'D', 4000), train(7, 'D', 2000), train(8, 'D', 0)];
+      const messages = makeCentre(hub).step(0, trains, readings(), none);
+      expect(permitFor(messages, 4)).toMatchObject({ nextTrack: 'P8', untilX: STOP_X });
+      expect(permitFor(messages, 7).nextTrack).toBe('P7');
+      expect(permitFor(messages, 8).nextTrack).toBeNull();
+    });
+
+    it('on hub, sends the front train of each of the four lines to its own pair in one step', () => {
+      applyLayout('hub');
+      const trains = [train(1, 'A', 3000), train(2, 'B', 3000), train(3, 'C', 3000), train(4, 'D', 3000)];
+      const messages = makeCentre(hub).step(0, trains, readings(), none);
+      expect(trains.map((t) => permitFor(messages, t.id).nextTrack)).toEqual(['P1', 'P3', 'P5', 'P8']);
+      // No line holds up another: each train may run to its own platform stop.
+      expect(trains.map((t) => permitFor(messages, t.id).untilX)).toEqual([STOP_X, STOP_X, STOP_X, STOP_X]);
+    });
+
+    it('goes by the track the train is on, even when the timetable names another line', () => {
+      applyLayout('hub');
+      const onC = train(1, 'C', 0);
+      expect(choosePlatform(onC, entryOfTrain(1), initialMemory(hub), readings())).toBe('P5');
+    });
+
+    it('on every layout, picks from the own pair of the line or picks nothing, whatever is occupied', () => {
+      for (const layout of LAYOUT_IDS) {
+        applyLayout(layout);
+        for (const platform of PLATFORMS) {
+          const line = entryOf(platform);
+          const entry: TimetableEntry = { id: 1, entry: line, enterAt: 0, platform, leader: null, dwell: 30 };
+          const [first, second] = pairOf(line);
+          for (const taken of [[], [first], [second], [first, second]]) {
+            // Every other platform of the layout is empty, so a wrong pick would be easy.
+            const sensors = readings(Object.fromEntries(taken.map((p) => [p, true])));
+            const chosen = choosePlatform(train(1, line, 0), entry, initialMemory([entry]), sensors);
+            const free = pairOf(line).filter((p) => !taken.includes(p));
+            if (free.length === 0) expect(chosen).toBeNull();
+            else expect(free).toContain(chosen);
+            if (free.includes(platform)) expect(chosen).toBe(platform);
+          }
+        }
+      }
+    });
+  });
+
+  describe('platforms outside the layout', () => {
+    it('on branch, never sends a train to P3 or P4', () => {
+      applyLayout('branch');
+      const line: TimetableEntry[] = [
+        { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+        { id: 2, entry: 'A', enterAt: 60, platform: 'P2', leader: 1, dwell: 30 },
+        { id: 3, entry: 'A', enterAt: 120, platform: 'P1', leader: 2, dwell: 30 },
+      ];
+      const trains = [train(1, 'A', 4000), train(2, 'A', 2000), train(3, 'A', 0)];
+      const centre = makeCentre(line);
+      for (let now = 0; now < 5; now++) {
+        const messages = centre.step(now, trains, readings(), none);
+        // The third train waits on A for P1 or P2. It is never sent across to P3 or P4.
+        expect(trains.map((t) => permitFor(messages, t.id).nextTrack)).toEqual(['P1', 'P2', null]);
+        expect(permitFor(messages, 3).untilX).toBeLessThanOrEqual(ENTRY_END_X);
+      }
+    });
+
+    it('on branch, says P3 and P4 are unavailable even if a reading wrongly shows them empty', () => {
+      applyLayout('branch');
+      const memory = initialMemory(timetable);
+      const wrong = readings({ P3: false, P4: false });
+      for (const platform of ['P3', 'P4'] as const) {
+        expect(isAvailable(platform, memory, readings())).toBe(false);
+        expect(isAvailable(platform, memory, wrong)).toBe(false);
+      }
+      // A train whose timetable entry is for line B gets no platform on branch.
+      expect(choosePlatform(train(3, 'B', 0), timetable[2], memory, wrong)).toBeNull();
+    });
+
+    it('on branch, does not take over a route into P3 or P4', () => {
+      applyLayout('branch');
+      const from = initialMemory(timetable);
+      expect(updateMemory(from, 0, [train(1, 'A', 5000)], readings(), routes({ 1: 'P3' })).platformFor.has(1)).toBe(false);
+      expect(updateMemory(from, 0, [train(3, 'B', 5000)], readings(), routes({ 3: 'P3' })).platformFor.has(3)).toBe(false);
+      expect(updateMemory(from, 0, [train(1, 'A', 5000)], readings(), routes({ 1: 'P2' })).platformFor.get(1)).toBe('P2');
+    });
+
+    it('on every layout, says exactly the platforms of the layout are available when all are empty', () => {
+      for (const layout of LAYOUT_IDS) {
+        applyLayout(layout);
+        const memory = initialMemory(hub);
+        const allEmpty = readings(Object.fromEntries(ALL_PLATFORMS.map((p) => [p, false])));
+        for (const platform of ALL_PLATFORMS) {
+          expect(isAvailable(platform, memory, readings())).toBe(PLATFORMS.includes(platform));
+          expect(isAvailable(platform, memory, allEmpty)).toBe(PLATFORMS.includes(platform));
+        }
+      }
+    });
+
+    it('reads the layout when it decides, not when the file loaded', () => {
+      const memory = initialMemory(hub);
+      expect(isAvailable('P7', memory, readings())).toBe(false);
+      applyLayout('hub');
+      expect(isAvailable('P7', memory, readings())).toBe(true);
+      resetLayout();
+      expect(isAvailable('P7', memory, readings())).toBe(false);
+    });
+
+    it('keeps a train short of a platform outside the layout, even one it was told to take', () => {
+      applyLayout('branch');
+      const t = train(3, 'B', 3000);
+      const memory = sentTo(updateMemory(initialMemory(timetable), 0, [t], readings()), { 3: 'P3' });
+      expect(untilXFor(t, [t], memory, readings({ P3: false }))).toBe(ENTRY_END_X);
+    });
+  });
+
+  describe('the junction', () => {
+    it('on hub, lets one train at a time through when trains wait in P1, P5 and P8', () => {
+      applyLayout('hub');
+      const one = stopped(1, 'P1', PLATFORM_STOP);
+      const three = stopped(3, 'P5', PLATFORM_STOP);
+      const four = stopped(4, 'P8', PLATFORM_STOP);
+      const centre = makeCentre(hub);
+      /** The trains the centre lets into the zone on this step: any permitted past the platform stop. */
+      const letIn = (now: number, trains: TrainState[], sensors: SensorReadings) => {
+        const messages = centre.step(now, trains, sensors, none);
+        return trains.filter((t) => t.pos.track !== 'EXIT' && permitFor(messages, t.id).untilX > JUNCTION_START_X).map((t) => t.id);
+      };
+      const zoneBusy = (trains: TrainState[]) => ({ ...readingsFor(trains), junctionOccupied: true, exitStartClear: false });
+
+      expect(letIn(0, [one, three, four], readingsFor([one, three, four]))).toEqual([]);
+      // All three dwells are over. The lowest ID goes first, and only that one.
+      expect(letIn(100, [one, three, four], readingsFor([one, three, four]))).toEqual([1]);
+      expect(letIn(101, [one, three, four], readingsFor([one, three, four]))).toEqual([1]);
+      // Train 1 is in the zone, then on EXIT with its rear still in the zone.
+      let trains = [train(1, 'P1', 350), three, four];
+      expect(letIn(102, trains, zoneBusy(trains))).toEqual([1]);
+      trains = [train(1, 'EXIT', 250), three, four];
+      expect(letIn(103, trains, zoneBusy(trains))).toEqual([]);
+      // Train 1 is clear. Train 3 in P5 is next, and train 4 in P8 still waits.
+      trains = [train(1, 'EXIT', 1000), three, four];
+      const messages = centre.step(104, trains, readingsFor(trains), none);
+      expect(permitFor(messages, 3)).toMatchObject({ nextTrack: 'EXIT', leader: 1 });
+      expect(permitFor(messages, 3).untilX).toBe(TRACK_START.EXIT + 1000 - TRAIN_LENGTH - MARGIN);
+      expect(permitFor(messages, 4)).toMatchObject({ nextTrack: null, untilX: JUNCTION_START_X });
+      trains = [train(1, 'EXIT', 2000), train(3, 'P5', 350), four];
+      expect(letIn(105, trains, zoneBusy(trains))).toEqual([3]);
+      // Train 3 is clear. Now train 4 in P8 goes.
+      trains = [train(1, 'EXIT', 3000), train(3, 'EXIT', 1000), four];
+      expect(letIn(106, trains, readingsFor(trains))).toEqual([4]);
+    });
+
+    it('on hub, sends trains from all eight platforms through one at a time, lowest ID first', () => {
+      applyLayout('hub');
+      // Train 8 is in P1 and train 1 in P8, so the order is by ID, not by platform.
+      const eight: TimetableEntry[] = ALL_PLATFORMS.map((platform, i) => ({
+        id: 8 - i,
+        entry: entryOf(platform),
+        enterAt: 0,
+        platform,
+        leader: null,
+        dwell: 30,
+      }));
+      let trains = eight.map((e) => stopped(e.id, e.platform, PLATFORM_STOP));
+      const centre = makeCentre(eight);
+      centre.step(0, trains, readingsFor(trains), none);
+      const order: number[] = [];
+      for (let now = 100; now < 108; now++) {
+        const messages = centre.step(now, trains, readingsFor(trains), none);
+        const going = trains.filter((t) => permitFor(messages, t.id).nextTrack === 'EXIT').map((t) => t.id);
+        expect(going).toHaveLength(1);
+        order.push(going[0]);
+        // That train runs out onto EXIT, clear of the zone and ahead of the next one out.
+        trains = trains.map((t) => (t.id === going[0] ? train(t.id, 'EXIT', 5800 - 500 * order.length) : t));
+      }
+      expect(order).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    });
+
+    it('on hub, puts trains that become ready in P1, P5 and P8 in the same step in ID order', () => {
+      applyLayout('hub');
+      const waiting = [stopped(4, 'P8', PLATFORM_STOP), stopped(3, 'P5', PLATFORM_STOP), stopped(1, 'P1', PLATFORM_STOP)];
+      expect(seenOn(waiting, 100, seenOn(waiting, 0)).junctionOrder).toEqual([1, 3, 4]);
+    });
+
+    it('on hub, holds every waiting train short of the zone while the junction is unavailable', () => {
+      applyLayout('hub');
+      const waiting = [stopped(1, 'P1', PLATFORM_STOP), stopped(3, 'P5', PLATFORM_STOP), stopped(4, 'P8', PLATFORM_STOP)];
+      const centre = makeCentre(hub);
+      centre.step(0, waiting, readingsFor(waiting), none);
+      const busy = { ...readingsFor(waiting), junctionOccupied: true };
+      for (const msg of centre.step(100, waiting, busy, none)) {
+        expect(msg).toMatchObject({ nextTrack: null, untilX: JUNCTION_START_X });
+      }
+    });
+
+    it('on hub, makes a train already past its stop in P8 the holder, and keeps a train in P1 out', () => {
+      applyLayout('hub');
+      const centre = makeCentre(hub);
+      const one = stopped(1, 'P1', PLATFORM_STOP);
+      centre.step(0, [train(4, 'P8', 350), one], readings({ P1: true, P8: true }), none);
+      // Train 1's dwell is over and the readings are clear, so only the holder keeps it back.
+      const blocked = permitFor(centre.step(100, [train(4, 'EXIT', 150), one], readings({ P1: true }), none), 1);
+      expect(blocked).toMatchObject({ nextTrack: null, untilX: JUNCTION_START_X });
+      const freed = permitFor(centre.step(101, [train(4, 'EXIT', 1000), one], readings({ P1: true }), none), 1);
+      expect(freed.nextTrack).toBe('EXIT');
+    });
+  });
+
+  describe('the train ahead', () => {
+    it('on hub, does not hold a train on line C behind trains on A, B or D', () => {
+      applyLayout('hub');
+      const trains = [train(1, 'A', 3000), train(2, 'B', 3500), train(4, 'D', 4000), train(3, 'C', 2000)];
+      const memory = seenOn(trains);
+      expect(trainAhead(trains[3], trains, memory)).toBeNull();
+      expect(untilXFor(trains[3], trains, memory, readings())).toBe(ENTRY_END_X);
+      // A train in P7 leads a train sent to P7, not one sent to P8, and not one on line C.
+      const station = [stopped(4, 'P7', PLATFORM_STOP), train(7, 'D', 5500), train(3, 'C', 5500)];
+      expect(trainAhead(station[1], station, sentTo(seenOn(station), { 7: 'P7' }))?.id).toBe(4);
+      expect(trainAhead(station[1], station, sentTo(seenOn(station), { 7: 'P8' }))).toBeNull();
+      expect(trainAhead(station[2], station, sentTo(seenOn(station), { 3: 'P5' }))).toBeNull();
+    });
+
+    it('on busy, keeps a follower bound for P6 MARGIN behind a train whose front is in P5 and rear is still on C', () => {
+      applyLayout('busy');
+      const trains = [train(3, 'P5', 60), train(5, 'C', 5500)];
+      const memory = sentTo(seenOn(trains), { 5: 'P6' });
+      expect(untilXFor(trains[1], trains, memory, readings({ P5: true }))).toBe(TRACK_START.P5 + 60 - TRAIN_LENGTH - MARGIN);
+      // The same train's rear is not on line A, so a train on A bound for P2 is not held.
+      const other = [train(3, 'P5', 60), train(1, 'A', 5500)];
+      expect(untilXFor(other[1], other, sentTo(seenOn(other), { 1: 'P2' }), readings({ P5: true }))).toBe(STOP_X);
+      // Once the rear of train 3 is in P5, the way into P6 is clear.
+      const inside = [train(3, 'P5', 150), train(5, 'C', 5500)];
+      expect(untilXFor(inside[1], inside, sentTo(seenOn(inside), { 5: 'P6' }), readings({ P5: true }))).toBe(STOP_X);
+    });
+
+    it('on hub, treats a train on EXIT whose platform it does not know as still on every platform of the layout', () => {
+      applyLayout('hub');
+      // Train 1's front is on EXIT and its rear is still in some platform.
+      const trains = [train(1, 'EXIT', 50), train(7, 'D', 5500)];
+      const memory = sentTo(seenOn(trains), { 7: 'P8' });
+      expect(memory.platformFor.has(1)).toBe(false);
+      expect(trainAhead(trains[1], trains, memory)?.id).toBe(1);
+    });
+  });
+
+  describe('taking over from routes our trains set', () => {
+    it('on hub, sends a train on C or D to the platform of its own pair its route is set into', () => {
+      applyLayout('hub');
+      const c = train(3, 'C', 5000);
+      const d = train(4, 'D', 5000);
+      expect(seenOn([c], 0, initialMemory(hub), routes({ 3: 'P6' })).platformFor.get(3)).toBe('P6');
+      expect(seenOn([d], 0, initialMemory(hub), routes({ 4: 'P7' })).platformFor.get(4)).toBe('P7');
+      // A route into another line's pair is ignored.
+      expect(seenOn([c], 0, initialMemory(hub), routes({ 3: 'P7' })).platformFor.has(3)).toBe(false);
+      expect(seenOn([d], 0, initialMemory(hub), routes({ 4: 'P6' })).platformFor.has(4)).toBe(false);
+      expect(seenOn([d], 0, initialMemory(hub), routes({ 4: 'P1' })).platformFor.has(4)).toBe(false);
+    });
+
+    it('on hub, puts the adopted platform in the permit and sends the next train on that line to the other one', () => {
+      applyLayout('hub');
+      // Train 7 defaults to P7, so it goes to P8 once train 4 has taken P7.
+      const trains = [train(4, 'D', 5000), train(7, 'D', 1000)];
+      const messages = makeCentre(hub).step(0, trains, readings(), routes({ 4: 'P7' }));
+      expect(permitFor(messages, 4)).toMatchObject({ nextTrack: 'P7', untilX: STOP_X });
+      expect(permitFor(messages, 7).nextTrack).toBe('P8');
+    });
+  });
+
+  describe('slow restart and radio working', () => {
+    const waiting = [stopped(1, 'A', 3000), stopped(2, 'B', 2000), stopped(3, 'C', 4000), stopped(4, 'D', 4000)];
+
+    it('on hub, releases stopped trains on all four lines one at a time, furthest along first, lowest ID on a tie', () => {
+      applyLayout('hub');
+      const slow: CentreOptions = { restartGap: 30 };
+      let memory = seenOn(waiting, 100, seenOn(waiting, 10));
+      const order: number[] = [];
+      for (let now = 100; now <= 190; now += 30) {
+        expect(nextRestartRelease(memory, waiting, now - 1, slow)).toBe(now === 100 ? 3 : null);
+        order.push(nextRestartRelease(memory, waiting, now, slow)!);
+        memory = releaseHeld(memory, waiting, now, slow);
+      }
+      expect(order).toEqual([3, 4, 1, 2]);
+    });
+
+    it('on hub, a released train on line C or D is sent to its own pair, and a held one stays where it is', () => {
+      applyLayout('hub');
+      const centre = makeCentre(hub, { restartGap: 30 });
+      centre.step(0, waiting, readings(), none);
+      const back = centre.step(100, waiting, readings(), none);
+      expect(permitFor(back, 3).nextTrack).toBe('P5');
+      expect(permitFor(back, 3).untilX).toBe(STOP_X);
+      expect(permitFor(back, 4)).toMatchObject({ nextTrack: 'P8', untilX: xOf(waiting[3].pos) });
+      // The engine steps the centre once a second. Train 4's turn comes restartGap later.
+      let later = back;
+      for (let now = 101; now <= 130; now++) later = centre.step(now, waiting, readings(), none);
+      expect(permitFor(later, 4).untilX).toBe(STOP_X);
+      expect(permitFor(later, 1).untilX).toBe(xOf(waiting[0].pos));
+    });
+
+    it('on hub, staff working by radio release trains on C and D one at a time with caution permits into their own pairs', () => {
+      applyLayout('hub');
+      const DELAY = DEFAULT_CONSTANTS.RADIO_WORKING_DELAY;
+      const GAP = DEFAULT_CONSTANTS.RADIO_RELEASE_GAP;
+      const trains = [stopped(3, 'C', 3000), stopped(4, 'D', 1000)];
+      const centre = makeCentre(hub);
+      centre.step(0, trains, readings(), none);
+      const first = centre.radioStep!(DELAY, trains, readings(), none);
+      expect(first.every((m) => m.type === 'permit' && m.caution === true)).toBe(true);
+      expect(permitFor(first, 3)).toMatchObject({ nextTrack: 'P5', untilX: STOP_X });
+      expect(permitFor(first, 4).untilX).toBe(xOf(trains[1].pos));
+      // The engine calls radioStep once a second. Train 4's turn comes RADIO_RELEASE_GAP later.
+      let second = first;
+      for (let now = DELAY + 1; now <= DELAY + GAP; now++) {
+        expect(permitFor(second, 4).untilX).toBe(xOf(trains[1].pos));
+        second = centre.radioStep!(now, trains, readings(), none);
+      }
+      expect(permitFor(second, 4)).toMatchObject({ nextTrack: 'P8', untilX: STOP_X, caution: true });
+    });
+  });
+
+  describe('whole runs with the baseline program', () => {
+    /** Two trains for each entry track of the layout in use, the second a minute behind the first. */
+    function twoPerLine(): TimetableEntry[] {
+      const out: TimetableEntry[] = [];
+      for (const line of entryLines()) {
+        const [first, second] = pairOf(line);
+        const lead = out.length + 1;
+        out.push({ id: lead, entry: line, enterAt: 0, platform: first, leader: null, dwell: 30 });
+        out.push({ id: lead + 1, entry: line, enterAt: 60, platform: second, leader: lead, dwell: 30 });
+      }
+      return out;
+    }
+
+    /** The entry tracks of the layout in use, read from its platforms. */
+    function entryLines() {
+      return [...new Set(PLATFORMS.map((p) => entryOf(p)))];
+    }
+
+    /** Runs the baseline program to the end and returns the engine and every permit the centre sent. */
+    function run(tt: TimetableEntry[], presses: Press[]) {
+      const permits: Permit[] = [];
+      const program: TrainProgram = {
+        ...baselineProgram,
+        makeCentre: (given) => {
+          const centre = makeCentre(given);
+          return {
+            step: (...args) => {
+              const out = centre.step(...args);
+              permits.push(...(out as Permit[]));
+              return out;
+            },
+          };
+        },
+      };
+      const engine = new Engine({ timetable: tt, program, seed: 1, runLength: 2400, presses });
+      while (!engine.finished && engine.now < 2400) engine.step();
+      return { engine, permits };
+    }
+
+    for (const layout of LAYOUT_IDS) {
+      it(`on ${layout}, every train gets out with no collision and is only ever sent to its own pair`, () => {
+        applyLayout(layout);
+        const tt = twoPerLine();
+        const { engine, permits } = run(tt, []);
+        const result = engine.result();
+        expect(result.collisions).toBe(0);
+        expect(result.finished).toBe(true);
+        expect(result.exits.size).toBe(tt.length);
+        for (const entry of tt) {
+          const sent = new Set(permits.filter((p) => p.to === entry.id).map((p) => p.nextTrack));
+          const allowed: (TrackId | null)[] = [...pairOf(entry.entry), 'EXIT', null];
+          expect([...sent].filter((track) => !allowed.includes(track))).toEqual([]);
+          // It was sent into a platform and then out through the junction.
+          expect(pairOf(entry.entry).some((p) => sent.has(p))).toBe(true);
+          expect(sent.has('EXIT')).toBe(true);
+        }
+      });
+
+      it(`on ${layout}, trains stopped by a centre outage start again and all get out with no collision`, () => {
+        applyLayout(layout);
+        const tt = twoPerLine();
+        const { engine } = run(tt, [
+          { at: 150, set: { centre: false } },
+          { at: 400, set: { centre: true } },
+        ]);
+        const result = engine.result();
+        expect(result.collisions).toBe(0);
+        expect(result.finished).toBe(true);
+        expect(result.exits.size).toBe(tt.length);
+      });
+    }
   });
 });

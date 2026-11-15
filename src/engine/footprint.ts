@@ -1,6 +1,6 @@
 import { TRAIN_LENGTH } from '../shared/constants';
 import type { TrackId, TrainState } from '../shared/types';
-import { PLATFORM_STOP, TRACK_LENGTH } from '../shared/map';
+import { JUNCTION_EXIT_LENGTH, PLATFORM_STOP, TRACK_LENGTH, isPlatform } from '../shared/map';
 
 /** A stretch of one track, in offsets from that track's start. */
 export interface Segment {
@@ -38,8 +38,7 @@ export function footprint(b: Body): Segment[] {
  */
 export function touchesZone(segments: Segment[]): boolean {
   return segments.some((s) => {
-    if (s.track === 'EXIT') return s.from < 200;
-    if (s.track === 'A' || s.track === 'B') return false;
-    return s.to >= PLATFORM_STOP;
+    if (s.track === 'EXIT') return s.from < JUNCTION_EXIT_LENGTH;
+    return isPlatform(s.track) && s.to >= PLATFORM_STOP;
   });
 }

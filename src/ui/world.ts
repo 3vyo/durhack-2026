@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Switches } from '../engine/switches';
-import { JUNCTION_END_X, JUNCTION_START_X, TRACK_LENGTH, TRACK_START } from '../shared/map';
+import {
+  ENTRIES,
+  JUNCTION_END_X,
+  JUNCTION_START_X,
+  PLATFORMS,
+  TRACK_LENGTH,
+  TRACK_START,
+  entryOf,
+  isPlatform,
+} from '../shared/map';
 import type { TrackId } from '../shared/types';
 import {
   DEVICE_SITES,
@@ -10,6 +19,7 @@ import {
   EXIT_MERGE,
   POINTS_LENGTH,
   deviceLook,
+  exitJoinLength,
   laneOf,
   toScreenX,
   type DeviceKey,
@@ -17,8 +27,9 @@ import {
 } from './layout';
 import { railFit } from './rails';
 
-// The fixed scenery: track, platforms, the four devices and the junction zone. It changes only
-// to show which devices are switched on and whether the junction zone has a train in it.
+// The fixed scenery: track, platforms, the four devices and the junction zone. It is built
+// once, for the layout in use when the scene is made. After that it changes only to show which
+// devices are switched on and whether the junction zone has a train in it.
 
 export interface World {
   /** Swaps the flat strips for the kit's track pieces. Call once, when the models have loaded. */
@@ -35,15 +46,10 @@ const KIT_RAIL_TOP = 0.1;
 /** How far beyond the frame to draw track, in metres, so it never ends inside the picture. */
 const TRACK_MARGIN = 300;
 
-const STRIP_COLOR: Record<TrackId, number> = {
-  A: 0x4a5a70,
-  B: 0x4a5a70,
-  P1: 0x7088a6,
-  P2: 0x7088a6,
-  P3: 0x7088a6,
-  P4: 0x7088a6,
-  EXIT: 0x4a5a70,
-};
+/** A flat strip's colour: platforms are lighter than the entry lines and EXIT. */
+function stripColor(track: TrackId): number {
+  return isPlatform(track) ? 0x7088a6 : 0x4a5a70;
+}
 
 function material(color: number, roughness = 0.85): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.05 });
@@ -65,13 +71,16 @@ interface Device {
 export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   const z = (track: TrackId) => laneOf(track) * LANE_SPACING;
   const x = (metres: number) => toScreenX(metres, frame);
-  const tracks = Object.keys(TRACK_START) as TrackId[];
+  // The tracks of the layout in use. A track outside it is never drawn.
+  const entries = [...ENTRIES];
+  const platforms = [...PLATFORMS];
+  const tracks: TrackId[] = [...entries, ...platforms, 'EXIT'];
 
   // Flat strips until the kit loads, and for good if it never does.
   const strips = new THREE.Group();
   for (const track of tracks) {
     const length = TRACK_LENGTH[track] * UNITS_PER_METRE;
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(length, STRIP_HEIGHT, STRIP_DEPTH), material(STRIP_COLOR[track]));
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(length, STRIP_HEIGHT, STRIP_DEPTH), material(stripColor(track)));
     strip.position.set(x(TRACK_START[track]) + length / 2, STRIP_HEIGHT / 2, z(track));
     strip.receiveShadow = true;
     strips.add(strip);
@@ -79,13 +88,15 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   scene.add(strips);
   let top = STRIP_HEIGHT;
 
-  // Platform islands sit in the A and B lanes, which are empty beside the platforms.
+  // Platform islands sit in the entry lines' lanes, which are empty beside the platforms.
   // The islands start after the points, where the platform tracks run straight.
-  const islandStart = TRACK_START.P1 + POINTS_LENGTH + 10;
+  // Every platform starts at the same x, where every entry line ends and splits.
+  const split = TRACK_START[platforms[0]];
+  const islandStart = split + POINTS_LENGTH + 10;
   const islandEnd = TRACK_START.EXIT;
   const platformLength = (islandEnd - islandStart) * UNITS_PER_METRE;
   const platformX = x((islandStart + islandEnd) / 2);
-  for (const lane of ['A', 'B'] as const) {
+  for (const lane of entries) {
     const island = roundedBox(platformLength, 0.55, 4.2, 0xaebfd6, 0.2);
     island.position.set(platformX, 0.28, z(lane));
     scene.add(island);
@@ -108,20 +119,24 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
 
   // The junction zone: the last 100 m of every platform and the first 200 m of EXIT.
   const zoneMaterial = new THREE.MeshBasicMaterial({ color: 0xd9a441, transparent: true, opacity: 0.12, depthWrite: false });
-  const lanes = (['P1', 'P2', 'P3', 'P4'] as const).map(z);
-  // The platform ends and the pairs' merge share one patch; the start of EXIT gets another.
+  const lanes = platforms.map(z);
+  const pairLanes = entries.map(z);
+  // The platform ends and the pairs' merge share one patch; the start of EXIT gets another,
+  // as wide as the pairs' lanes it gathers in.
   const pairsEnd = TRACK_START.EXIT + EXIT_MERGE.pairs;
   const zoneWidth = x(pairsEnd) - x(JUNCTION_START_X);
   const ends = new THREE.Mesh(new THREE.PlaneGeometry(zoneWidth, Math.max(...lanes) - Math.min(...lanes) + 3), zoneMaterial);
   ends.rotation.x = -Math.PI / 2;
   ends.position.set(x(JUNCTION_START_X) + zoneWidth / 2, 0.03, (Math.max(...lanes) + Math.min(...lanes)) / 2);
   const exitWidth = x(JUNCTION_END_X) - x(pairsEnd);
-  const start = new THREE.Mesh(new THREE.PlaneGeometry(exitWidth, z('B') - z('A') + 3), zoneMaterial);
+  const start = new THREE.Mesh(new THREE.PlaneGeometry(exitWidth, Math.max(...pairLanes) - Math.min(...pairLanes) + 3), zoneMaterial);
   start.rotation.x = -Math.PI / 2;
-  start.position.set(x(pairsEnd) + exitWidth / 2, 0.03, (z('A') + z('B')) / 2);
+  start.position.set(x(pairsEnd) + exitWidth / 2, 0.03, (Math.max(...pairLanes) + Math.min(...pairLanes)) / 2);
   scene.add(ends, start);
 
-  // A few trees well away from the track. Decoration only, placed the same way every time.
+  // A few trees well away from the track, beyond the first and the last lane. Decoration only,
+  // placed the same way every time.
+  const nearSide = Math.max(...lanes) + 6;
   for (let i = 0; i < trees; i++) {
     const tree = new THREE.Group();
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.1, 8), material(0x6b4f3a));
@@ -133,7 +148,7 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
       tree.add(m);
     }
     const far = i % 2 === 0;
-    tree.position.set(((i * 37) % 100) / 100 * frame.width, 0, far ? -14 - ((i * 7) % 9) : 26 + ((i * 5) % 9));
+    tree.position.set(((i * 37) % 100) / 100 * frame.width, 0, far ? -14 - ((i * 7) % 9) : nearSide + ((i * 5) % 9));
     scene.add(tree);
   }
 
@@ -210,11 +225,12 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     };
     // Entry lines run straight to their end, where they split. Platforms run straight once
     // past the points. EXIT runs straight once the platforms have joined it.
-    for (const entry of ['A', 'B'] as const) straight(entry, TRACK_START[entry], TRACK_START[entry] + TRACK_LENGTH[entry]);
-    for (const p of ['P1', 'P2', 'P3', 'P4'] as const) straight(p, TRACK_START[p] + POINTS_LENGTH, TRACK_START.EXIT);
+    for (const entry of entries) straight(entry, TRACK_START[entry], TRACK_START[entry] + TRACK_LENGTH[entry]);
+    for (const p of platforms) straight(p, TRACK_START[p] + POINTS_LENGTH, TRACK_START.EXIT);
     const pairsJoined = TRACK_START.EXIT + EXIT_MERGE.pairs;
-    const allJoined = pairsJoined + EXIT_MERGE.join;
-    straight('EXIT', allJoined, TRACK_START.EXIT + TRACK_LENGTH.EXIT);
+    // EXIT's own lane starts where the nearest pair reaches it. Pairs further out join it later.
+    const firstJoined = pairsJoined + Math.min(...entries.map(exitJoinLength));
+    straight('EXIT', firstJoined, TRACK_START.EXIT + TRACK_LENGTH.EXIT);
     // The points: each entry line bends into its two platforms, and each platform bends into
     // EXIT. Trains follow the same path (pathAt in layout.ts).
     const diagonal = (fromX: number, fromZ: number, toX: number, toZ: number) => {
@@ -228,16 +244,22 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
       );
       placements.push(m);
     };
-    const split = TRACK_START.P1;
-    diagonal(split, z('A'), split + POINTS_LENGTH, z('P1'));
-    diagonal(split, z('A'), split + POINTS_LENGTH, z('P2'));
-    diagonal(split, z('B'), split + POINTS_LENGTH, z('P3'));
-    diagonal(split, z('B'), split + POINTS_LENGTH, z('P4'));
-    // The way out joins in two stages: each pair of platforms first, then the two pairs.
-    for (const p of ['P1', 'P2'] as const) diagonal(TRACK_START.EXIT, z(p), pairsJoined, z('A'));
-    for (const p of ['P3', 'P4'] as const) diagonal(TRACK_START.EXIT, z(p), pairsJoined, z('B'));
-    diagonal(pairsJoined, z('A'), allJoined, z('EXIT'));
-    diagonal(pairsJoined, z('B'), allJoined, z('EXIT'));
+    for (const p of platforms) diagonal(split, z(entryOf(p)), split + POINTS_LENGTH, z(p));
+    // The way out joins in two stages: each pair of platforms first, then every pair into EXIT.
+    for (const p of platforms) diagonal(TRACK_START.EXIT, z(p), pairsJoined, z(entryOf(p)));
+    for (const entry of entries) {
+      const join = exitJoinLength(entry);
+      // A pair already in line with EXIT runs straight on: EXIT's own track starts there.
+      if (join <= 0) continue;
+      // A long join is laid as several pieces end to end, each as long as the default layout's
+      // one piece, so the sleepers are not stretched.
+      const pieces = Math.max(1, Math.round(join / EXIT_MERGE.join));
+      const stepX = join / pieces;
+      const stepZ = (z('EXIT') - z(entry)) / pieces;
+      for (let i = 0; i < pieces; i++) {
+        diagonal(pairsJoined + i * stepX, z(entry) + i * stepZ, pairsJoined + (i + 1) * stepX, z(entry) + (i + 1) * stepZ);
+      }
+    }
 
     const rails = new THREE.InstancedMesh(geometry, mesh.material, placements.length);
     placements.forEach((m, i) => rails.setMatrixAt(i, m));

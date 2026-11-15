@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { baselineProgram, createBaselineAgent, makeCentre } from '../../src/baseline';
 import type { TrainProgram } from '../../src/engine/ports';
 import { ACCEL, BRAKE } from '../../src/shared/constants';
+import { applyLayout, platformReadings, resetLayout } from '../../src/shared/map';
 import type { SensorReadings, TimetableEntry } from '../../src/shared/types';
 
 const timetable: TimetableEntry[] = [
@@ -10,7 +11,7 @@ const timetable: TimetableEntry[] = [
 ];
 
 const clear: SensorReadings = {
-  platformOccupied: { P1: false, P2: false, P3: false, P4: false },
+  platformOccupied: platformReadings(),
   junctionOccupied: false,
   exitStartClear: true,
 };
@@ -63,5 +64,23 @@ describe('baselineProgram', () => {
     const agent = baselineProgram.agentFactory(1, timetable);
     const out = agent.decide({ now: 0.1, self: trains[0], inbox: permits, sightAhead: null });
     expect(out).toEqual({ accel: ACCEL, nextTrack: 'P1', outbox: [], mode: 'central' });
+  });
+});
+
+describe('layouts (design: "Layouts")', () => {
+  afterEach(() => {
+    resetLayout();
+  });
+
+  it('on hub, builds a centre that sends a train on line D to its own pair, and an agent that obeys it', () => {
+    applyLayout('hub');
+    const hub: TimetableEntry[] = [{ id: 1, entry: 'D', enterAt: 0, platform: 'P7', leader: null, dwell: 30 }];
+    const onD = [{ id: 1, pos: { track: 'D' as const, offset: 100 }, speed: 20, brokenDown: false }];
+    const sensors: SensorReadings = { platformOccupied: platformReadings(), junctionOccupied: false, exitStartClear: true };
+    const permits = baselineProgram.makeCentre(hub)?.step(0, onD, sensors, new Map()) ?? [];
+    expect(permits).toHaveLength(1);
+    expect(permits[0]).toMatchObject({ type: 'permit', to: 1, nextTrack: 'P7' });
+    const out = baselineProgram.agentFactory(1, hub).decide({ now: 0.1, self: onD[0], inbox: permits, sightAhead: null });
+    expect(out).toEqual({ accel: ACCEL, nextTrack: 'P7', outbox: [], mode: 'central' });
   });
 });

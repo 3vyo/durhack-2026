@@ -1,5 +1,6 @@
 import type { Switches } from '../engine/switches';
-import { ENTRY_LINES, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
+import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
+import { entryLines, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
@@ -16,8 +17,10 @@ export interface PanelHandlers {
   onPause(): void;
   onRestart(): void;
   onCamera(): void;
-  /** Add a train at the start of line A or B. */
+  /** Add a train at the start of one of the layout's entry lines. */
   onSpawn(line: EntryLine): void;
+  /** Another layout was chosen. The page reloads to change it. */
+  onLayout(id: LayoutId): void;
   /** Show this side's 3D view. */
   onView(side: Side): void;
 }
@@ -236,7 +239,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   traffic.setAttribute('aria-label', 'Traffic');
   const spawnLine = el('select');
   spawnLine.setAttribute('aria-label', 'Line for the new train');
-  for (const line of ENTRY_LINES) {
+  for (const line of entryLines()) {
     const option = el('option', '', `Line ${line}`);
     option.value = line;
     spawnLine.append(option);
@@ -261,6 +264,18 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   }
   speed.value = String(NORMAL_SPEED);
   speed.addEventListener('change', () => h.onSpeed(Number(speed.value)));
+  // The layout in use. Choosing another reloads the page, because a layout is picked before a
+  // run is built.
+  const layout = el('select', 'layout');
+  layout.setAttribute('aria-label', 'Layout');
+  layout.title = `${LAYOUT.title}. Choosing another layout reloads the page`;
+  for (const id of LAYOUT_IDS) {
+    const option = el('option', '', LAYOUTS[id].title);
+    option.value = id;
+    layout.append(option);
+  }
+  layout.value = LAYOUT.id;
+  layout.addEventListener('change', () => h.onLayout(layout.value as LayoutId));
   const pause = el('button', '', 'Pause');
   pause.title = 'Pause or resume (Space)';
   pause.addEventListener('click', h.onPause);
@@ -268,7 +283,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   restart.addEventListener('click', h.onRestart);
   const camera = el('button', '', 'Camera');
   camera.addEventListener('click', h.onCamera);
-  run.append(speed, pause, restart, camera);
+  run.append(layout, speed, pause, restart, camera);
   dock.append(failures, traffic, run);
 
   // The bottom: the key, the minimap and the control dock, stacked.
