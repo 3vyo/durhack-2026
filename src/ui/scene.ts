@@ -15,7 +15,7 @@ import { RAIL_PIECE, TRAIN_UNIT, assetUrl } from './assets';
 import { consistLayout, disposeAll, trainIdOf } from './consist';
 import { loadKit, type KitParts, type Size } from './kit';
 import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
-import { SURFACE } from './palette';
+import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
 
 export interface SceneView {
@@ -79,6 +79,19 @@ function markerTextures(): (spec: MarkerSpec) => THREE.CanvasTexture {
   };
 }
 
+/** A vertical gradient for the sky behind the scene. */
+function skyTexture(): THREE.CanvasTexture {
+  const canvas = Object.assign(document.createElement('canvas'), { width: 2, height: 256 });
+  const g = canvas.getContext('2d')!;
+  const gradient = g.createLinearGradient(0, 0, 0, 256);
+  ENVIRONMENT.sky.forEach((colour, i) => gradient.addColorStop(i / (ENVIRONMENT.sky.length - 1), colour));
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, 2, 256);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function stoppedTexture(): THREE.CanvasTexture {
   const canvas = Object.assign(document.createElement('canvas'), { width: 256, height: 64 });
   const g = canvas.getContext('2d')!;
@@ -101,19 +114,50 @@ function stoppedTexture(): THREE.CanvasTexture {
  * mode's shape marker above it, and a camera that can switch between an angled and an overhead
  * view. Labels, controls and metrics are plain HTML outside the scene.
  */
-export function createScene(container: HTMLElement, frame: Frame): SceneView {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+export function createScene(
+  container: HTMLElement,
+  frame: Frame,
+  quality: QualityPreset = qualityPreset('high'),
+): SceneView {
+  const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = ENVIRONMENT.exposure;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = quality.shadows;
+  // three 0.187 has no PCFSoftShadowMap any more. PCF with a shadow radius is close enough.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(SURFACE.scene);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(frame.width / 2, 60, 40);
-  scene.add(sun);
+  scene.background = skyTexture();
+  const fog = new THREE.Fog(ENVIRONMENT.fog.color, 100, 300);
+  scene.fog = fog;
+  const centre = new THREE.Vector3(frame.width / 2, 0, 2.5 * LANE_SPACING);
+  scene.add(new THREE.HemisphereLight(ENVIRONMENT.hemisphere.sky, ENVIRONMENT.hemisphere.ground, ENVIRONMENT.hemisphere.intensity));
+  const sun = new THREE.DirectionalLight(ENVIRONMENT.sun.color, ENVIRONMENT.sun.intensity);
+  sun.position.set(centre.x + 30, 60, centre.z + 35);
+  sun.target.position.copy(centre);
+  if (quality.shadows) {
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
+    // Cover the whole stage, about 144 by 30 units, centred on the frame.
+    Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 40, bottom: -40, near: 1, far: 200 });
+    sun.shadow.radius = 3;
+    sun.shadow.bias = -0.0004;
+  }
+  scene.add(sun, sun.target);
 
-  const world = buildWorld(scene, frame);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(frame.width * 4, frame.width * 3),
+    new THREE.MeshStandardMaterial({ color: ENVIRONMENT.ground, roughness: 1 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(centre.x, -0.01, centre.z);
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const world = buildWorld(scene, frame, quality.trees);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   const trainGeometry = new THREE.BoxGeometry(1, TRAIN_HEIGHT, TRAIN_DEPTH);
@@ -158,6 +202,8 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
         const material = (mesh.material as THREE.MeshStandardMaterial).clone();
         material.userData.base = material.color.getHex();
         mesh.material = material;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         materials.push(material);
       });
       const holder = new THREE.Group();
@@ -214,6 +260,10 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     // Looking straight down makes "up" ambiguous, so point the top of the picture at -z.
     camera.up.set(0, mode === 'overhead' ? 0 : 1, mode === 'overhead' ? -1 : 0);
     camera.lookAt(...lookAt);
+    // Haze the far edges, whichever view: fog from just beyond what the camera looks at.
+    const distance = camera.position.distanceTo(new THREE.Vector3(...lookAt));
+    fog.near = distance * ENVIRONMENT.fog.near;
+    fog.far = distance * ENVIRONMENT.fog.far;
   }
 
   function resize(): void {

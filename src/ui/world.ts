@@ -62,7 +62,7 @@ interface Device {
   lamp: THREE.MeshStandardMaterial;
 }
 
-export function buildWorld(scene: THREE.Scene, frame: Frame): World {
+export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   const z = (track: TrackId) => laneOf(track) * LANE_SPACING;
   const x = (metres: number) => toScreenX(metres, frame);
   const tracks = Object.keys(TRACK_START) as TrackId[];
@@ -115,6 +115,22 @@ export function buildWorld(scene: THREE.Scene, frame: Frame): World {
   start.rotation.x = -Math.PI / 2;
   start.position.set(x(TRACK_START.EXIT) + exitWidth / 2, 0.03, z('EXIT'));
   scene.add(ends, start);
+
+  // A few trees well away from the track. Decoration only, placed the same way every time.
+  for (let i = 0; i < trees; i++) {
+    const tree = new THREE.Group();
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.1, 8), material(0x6b4f3a));
+    trunk.position.y = 0.55;
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(1.25 + (i % 3) * 0.2, 3.2, 9), material(i % 2 ? 0x3d7a55 : 0x4a8a5d));
+    crown.position.y = 2.6;
+    for (const m of [trunk, crown]) {
+      m.castShadow = true;
+      tree.add(m);
+    }
+    const far = i % 2 === 0;
+    tree.position.set(((i * 37) % 100) / 100 * frame.width, 0, far ? -14 - ((i * 7) % 9) : 26 + ((i * 5) % 9));
+    scene.add(tree);
+  }
 
   // The four devices: a control centre building, a hut for each keeper, a post for the sensors.
   const devices = new Map<DeviceKey, Device>();
