@@ -1,7 +1,8 @@
 import { DEFAULT_TIMETABLE } from '../engine/timetable';
 import { SCENARIOS } from '../scenarios/scenarios';
-import { formatSummaries } from './report';
-import { hasCollisions, runBatch } from './run';
+import { BATCH_USAGE, parseBatchArgs, type BatchArgs } from './batch-args';
+import { describeLayout, formatSummaries } from './report';
+import { hasCollisions, onLayout, runBatch } from './run';
 import { baselineProgram, ourProgram } from './programs';
 
 // Run with `npm run batch`. It runs every scenario over many seeds with no screen, prints
@@ -9,17 +10,40 @@ import { baselineProgram, ourProgram } from './programs';
 // Overruns are printed but do not fail the run. Design: "Scenarios and timings".
 //
 // `npm run batch -- 10` runs 10 seeds instead of 50, for a quicker check.
+// `npm run batch -- --layout=hub` runs the hub layout instead of the default, junction.
+// `npm run batch -- 10 --layout=all` runs every layout in turn, each under its own heading.
+// With more than one layout the command fails if any of them collided or could not run.
 
 declare const process: { argv: string[]; exitCode?: number };
 
-const asked = Number(process.argv[2]);
-const SEEDS = Array.from({ length: Number.isInteger(asked) && asked > 0 ? asked : 50 }, (_, i) => i + 1);
+function main(args: BatchArgs): boolean {
+  let ok = true;
+  for (const layout of args.layouts) {
+    const started = Date.now();
+    try {
+      // onLayout puts the earlier layout back when this one is done, so each layout starts clean.
+      const summaries = onLayout(layout, () =>
+        Object.values(SCENARIOS).map((s) =>
+          runBatch(s, args.seeds, { baseline: baselineProgram, ours: ourProgram }, DEFAULT_TIMETABLE),
+        ),
+      );
+      console.log(`${formatSummaries(summaries, (Date.now() - started) / 1000, layout)}\n`);
+      if (hasCollisions(summaries)) ok = false;
+    } catch (e) {
+      console.log(`${describeLayout(layout)}\nFAIL: the batch could not run: ${e instanceof Error ? e.message : String(e)}\n`);
+      ok = false;
+    }
+  }
+  if (args.layouts.length > 1) {
+    console.log(ok ? `OK: zero collisions on all ${args.layouts.length} layouts` : 'FAIL: at least one layout collided or could not run');
+  }
+  return ok;
+}
 
-const started = Date.now();
-const summaries = Object.values(SCENARIOS).map((s) =>
-  runBatch(s, SEEDS, { baseline: baselineProgram, ours: ourProgram }, DEFAULT_TIMETABLE),
-);
-const elapsed = (Date.now() - started) / 1000;
-
-console.log(formatSummaries(summaries, elapsed));
-process.exitCode = hasCollisions(summaries) ? 1 : 0;
+let args: BatchArgs | null = null;
+try {
+  args = parseBatchArgs(process.argv.slice(2));
+} catch (e) {
+  console.log(`${e instanceof Error ? e.message : String(e)}\n${BATCH_USAGE}`);
+}
+process.exitCode = args !== null && main(args) ? 0 : 1;

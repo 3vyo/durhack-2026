@@ -2,17 +2,23 @@ import { averageDelaySoFar, timeToNormalSoFar } from './engine/metrics';
 import { DEFAULT_TIMETABLE } from './engine/timetable';
 import { LiveSession } from './runner/live';
 import type { RunResult } from './engine/engine';
-import { healthyReference, type ScenarioSummary } from './runner/run';
+import { healthyReference, type BatchRequest, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
-import { spawnNote, statusTitle } from './ui/controls';
+import { LAYOUT, applyLayout } from './shared/map';
+import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
-import { DEFAULT_CAMERA, STATION_FRAME, isStopped, type CameraMode } from './ui/layout';
+import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { NORMAL_SPEED, createPanel, type Side } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
 import { createScene } from './ui/scene';
+
+// The layout comes first: ?layout=<id> in the page address, or the default. Everything below
+// (the session, the reference run, the scenes and the batch worker) is built on the layout in
+// use, so nothing may be built before this line.
+applyLayout(parseLayout(location.search));
 
 const SEED = 1;
 const SCENARIO = SCENARIOS['centre-outage'];
@@ -74,6 +80,11 @@ const panel = createPanel(app, {
   onSpawn: (line) => {
     panel.setSpawnNote(spawnNote(session.spawn(line), line));
   },
+  // A layout is chosen before a run is built, so changing it loads the page again with the new
+  // ?layout=, keeping the rest of the address.
+  onLayout: (id) => {
+    if (id !== LAYOUT.id) location.assign(layoutUrl(location.href, id));
+  },
   onView: (side) => {
     view = side;
     panel.setView(side);
@@ -91,8 +102,9 @@ panel.setCameraLabel(cameraLabel());
 
 // ?quality=low turns off shadows and trees, for a weak laptop.
 const quality = qualityPreset(parseQuality(location.search));
-const baselineView = createScene(panel.baselineStage, STATION_FRAME, quality);
-const oursView = createScene(panel.oursStage, STATION_FRAME, quality);
+const frameShown = stationFrame();
+const baselineView = createScene(panel.baselineStage, frameShown, quality);
+const oursView = createScene(panel.oursStage, frameShown, quality);
 panel.setView(view);
 // Click a train to see how it is deciding. Each scene keeps its own selection.
 const selected: { baseline: number | null; ours: number | null } = { baseline: null, ours: null };
@@ -132,7 +144,9 @@ const worker = new Worker(new URL('./runner/batch.worker.ts', import.meta.url), 
 worker.addEventListener('message', (e: MessageEvent<ScenarioSummary>) => {
   average = e.data;
 });
-worker.postMessage({ scenario: SCENARIO.id });
+// A worker has its own copy of the layout in use, so the page tells it which one to run.
+const batchRequest: BatchRequest = { scenario: SCENARIO.id, layout: LAYOUT.id };
+worker.postMessage(batchRequest);
 
 function clock(seconds: number): string {
   const m = Math.floor(seconds / 60);

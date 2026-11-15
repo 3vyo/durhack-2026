@@ -1,4 +1,5 @@
 import { ACCEL, BRAKE, MAX_SPEED, TICK } from '../shared/constants';
+import { isEntryTrack, isPlatform } from '../shared/map';
 import type {
   Outgoing,
   PlatformId,
@@ -75,7 +76,7 @@ import {
 export interface TrainMemory {
   id: TrainId;
   entry: TimetableEntry | null; // this train's own timetable entry, null if the timetable lacks it
-  leader: Leader; // from the timetable on A and B, from the junction grant on EXIT
+  leader: Leader; // from the timetable on its entry track, from the junction grant on EXIT
   reports: ReportLog; // the newest position report from every train, the leader's included
   permit: HeldPermit | null; // the last permit from the control centre
   locks: ResourceId[]; // locks the platform and junction keepers have granted this train
@@ -178,7 +179,7 @@ export function isLeaving(memory: TrainMemory): boolean {
 
 /**
  * "Entering the station", "Platform keeper switched off", "Leaving the station" and
- * "Junction keeper switched off". The route for this tick. On A or B, nextTrack is the chosen platform, or the one
+ * "Junction keeper switched off". The route for this tick. On an entry track, nextTrack is the chosen platform, or the one
  * the creep rule is looking into. In a platform it is EXIT once the train holds the
  * junction lock or is using its clock slot. Null otherwise. A chosen platform never
  * changes, so nextTrack cannot change after the front has crossed the end of the track.
@@ -186,13 +187,13 @@ export function isLeaving(memory: TrainMemory): boolean {
 export function chooseRoute(memory: TrainMemory, input: TrainInput, numbers: TrainNumbers): RouteChoice {
   const { track } = input.self.pos;
   if (track === 'EXIT') return { nextTrack: null, platform: memory.platform, slotStart: false };
-  if (track === 'A' || track === 'B') return entryRoute(memory, input, numbers);
+  if (isEntryTrack(track)) return entryRoute(memory, input, numbers);
   return platformRoute(memory, input, track, numbers);
 }
 
 /**
- * The route on A or B. With a platform chosen, go there. Under the fallback, take the
- * fixed split's platform if the sensors name an empty one. If the sensors are silent,
+ * The route on an entry track. With a platform chosen, go there. Under the fallback, take the
+ * fixed split's platform, from the train's own pair, if the sensors name an empty one. If the sensors are silent,
  * creep: look into one platform at a time. Otherwise wait with nextTrack null.
  */
 function entryRoute(memory: TrainMemory, input: TrainInput, numbers: TrainNumbers): RouteChoice {
@@ -270,7 +271,7 @@ export function remember(
  * it keeps it: a refusal, or a grant for another platform, is ignored and not stored.
  */
 function rememberPlatformKeeper(memory: TrainMemory, now: number, pos: Position, reply: PlatformKeeperReply): void {
-  if (pos.track !== 'A' && pos.track !== 'B') return;
+  if (!isEntryTrack(pos.track)) return;
   const chosen = memory.platform;
   if (chosen !== null && (reply.kind === 'refuse' || reply.platform !== chosen)) return;
   memory.lastPlatformKeeperReply = { ...reply, at: now };
@@ -287,7 +288,7 @@ function rememberPlatformKeeper(memory: TrainMemory, now: number, pos: Position,
  * train directly ahead. A refusal never takes back a grant.
  */
 function rememberJunctionKeeper(memory: TrainMemory, now: number, pos: Position, reply: JunctionKeeperReply): void {
-  if (pos.track === 'A' || pos.track === 'B' || pos.track === 'EXIT') return;
+  if (!isPlatform(pos.track)) return;
   memory.lastJunctionKeeperReplyAt = now;
   if (reply.kind !== 'grant' || memory.firstJunctionRequestAt === null) return;
   if (isLeaving(memory)) return;
@@ -325,8 +326,7 @@ export function expireJunctionGrant(memory: TrainMemory, input: TrainInput, numb
   const grantedAt = memory.junctionGrantAt;
   if (grantedAt === null) return;
   const held = memory.locks.includes('JUNCTION');
-  const inPlatform = self.pos.track !== 'A' && self.pos.track !== 'B' && self.pos.track !== 'EXIT';
-  const distance = inPlatform ? numbers.platformStop - self.pos.offset : 0;
+  const distance = isPlatform(self.pos.track) ? numbers.platformStop - self.pos.offset : 0;
   if (held && grantExpired({ now, grantedAt, distance, speed: self.speed }, numbers)) {
     memory.locks = memory.locks.filter((lock) => lock !== 'JUNCTION');
   } else if (!held && now - grantedAt >= numbers.junctionKeeperTimeout - numbers.slack) {
@@ -383,7 +383,7 @@ export function enterCentral(memory: TrainMemory): void {
  * its own rules from where the centre left it.
  * - On EXIT, or past its platform stop and so in the junction zone, it follows the train
  *   its last permit named. The centre let it through, so it carries on out.
- * - On A or B, if it can no longer stop before the end of its entry track, it keeps the
+ * - On an entry track, if it can no longer stop before the end of its entry track, it keeps the
  *   platform its last permit sent it to, and asks the platform keeper for it.
  * - Anywhere else it stops where its own rules say and asks for what it needs.
  */

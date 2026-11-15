@@ -4,10 +4,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
 import { TRAIN_LENGTH } from '../shared/constants';
+import { isPlatform } from '../shared/map';
 import {
   DEFAULT_CAMERA,
   LANE_SPACING,
   cameraPreset,
+  laneOf,
+  stageGrowth,
   UNITS_PER_METRE,
   labelAnchors,
   ndcToCss,
@@ -157,7 +160,11 @@ export function createScene(
   scene.background = skyTexture();
   const fog = new THREE.Fog(ENVIRONMENT.fog.color, 100, 300);
   scene.fog = fog;
-  const centre = new THREE.Vector3(frame.width / 2, 0, 2.5 * LANE_SPACING);
+  // The middle of the stage: the middle of the frame, in EXIT's lane, which runs down the
+  // middle of the lanes the layout in use has.
+  const centre = new THREE.Vector3(frame.width / 2, 0, laneOf('EXIT') * LANE_SPACING);
+  // A layout wider or deeper than the default needs that much more ground and shadow.
+  const growth = stageGrowth(frame);
   scene.add(new THREE.HemisphereLight(ENVIRONMENT.hemisphere.sky, ENVIRONMENT.hemisphere.ground, ENVIRONMENT.hemisphere.intensity));
   const sun = new THREE.DirectionalLight(ENVIRONMENT.sun.color, ENVIRONMENT.sun.intensity);
   sun.position.set(centre.x + 30, 60, centre.z + 35);
@@ -165,15 +172,23 @@ export function createScene(
   if (quality.shadows) {
     sun.castShadow = true;
     sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
-    // Cover the whole stage, about 144 by 30 units, centred on the frame.
-    Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 40, bottom: -40, near: 1, far: 200 });
+    // Cover the whole stage, about 144 by 30 units in the default layout, centred on the frame.
+    // A wider or deeper layout gets a shadow area that much bigger.
+    Object.assign(sun.shadow.camera, {
+      left: -80 * growth,
+      right: 80 * growth,
+      top: 40 * growth,
+      bottom: -40 * growth,
+      near: 1,
+      far: 200,
+    });
     sun.shadow.radius = 3;
     sun.shadow.bias = -0.0004;
   }
   scene.add(sun, sun.target);
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(frame.width * 4, frame.width * 3),
+    new THREE.PlaneGeometry(frame.width * 4, frame.width * 3 * growth),
     new THREE.MeshStandardMaterial({ color: ENVIRONMENT.ground, roughness: 1 }),
   );
   ground.rotation.x = -Math.PI / 2;
@@ -363,7 +378,7 @@ export function createScene(
   // cars still bend out of it through the points.
   const lastPlatform = new Map<number, PlatformId>();
   function observe(s: Snapshot): void {
-    for (const t of s.trains) if (t.pos.track.startsWith('P')) lastPlatform.set(t.id, t.pos.track as PlatformId);
+    for (const t of s.trains) if (isPlatform(t.pos.track)) lastPlatform.set(t.id, t.pos.track);
   }
 
   /** Puts each car where the track is at its own x, turned to follow it. */

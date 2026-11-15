@@ -6,7 +6,6 @@ import {
   POSITION_INTERVAL,
   REQUEST_REPEAT,
   SIGHT_SPEED,
-  SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
   PLATFORM_KEEPER_TIMEOUT,
@@ -34,7 +33,13 @@ describe('trainNumbers', () => {
     expect(n.junctionKeeperTimeout).toBe(JUNCTION_KEEPER_TIMEOUT);
     expect(n.slotLength).toBe(SLOT_LENGTH);
     expect(n.slotWindow).toBe(SLOT_WINDOW);
-    expect(n.slotCount).toBe(SLOT_COUNT);
+  });
+
+  it('has one clock slot for each platform of the layout, 4 on the default layout', () => {
+    const n = trainNumbers();
+    expect(n.slotCount).toBe(PLATFORMS.length);
+    expect(n.slotCount).toBe(4);
+    expect(n.slotOrder).toEqual(['P1', 'P2', 'P3', 'P4']);
   });
 
   it('gives a junction grant one REQUEST_REPEAT less than JUNCTION_KEEPER_TIMEOUT to be used', () => {

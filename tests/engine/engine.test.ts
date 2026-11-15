@@ -1,11 +1,23 @@
 /// <reference types="vite/client" />
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Engine, type EngineConfig } from '../../src/engine/engine';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
 import { DEFAULT_TIMETABLE, RUN_LENGTH, generateTimetable, spawnEntry } from '../../src/engine/timetable';
 import { stubBaseline, stubOurs } from '../../src/runner/stubs';
-import { ACCEL, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, setConstants } from '../../src/shared/constants';
-import type { LocalActor, Message, Outgoing, SensorReadings, TimetableEntry, TrackId } from '../../src/shared/types';
+import { ACCEL, BRAKE, MAX_SPEED, SIGHT_SPEED, TICK, resetConstants, safeSpeed, setConstants } from '../../src/shared/constants';
+import { LAYOUT_IDS, PLATFORMS, applyLayout, pairOf, resetLayout } from '../../src/shared/map';
+import type {
+  EntryId,
+  LocalActor,
+  Message,
+  Outgoing,
+  PlatformId,
+  SensorReadings,
+  TimetableEntry,
+  TrackId,
+} from '../../src/shared/types';
+
+afterEach(() => resetLayout());
 
 const one: TimetableEntry[] = [
   { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
@@ -295,7 +307,10 @@ describe('Engine control centre', () => {
     const engine = new Engine(config(one, 60, centreProgram(calls)));
     engine.press({ sensors: false, platformKeeper: false, junctionKeeper: false });
     for (let i = 0; i < 11; i++) engine.step();
-    expect(calls[calls.length - 1].sensors.platformOccupied).toEqual({ P1: false, P2: false, P3: false, P4: false });
+    // P5 to P8 are not in the default layout, so they read occupied to the centre too.
+    expect(calls[calls.length - 1].sensors.platformOccupied).toEqual({
+      P1: false, P2: false, P3: false, P4: false, P5: true, P6: true, P7: true, P8: true,
+    });
   });
 
   it("gives the centre each train's route from the last tick", () => {
@@ -698,5 +713,317 @@ describe('Engine.addTrain', () => {
     for (let i = 0; i < 10; i++) engine.step();
     expect(() => engine.addTrain({ ...spawnEntry(timetable, 'B', 0, 30) })).toThrow(/past/);
     expect(() => engine.addTrain({ ...one[0], enterAt: engine.now })).toThrow(/already/);
+  });
+});
+
+describe('Engine on the other layouts', () => {
+  const on = (id: number, entry: EntryId, platform: PlatformId, enterAt = 0): TimetableEntry => ({
+    id,
+    entry,
+    enterAt,
+    platform,
+    leader: null,
+    dwell: 30,
+  });
+
+  /** Runs one train to the end and returns every track it was seen on, in order. */
+  function tracksOf(engine: Engine, id: number): TrackId[] {
+    const seen: TrackId[] = [];
+    while (!engine.finished && engine.now < engine.result().runLength) {
+      engine.step();
+      const train = engine.snapshot().trains.find((t) => t.id === id);
+      if (train && seen[seen.length - 1] !== train.pos.track) seen.push(train.pos.track);
+    }
+    return seen;
+  }
+
+  const routes: Array<[EntryId, PlatformId]> = [
+    ['C', 'P5'],
+    ['C', 'P6'],
+    ['D', 'P7'],
+    ['D', 'P8'],
+  ];
+
+  for (const [entry, platform] of routes) {
+    it(`runs a train from ${entry} through ${platform} to the end of EXIT on the hub layout`, () => {
+      applyLayout('hub');
+      for (const program of [stubOurs, stubBaseline]) {
+        const engine = new Engine(config([on(1, entry, platform)], 600, program));
+        expect(tracksOf(engine, 1)).toEqual([entry, platform, 'EXIT']);
+        const result = engine.result();
+        expect(result.finished).toBe(true);
+        expect(result.exits.get(1)).toBeGreaterThanOrEqual(12400 / MAX_SPEED);
+        expect(result.overruns).toBe(0);
+        expect(result.collisions).toBe(0);
+      }
+    });
+  }
+
+  it('takes the same time from every entry track, because they all have the same length', () => {
+    applyLayout('hub');
+    const exitOf = (entry: EntryId): number => {
+      const engine = new Engine(config([on(1, entry, pairOf(entry)[0])]));
+      runUntilDone(engine);
+      return engine.result().exits.get(1)!;
+    };
+    const fromA = exitOf('A');
+    expect(exitOf('B')).toBe(fromA);
+    expect(exitOf('C')).toBe(fromA);
+    expect(exitOf('D')).toBe(fromA);
+  });
+
+  it('runs a train on C through P5 on the busy layout, and one on A through P2 on the branch layout', () => {
+    applyLayout('busy');
+    expect(tracksOf(new Engine(config([on(1, 'C', 'P5')])), 1)).toEqual(['C', 'P5', 'EXIT']);
+    applyLayout('branch');
+    expect(tracksOf(new Engine(config([on(1, 'A', 'P2')])), 1)).toEqual(['A', 'P2', 'EXIT']);
+  });
+
+  it('holds a train back while the start of C is occupied, and not for a train on D', () => {
+    applyLayout('hub');
+    const timetable: TimetableEntry[] = [
+      on(1, 'C', 'P5'),
+      { ...on(2, 'C', 'P6', 1), leader: 1 },
+      on(3, 'D', 'P7', 1),
+    ];
+    const engine = new Engine(config(timetable));
+    const appeared = new Map<number, number>();
+    while (engine.now < 60) {
+      engine.step();
+      for (const t of engine.snapshot().trains) if (!appeared.has(t.id)) appeared.set(t.id, engine.now);
+    }
+    // Train 2 waits for train 1 to clear the first SENSOR_RANGE + TRAIN_LENGTH metres of C.
+    expect(appeared.get(2)!).toBeGreaterThanOrEqual(15.9);
+    expect(appeared.get(2)!).toBeLessThanOrEqual(16.5);
+    // Train 3 is on D, which is empty, so it enters when it is due.
+    expect(appeared.get(3)!).toBeLessThanOrEqual(1.2);
+  });
+
+  it('counts no collision or close call for trains running side by side on all four entry tracks', () => {
+    applyLayout('hub');
+    const timetable = [on(1, 'A', 'P1'), on(2, 'B', 'P3'), on(3, 'C', 'P5'), on(4, 'D', 'P7')];
+    const engine = new Engine(config(timetable));
+    // 120 s is long enough to be far past offset 300 and short of the platforms.
+    while (engine.now < 120) engine.step();
+    const trains = engine.snapshot().trains;
+    expect(trains.map((t) => t.pos.track)).toEqual(['A', 'B', 'C', 'D']);
+    for (const t of trains) expect(t.pos.offset).toBeGreaterThan(1000);
+    expect(engine.result().collisions).toBe(0);
+    expect(engine.result().closeCalls).toBe(0);
+  });
+
+  it('counts a collision when trains from C and D drive into the junction zone together', () => {
+    applyLayout('hub');
+    const engine = new Engine(config([on(1, 'C', 'P6'), on(2, 'D', 'P8')]));
+    runUntilDone(engine);
+    expect(engine.result().collisions).toBe(1);
+  });
+
+  it('counts a collision when a train on D runs into a broken-down one', () => {
+    applyLayout('hub');
+    const timetable: TimetableEntry[] = [on(1, 'D', 'P7'), { ...on(2, 'D', 'P8', 30), leader: 1 }];
+    const engine = new Engine({ ...config(timetable), presses: [{ at: 20, set: {}, breakDown: 1 }] });
+    runUntilDone(engine);
+    expect(engine.result().collisions).toBe(1);
+  });
+
+  it('gives an agent on D the distance to a slower train ahead, and none for a train on C', () => {
+    applyLayout('hub');
+    const seen = new Map<number, Array<number | null>>();
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => {
+          seen.set(id, [...(seen.get(id) ?? []), input.sightAhead]);
+          return { accel: id === 1 ? 0 : ACCEL, nextTrack: null, outbox: [], mode: 'blind' };
+        },
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const timetable: TimetableEntry[] = [on(1, 'D', 'P7'), { ...on(2, 'D', 'P7'), leader: 1 }, on(3, 'C', 'P5')];
+    const engine = new Engine(config(timetable, 60, program));
+    for (let i = 0; i < 600; i++) engine.step();
+    expect(seen.get(2)!.some((v) => v !== null)).toBe(true);
+    for (const v of seen.get(2)!) if (v !== null) expect(v).toBeLessThanOrEqual(300);
+    expect(seen.get(3)!.every((v) => v === null)).toBe(true);
+  });
+
+  it('reports the junction zone edge to a train standing in P7 while another train is in the zone', () => {
+    applyLayout('hub');
+    let seenFromP7: number | null = null;
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: ({ self, sightAhead }) => {
+          // Train 1 stops in P7 near offset 150, short of the zone. Train 2 drives through P1
+          // into the zone at a steady speed and arrives after train 1 has stopped.
+          if (id === 1) {
+            if (self.pos.track === 'P7' && self.speed === 0 && sightAhead !== null) seenFromP7 = sightAhead;
+            const toStop = self.pos.track === 'D' ? 6000 - self.pos.offset + 150 : 150 - self.pos.offset;
+            const next: TrackId = self.pos.track === 'D' ? 'P7' : 'EXIT';
+            return { accel: self.speed >= safeSpeed(toStop) ? -BRAKE : ACCEL, nextTrack: next, outbox: [], mode: 'blind' };
+          }
+          return { accel: 0, nextTrack: self.pos.track === 'A' ? 'P1' : 'EXIT', outbox: [], mode: 'blind' };
+        },
+      }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config([on(1, 'D', 'P7'), on(2, 'A', 'P1')], 400, program));
+    while (engine.now < 400 && seenFromP7 === null) engine.step();
+    const first = engine.snapshot().trains.find((t) => t.id === 1)!;
+    const second = engine.snapshot().trains.find((t) => t.id === 2)!;
+    expect(first.pos.track).toBe('P7');
+    expect(first.pos.offset).toBeLessThan(300);
+    expect(second.pos.track).toBe('P1');
+    expect(seenFromP7).toBeCloseTo(300 - first.pos.offset, 6);
+  });
+
+  describe('platform sensors and the centre', () => {
+    /** A drive-through program whose trains note every platformStatus they hear. */
+    function listening(heard: Set<PlatformId>): TrainProgram {
+      return {
+        ...stubOurs,
+        agentFactory: (id, timetable) => {
+          const inner = stubOurs.agentFactory(id, timetable);
+          return {
+            decide: (input) => {
+              for (const m of input.inbox) if (m.type === 'platformStatus') heard.add(m.platform);
+              return inner.decide(input);
+            },
+          };
+        },
+      };
+    }
+
+    for (const layout of LAYOUT_IDS) {
+      it(`broadcasts a status for each platform of the ${layout} layout and no other`, () => {
+        applyLayout(layout);
+        const heard = new Set<PlatformId>();
+        const engine = new Engine(config([on(1, 'A', 'P1')], 600, listening(heard)));
+        runUntilDone(engine);
+        expect([...heard].sort()).toEqual([...PLATFORMS]);
+      });
+    }
+
+    it('tells a train near the station that P7 is occupied while a train stands in it', () => {
+      applyLayout('hub');
+      const statuses: Array<{ platform: PlatformId; occupied: boolean }> = [];
+      const program: TrainProgram = {
+        name: 'ours',
+        agentFactory: (id) => ({
+          decide: ({ self, inbox }) => {
+            if (id === 2) {
+              for (const m of inbox) if (m.type === 'platformStatus') statuses.push({ platform: m.platform, occupied: m.occupied });
+            }
+            // Both trains stop at offset 200 of their platform.
+            const onPlatform = self.pos.track !== 'D' && self.pos.track !== 'A';
+            const next: TrackId = self.pos.track === 'D' ? 'P7' : 'P1';
+            return { accel: onPlatform && self.pos.offset >= 200 ? -100 : ACCEL, nextTrack: next, outbox: [], mode: 'blind' };
+          },
+        }),
+        makeActors: () => [],
+        makeCentre: () => null,
+      };
+      const engine = new Engine(config([on(1, 'D', 'P7'), on(2, 'A', 'P1', 60)], 400, program));
+      while (engine.now < 400) engine.step();
+      const last = (p: PlatformId) => statuses.filter((s) => s.platform === p).pop()!;
+      expect(last('P7').occupied).toBe(true);
+      expect(last('P1').occupied).toBe(true);
+      expect(last('P8').occupied).toBe(false);
+      expect(last('P5').occupied).toBe(false);
+    });
+
+    it('gives the keepers and the centre readings for all eight platforms, occupied outside the layout', () => {
+      const expected: Record<string, PlatformId[]> = {
+        branch: ['P1', 'P2'],
+        junction: ['P1', 'P2', 'P3', 'P4'],
+        busy: ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'],
+        hub: ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8'],
+      };
+      for (const layout of LAYOUT_IDS) {
+        applyLayout(layout);
+        const toKeeper: SensorReadings[] = [];
+        const toCentre: SensorReadings[] = [];
+        const keeper: LocalActor = {
+          id: 'platformKeeper',
+          step: (_now, _inbox, sensors) => {
+            toKeeper.push(sensors);
+            return [];
+          },
+        };
+        const centre: ControlCentre = {
+          step: (_now, _trains, sensors) => {
+            toCentre.push(sensors);
+            return [];
+          },
+        };
+        const program: TrainProgram = { ...stubOurs, makeActors: () => [keeper], makeCentre: () => centre };
+        const engine = new Engine(config(one, 60, program));
+        for (let i = 0; i < 11; i++) engine.step();
+        for (const readings of [toKeeper[toKeeper.length - 1], toCentre[toCentre.length - 1]]) {
+          expect(Object.keys(readings.platformOccupied)).toHaveLength(8);
+          const empty = Object.entries(readings.platformOccupied).filter(([, occupied]) => !occupied).map(([p]) => p);
+          expect(empty.sort(), layout).toEqual(expected[layout]);
+        }
+      }
+    });
+
+    it('reads every platform occupied to the keepers on the hub layout while the sensors are off, and true to the centre', () => {
+      applyLayout('hub');
+      const toKeeper: SensorReadings[] = [];
+      const toCentre: SensorReadings[] = [];
+      const keeper: LocalActor = {
+        id: 'platformKeeper',
+        step: (_now, _inbox, sensors) => {
+          toKeeper.push(sensors);
+          return [];
+        },
+      };
+      const centre: ControlCentre = {
+        step: (_now, _trains, sensors) => {
+          toCentre.push(sensors);
+          return [];
+        },
+      };
+      const program: TrainProgram = { ...stubOurs, makeActors: () => [keeper], makeCentre: () => centre };
+      const engine = new Engine(config(one, 60, program));
+      engine.press({ sensors: false });
+      for (let i = 0; i < 11; i++) engine.step();
+      expect(Object.values(toKeeper[toKeeper.length - 1].platformOccupied)).toEqual(Array(8).fill(true));
+      expect(Object.values(toCentre[toCentre.length - 1].platformOccupied)).toEqual(Array(8).fill(false));
+    });
+  });
+
+  describe('trains from another layout', () => {
+    it('refuses a timetable with a train on an entry track the layout does not have', () => {
+      expect(() => new Engine(config([on(1, 'C', 'P5')]))).toThrow(/train 1 enters on C.*junction layout/);
+      applyLayout('branch');
+      expect(() => new Engine(config([on(1, 'A', 'P1'), on(2, 'B', 'P3')]))).toThrow(/train 2 enters on B.*branch layout/);
+      applyLayout('busy');
+      expect(() => new Engine(config([on(1, 'D', 'P7')]))).toThrow(/train 1 enters on D.*busy layout/);
+      expect(() => new Engine(config([on(1, 'C', 'P5')]))).not.toThrow();
+    });
+
+    it('refuses to add a train on an entry track the layout does not have', () => {
+      const engine = new Engine(config([...one]));
+      expect(() => engine.addTrain(on(2, 'D', 'P7'))).toThrow(/enters on D/);
+    });
+
+    it('adds a train on D during a run on the hub layout, and it runs to the end', () => {
+      applyLayout('hub');
+      const timetable = [on(1, 'D', 'P7')];
+      const engine = new Engine(config(timetable, 1200));
+      for (let i = 0; i < 1000; i++) engine.step();
+      const entry = spawnEntry(timetable, 'D', engine.now, 30);
+      expect(entry).toMatchObject({ entry: 'D', platform: 'P8', leader: 1 });
+      engine.addTrain(entry);
+      runUntilDone(engine);
+      expect(engine.result().finished).toBe(true);
+      expect(engine.result().exits.has(entry.id)).toBe(true);
+      expect(engine.result().overruns).toBe(0);
+      expect(engine.result().collisions).toBe(0);
+    });
   });
 });

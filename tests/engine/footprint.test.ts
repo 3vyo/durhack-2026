@@ -57,3 +57,41 @@ describe('touchesZone', () => {
     expect(touchesZone(footprint(body('A', 5000)))).toBe(false);
   });
 });
+
+describe('footprint and touchesZone on the tracks of the bigger layouts', () => {
+  it('puts the rear on C or D just after a train moves onto its platform', () => {
+    expect(footprint(body('P5', 50, 'C'))).toEqual([
+      { track: 'P5', from: 0, to: 50 },
+      { track: 'C', from: 5950, to: 6000 },
+    ]);
+    expect(footprint(body('P8', 50, 'D'))).toEqual([
+      { track: 'P8', from: 0, to: 50 },
+      { track: 'D', from: 5950, to: 6000 },
+    ]);
+    expect(footprint(body('EXIT', 30, 'P7'))).toEqual([
+      { track: 'EXIT', from: 0, to: 30 },
+      { track: 'P7', from: 330, to: 400 },
+    ]);
+  });
+
+  it('puts the same edge of the zone at offset 300 on P5 to P8', () => {
+    for (const p of ['P5', 'P6', 'P7', 'P8'] as const) {
+      expect(touchesZone(footprint(body(p, 300))), p).toBe(true);
+      expect(touchesZone(footprint(body(p, 299.99))), p).toBe(false);
+    }
+  });
+
+  it('is false anywhere on C and D, as on A and B', () => {
+    for (const entry of ['A', 'B', 'C', 'D'] as const) {
+      expect(touchesZone(footprint(body(entry, 300))), entry).toBe(false);
+      expect(touchesZone(footprint(body(entry, 5000))), entry).toBe(false);
+      expect(touchesZone(footprint(body(entry, 6000))), entry).toBe(false);
+    }
+  });
+
+  it('is true for a train leaving P7 until its rear is out of the first 200 m of EXIT', () => {
+    expect(touchesZone(footprint(body('EXIT', 50, 'P7')))).toBe(true);
+    expect(touchesZone(footprint(body('EXIT', 250, 'P7')))).toBe(true);
+    expect(touchesZone(footprint(body('EXIT', 350, 'P7')))).toBe(false);
+  });
+});

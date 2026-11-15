@@ -2,7 +2,8 @@ import type { Switches } from '../engine/switches';
 import type { ScenarioSummary } from '../runner/run';
 import { FAILURE_LENGTH } from '../runner/failure';
 import { SCENARIOS } from '../scenarios/scenarios';
-import type { TrainId } from '../shared/types';
+import { DEFAULT_LAYOUT, ENTRIES, LAYOUT, isLayoutId, type LayoutId } from '../shared/map';
+import type { EntryId, TrainId } from '../shared/types';
 
 /** The on/off failure switches the demo page shows, in the order it shows them. */
 export type SwitchKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensors';
@@ -34,9 +35,61 @@ export function switchesLine(sw: Switches): string {
   );
 }
 
-/** The lines a spawned train can start on, in the order the page lists them. */
-export type EntryLine = 'A' | 'B';
-export const ENTRY_LINES: EntryLine[] = ['A', 'B'];
+/** A line a spawned train can start on. */
+export type EntryLine = EntryId;
+
+/** The lines a spawned train can start on: the entry lines of the layout in use, in order. */
+export function entryLines(): EntryLine[] {
+  return [...ENTRIES];
+}
+
+/**
+ * The layout the page address asks for with `?layout=<id>`, or the default layout if it names
+ * none or one that does not exist.
+ */
+export function parseLayout(search: string): LayoutId {
+  const value = new URLSearchParams(search).get('layout');
+  return isLayoutId(value) ? value : DEFAULT_LAYOUT;
+}
+
+/**
+ * The page address that opens another layout: the same address with `layout` set, and every
+ * other parameter kept, such as `quality=low`. The layout is chosen before anything is built,
+ * so the page changes it by loading this address.
+ */
+export function layoutUrl(href: string, id: LayoutId): string {
+  const url = new URL(href);
+  url.searchParams.set('layout', id);
+  return url.href;
+}
+
+/** The parts of the Layout list that `keepLayoutShown` uses. */
+export interface LayoutList {
+  value: string;
+  autocomplete: string;
+}
+
+/** The part of the window that `keepLayoutShown` uses. */
+export interface ShownPage {
+  addEventListener(type: 'pageshow', listener: () => void): void;
+}
+
+/**
+ * Makes the Layout list show the layout in use, and keeps it that way. Choosing another layout
+ * leaves this page with the new choice selected. The browser's Back button can then bring the
+ * page back as it was left, or load it again and put the old choice back, so the list would
+ * name a layout the page is not running, and choosing that layout would do nothing. The
+ * browser is told not to restore the list, and the list is set again each time the page is
+ * shown. Call it after the list has its options.
+ */
+export function keepLayoutShown(list: LayoutList, page: ShownPage): void {
+  const show = (): void => {
+    list.value = LAYOUT.id;
+  };
+  list.autocomplete = 'off';
+  show();
+  page.addEventListener('pageshow', show);
+}
 
 /** The note beside the spawn button after a train is added, such as "Train 17 joins line A". */
 export function spawnNote(id: TrainId, line: EntryLine): string {

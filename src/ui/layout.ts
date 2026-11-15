@@ -1,7 +1,19 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
-import { JUNCTION_END_X, JUNCTION_START_X, TRACK_START, entryOf } from '../shared/map';
-import type { PlatformId, TrackId, TrainId, TrainOutput } from '../shared/types';
+import {
+  ALL_ENTRIES,
+  DEFAULT_LAYOUT,
+  ENTRIES,
+  JUNCTION_END_X,
+  JUNCTION_START_X,
+  LAYOUTS,
+  PLATFORMS,
+  TRACK_START,
+  entryOf,
+  isEntryTrack,
+  pairOf,
+} from '../shared/map';
+import type { EntryId, PlatformId, TrackId, TrainId, TrainOutput } from '../shared/types';
 import { MODE_STYLE, SURFACE, contrastRatio } from './palette';
 
 /**
@@ -23,9 +35,9 @@ export interface Frame {
 export const UNITS_PER_METRE = 0.08;
 
 /**
- * The stretch of line each scene shows: the braking approach, the platforms, the junction and
- * the start of EXIT. 1,800 m, so a train is about 5.5 percent of the width. The minimap shows
- * the whole line.
+ * The stretch of line each scene shows in the default layout: the braking approach, the
+ * platforms, the junction and the start of EXIT. 1,800 m, so a train is about 5.5 percent of
+ * the width. The minimap shows the whole line. Use `stationFrame()` for the layout in use.
  */
 export const STATION_FRAME: Frame = { xMin: 5000, xMax: 6800, width: 1800 * UNITS_PER_METRE };
 
@@ -36,19 +48,20 @@ export function toScreenX(x: number, f: Frame): number {
   return ((x - f.xMin) / (f.xMax - f.xMin)) * f.width;
 }
 
-const LANES: Record<TrackId, number> = {
-  P1: 0,
-  A: 1,
-  P2: 2,
-  EXIT: 2.5,
-  P3: 3,
-  B: 4,
-  P4: 5,
-};
+/** Each entry line takes three lanes: its first platform, the line itself, its second platform. */
+const LANES_PER_ENTRY = 3;
 
-/** Each track has its own lane: entry lines sit between the two platforms they feed. */
+/**
+ * The lane of a track. Every entry line and platform has its own lane, and each entry line
+ * sits between the two platforms it feeds: P1, A, P2, P3, B, P4, P5, C, P6, P7, D, P8. EXIT
+ * runs down the middle of the lanes the layout in use has. With one or three entry lines that
+ * is in line with the middle entry line, which ends 400 m before EXIT starts.
+ */
 export function laneOf(track: TrackId): number {
-  return LANES[track];
+  if (track === 'EXIT') return (ENTRIES.length * LANES_PER_ENTRY - 1) / 2;
+  if (isEntryTrack(track)) return ALL_ENTRIES.indexOf(track) * LANES_PER_ENTRY + 1;
+  const entry = entryOf(track);
+  return ALL_ENTRIES.indexOf(entry) * LANES_PER_ENTRY + (pairOf(entry)[0] === track ? 0 : 2);
 }
 
 export interface Marker {
@@ -101,8 +114,19 @@ export const CAMERA_FOV = 45;
  */
 export const ANGLED_FOCUS = { xMin: 5650, xMax: 6650 } as const;
 
-/** Across the line, the scene runs from the control centre (z -10) to the far platform (z 21). */
-const CONTENT_Z = { from: -10, to: 21 };
+/**
+ * How far the scene runs across the line, in scene units: from the control centre (z -10) to
+ * just past the last platform a layout with this many entry lines has (z 21 with two).
+ */
+export function acrossLine(entries = ENTRIES.length): { from: number; to: number } {
+  return { from: -10, to: (entries * LANES_PER_ENTRY - 1) * LANE_SPACING + 1 };
+}
+
+/** How deep the default layout is across the line. The angled view is tuned for this depth. */
+function defaultDepth(): number {
+  const z = acrossLine(LAYOUTS[DEFAULT_LAYOUT].entries.length);
+  return z.to - z.from;
+}
 /** How far the angled view looks down, in degrees above the horizon. */
 const ANGLED_ELEVATION = 30;
 /** How far the angled view swings to the left of straight-on, in degrees, to look a little along the line. */
@@ -112,6 +136,15 @@ const ANGLED_SWING = 4;
  * Perspective makes the near tracks wider than the middle, so less than 1 still shows the focus.
  */
 const ANGLED_CLOSENESS = 0.82;
+/**
+ * How much bigger the stage is than the default layout's, along the line or across it, and
+ * never less than 1. The scene makes its ground and shadow area this much bigger.
+ */
+export function stageGrowth(f: Frame): number {
+  const across = acrossLine();
+  return Math.max(1, f.width / STATION_FRAME.width, (across.to - across.from) / defaultDepth());
+}
+
 /** A little room around the frame, so nothing sits on the very edge. */
 const FIT_MARGIN = 1.03;
 
@@ -121,6 +154,8 @@ const FIT_MARGIN = 1.03;
  * - Overhead looks straight down at the middle of the frame, just far enough away to show the
  *   whole frame's width and the whole depth from the control centre to the far platform.
  * - Angled is a close 3D view of ANGLED_FOCUS: low over the line, a little to one side.
+ * Both are centred on the lanes the layout in use has. A layout deeper than the default moves
+ * the angled camera back in proportion, so its near and far lanes sit where the default's do.
  */
 export function cameraPreset(
   mode: CameraMode,
@@ -128,19 +163,22 @@ export function cameraPreset(
   aspect = 1.6,
 ): { position: [number, number, number]; lookAt: [number, number, number] } {
   const tanHalf = Math.tan(((CAMERA_FOV / 2) * Math.PI) / 180);
-  const cz = (CONTENT_Z.from + CONTENT_Z.to) / 2;
+  const across = acrossLine();
+  const depth = across.to - across.from;
+  const cz = (across.from + across.to) / 2;
   if (mode === 'overhead') {
     const cx = f.width / 2;
     const forWidth = ((f.width / 2) * FIT_MARGIN) / (tanHalf * aspect);
-    const forDepth = (((CONTENT_Z.to - CONTENT_Z.from) / 2) * FIT_MARGIN) / tanHalf;
+    const forDepth = ((depth / 2) * FIT_MARGIN) / tanHalf;
     return { position: [cx, Math.max(forWidth, forDepth), cz], lookAt: [cx, 0, cz] };
   }
   const scale = f.width / (f.xMax - f.xMin);
   const focusWidth = (ANGLED_FOCUS.xMax - ANGLED_FOCUS.xMin) * scale;
   const fx = toScreenX((ANGLED_FOCUS.xMin + ANGLED_FOCUS.xMax) / 2, f);
   // Look a little nearer than the middle of the lanes: perspective already makes the far side small.
-  const fz = cz + 1;
-  const distance = (((focusWidth / 2) * FIT_MARGIN) / (tanHalf * aspect)) * ANGLED_CLOSENESS;
+  const deeper = depth / defaultDepth();
+  const fz = cz + deeper;
+  const distance = (((focusWidth / 2) * FIT_MARGIN) / (tanHalf * aspect)) * ANGLED_CLOSENESS * Math.max(1, deeper);
   const e = (ANGLED_ELEVATION * Math.PI) / 180;
   const a = (ANGLED_SWING * Math.PI) / 180;
   return {
@@ -155,10 +193,11 @@ export function ndcToCss(ndc: { x: number; y: number }, width: number, height: n
 }
 
 /**
- * Where the HTML labels sit, x in metres and z in scene units. A, B and EXIT are labelled just
- * inside the angled view's focus, so both camera views show them, and EXIT near the right
- * edge, each platform near its entrance (trains stop further in, so the label never hides
- * one), and each device just behind its building.
+ * Where the HTML labels sit, x in metres and z in scene units. The entry lines and EXIT are
+ * labelled just inside the angled view's focus, so both camera views show them, and EXIT near
+ * the right edge, each platform near its entrance (trains stop further in, so the label never
+ * hides one), and each device just behind its building. The tracks are those of the layout in
+ * use: its entry lines, then its platforms, then EXIT.
  */
 export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: number; kind: 'track' | 'device' }> {
   const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
@@ -166,12 +205,8 @@ export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: numb
   const platformEntrance = TRACK_START.P1 + POINTS_LENGTH + 40;
   const device = (text: string, key: DeviceKey) => ({ text, x: DEVICE_SITES[key].x, z: DEVICE_SITES[key].z - 1.4, kind: 'device' as const });
   return [
-    track('A', Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), 'A'),
-    track('B', Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), 'B'),
-    track('P1', platformEntrance, 'P1'),
-    track('P2', platformEntrance, 'P2'),
-    track('P3', platformEntrance, 'P3'),
-    track('P4', platformEntrance, 'P4'),
+    ...ENTRIES.map((e) => track(e, Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), e)),
+    ...PLATFORMS.map((p) => track(p, platformEntrance, p)),
     track('EXIT', Math.min(f.xMax - 150, ANGLED_FOCUS.xMax - 110), 'EXIT'),
     device('Control centre', 'centre'),
     device('Platform keeper', 'platformKeeper'),
@@ -228,7 +263,7 @@ export function offDeviceVisible(key: DeviceKey): boolean {
  */
 export function junctionBusy(s: Snapshot): boolean {
   return s.trains.some((t) => {
-    if (t.pos.track === 'A' || t.pos.track === 'B') return false;
+    if (isEntryTrack(t.pos.track)) return false;
     const rear = t.x - TRAIN_LENGTH;
     return t.x > JUNCTION_START_X && rear < JUNCTION_END_X;
   });
@@ -243,15 +278,47 @@ export const POINTS_LENGTH = 120;
 
 /**
  * The way out joins in two stages, over the start of EXIT: first each pair of platforms joins
- * (P1 with P2 in A's lane, P3 with P4 in B's lane) over `pairs` metres, then the two pairs
- * join into EXIT over `join` metres. Drawn only: in the simulation every platform leads
- * straight onto EXIT.
+ * (P1 with P2 in A's lane, P3 with P4 in B's lane, and so on) over `pairs` metres, then every
+ * pair joins into EXIT. `join` is how many metres that second stage takes in the default
+ * layout, where each pair's lane is 1.5 lanes from EXIT. Drawn only: in the simulation every
+ * platform leads straight onto EXIT.
  */
 export const EXIT_MERGE = { pairs: 60, join: 120 } as const;
 
+/** How many lanes a pair's lane is from EXIT in the default layout, which EXIT_MERGE.join is for. */
+const DEFAULT_JOIN_LANES = 1.5;
+
+/**
+ * How many metres the second stage takes for this entry line's pair. Every pair bends at the
+ * angle the default layout uses, about 32 degrees, so a pair further from EXIT takes longer to
+ * reach it: 360 m for the outer lines of the four-line layout. It is 0 for a pair whose lane
+ * is already in line with EXIT.
+ */
+export function exitJoinLength(entry: EntryId): number {
+  return (Math.abs(laneOf(entry) - laneOf('EXIT')) / DEFAULT_JOIN_LANES) * EXIT_MERGE.join;
+}
+
+/** Where on the x axis the last pair of the layout in use has joined EXIT. */
+export function exitJoinedX(): number {
+  return TRACK_START.EXIT + EXIT_MERGE.pairs + Math.max(...ENTRIES.map(exitJoinLength));
+}
+
+/** The default frame shows this many metres of EXIT after every pair has joined it. */
+const JOINED_EXIT_SHOWN = 220;
+
+/**
+ * The stretch of line each scene shows for the layout in use. It is STATION_FRAME, made longer
+ * on the right when the way out takes longer to join, so the whole join is in the picture.
+ */
+export function stationFrame(): Frame {
+  const xMax = Math.max(STATION_FRAME.xMax, exitJoinedX() + JOINED_EXIT_SHOWN);
+  if (xMax === STATION_FRAME.xMax) return STATION_FRAME;
+  return { xMin: STATION_FRAME.xMin, xMax, width: (xMax - STATION_FRAME.xMin) * UNITS_PER_METRE };
+}
+
 /** The route a train is on, as far as the picture needs it. */
 export interface Route {
-  entry: 'A' | 'B' | null;
+  entry: EntryId | null;
   platform: PlatformId | null;
 }
 
@@ -260,7 +327,7 @@ export interface Route {
  * platform behind, so the caller passes the platform it was last seen in, if any.
  */
 export function routeOf(track: TrackId, lastPlatform: PlatformId | null): Route {
-  if (track === 'A' || track === 'B') return { entry: track, platform: null };
+  if (isEntryTrack(track)) return { entry: track, platform: null };
   if (track === 'EXIT') return { entry: lastPlatform ? entryOf(lastPlatform) : null, platform: lastPlatform };
   return { entry: entryOf(track), platform: track };
 }
@@ -289,6 +356,8 @@ export function pathAt(x: number, route: Route): { z: number; slope: number } {
   // The pair's lane is the entry line's lane, which runs between its two platforms.
   const pairsJoined = intoExit + EXIT_MERGE.pairs;
   if (x < pairsJoined) return bend(platform, start, intoExit, EXIT_MERGE.pairs);
-  if (x < pairsJoined + EXIT_MERGE.join) return bend(start, exit, pairsJoined, EXIT_MERGE.join);
+  // A pair already in line with EXIT has no second stage.
+  const join = entry ? exitJoinLength(entry) : 0;
+  if (x < pairsJoined + join) return bend(start, exit, pairsJoined, join);
   return { z: exit, slope: 0 };
 }

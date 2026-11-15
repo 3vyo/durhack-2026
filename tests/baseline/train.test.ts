@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Permit } from '../../src/baseline/centre';
 import {
   accelFor,
@@ -22,7 +22,7 @@ import {
   TICK,
   safeSpeed,
 } from '../../src/shared/constants';
-import { TRACK_LENGTH, xOf } from '../../src/shared/map';
+import { ALL_ENTRIES, ALL_PLATFORMS, LAYOUT_IDS, TRACK_LENGTH, applyLayout, pairOf, resetLayout, xOf } from '../../src/shared/map';
 import type { Message, TimetableEntry, TrainAgent, TrainInput, TrainState } from '../../src/shared/types';
 
 // Rules: "Today's rule, for comparison" in docs/design.md, plus the speed limit and
@@ -396,5 +396,66 @@ describe('radio working (design: "Radio working")', () => {
     }
     expect(top).toBeGreaterThan(SIGHT_SPEED - 1);
     expect(top).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
+  });
+});
+
+describe('layouts (design: "Layouts")', () => {
+  afterEach(() => {
+    resetLayout();
+  });
+
+  const hub: TimetableEntry[] = [
+    { id: 1, entry: 'D', enterAt: 0, platform: 'P7', leader: null, dwell: 30 },
+  ];
+
+  it('on busy, follows a permit from line C into P5 or P6, and from there onto EXIT', () => {
+    applyLayout('busy');
+    const onC = at('C', 1000, 30);
+    expect(chooseNextTrack(onC, { ...permit, nextTrack: 'P5' }, 10.1, null)).toBe('P5');
+    expect(chooseNextTrack(onC, { ...permit, nextTrack: 'P6' }, 10.1, 'P5')).toBe('P6');
+    expect(chooseNextTrack(at('P5', 300, 0), { ...permit, nextTrack: 'EXIT' }, 10.1, null)).toBe('EXIT');
+    expect(chooseNextTrack(at('P6', 300, 0), { ...permit, nextTrack: 'EXIT' }, 10.1, null)).toBe('EXIT');
+  });
+
+  it('on hub, follows a permit from line D into P7 or P8, and from there onto EXIT', () => {
+    applyLayout('hub');
+    const onD = at('D', 1000, 30);
+    expect(chooseNextTrack(onD, { ...permit, nextTrack: 'P7' }, 10.1, null)).toBe('P7');
+    expect(chooseNextTrack(onD, { ...permit, nextTrack: 'P8' }, 10.1, 'P7')).toBe('P8');
+    expect(chooseNextTrack(at('P7', 300, 0), { ...permit, nextTrack: 'EXIT' }, 10.1, null)).toBe('EXIT');
+    expect(chooseNextTrack(at('P8', 300, 0), { ...permit, nextTrack: 'EXIT' }, 10.1, null)).toBe('EXIT');
+  });
+
+  it('on hub, keeps its last nextTrack on lines C and D while it waits for permits to return', () => {
+    applyLayout('hub');
+    expect(chooseNextTrack(at('C', 5500, 30), { ...permit, nextTrack: 'P6' }, 100, 'P6')).toBe('P6');
+    expect(chooseNextTrack(at('D', 5500, 30), null, 100, 'P8')).toBe('P8');
+  });
+
+  it("on every layout, ignores a nextTrack into another line's pair", () => {
+    for (const layout of LAYOUT_IDS) {
+      applyLayout(layout);
+      for (const line of ALL_ENTRIES) {
+        for (const platform of ALL_PLATFORMS) {
+          const chosen = chooseNextTrack(at(line, 1000, 30), { ...permit, nextTrack: platform }, 10.1, null);
+          expect(chosen).toBe(pairOf(line).includes(platform) ? platform : null);
+        }
+      }
+    }
+  });
+
+  it('on branch, follows a permit from line A into P1 or P2 and ignores one into P3', () => {
+    applyLayout('branch');
+    expect(chooseNextTrack(self, { ...permit, nextTrack: 'P2' }, 10.1, null)).toBe('P2');
+    expect(chooseNextTrack(self, { ...permit, nextTrack: 'P3' }, 10.1, 'P1')).toBe('P1');
+  });
+
+  it('on hub, a train on line D keeps nextTrack P8 when its permits stop at x 5500 and 35 m/s, crosses onto P8 while braking, and stops at or before x 6300', () => {
+    applyLayout('hub');
+    const state = at('D', 5500, 35);
+    drive(createBaselineAgent(1, hub), state, 120, everySecond(6300, 'P8', 0));
+    expect(state.speed).toBe(0);
+    expect(state.pos.track).toBe('P8');
+    expect(xOf(state.pos)).toBeLessThanOrEqual(6300);
   });
 });

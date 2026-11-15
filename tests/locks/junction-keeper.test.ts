@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   junctionKeeperSilence,
   canGrantJunction,
@@ -20,10 +20,11 @@ import {
   type JunctionKeeperMemory,
 } from '../../src/locks/junction-keeper';
 import { JUNCTION_KEEPER_TIMEOUT, REQUEST_REPEAT, RESUME_SETTLE, TICK } from '../../src/shared/constants';
+import { LAYOUT_IDS, applyLayout, platformReadings, resetLayout } from '../../src/shared/map';
 import type { LocalActor, Message, Outgoing, SensorReadings, TrainId } from '../../src/shared/types';
 
 const clear: SensorReadings = {
-  platformOccupied: { P1: false, P2: false, P3: false, P4: false },
+  platformOccupied: platformReadings(),
   junctionOccupied: false,
   exitStartClear: true,
 };
@@ -712,5 +713,101 @@ describe('Scenarios', () => {
     expect( keeper.step([ask(4), ask(3)])).toEqual([grant(3, 3), refuse(4)]);
     keeper.passThrough();
     expect( keeper.step([ask(4)])).toEqual([grant(4, 3)]);
+  });
+});
+
+describe('Layouts', () => {
+  afterEach(() => resetLayout());
+
+  /** Readings with the junction clear, built after the layout is applied. */
+  const clearNow = (): SensorReadings => ({
+    platformOccupied: platformReadings(),
+    junctionOccupied: false,
+    exitStartClear: true,
+  });
+
+  it('on hub, eight trains asking on the same tick leave one at a time, lowest ID first', () => {
+    applyLayout('hub');
+    const keeper = newJunctionKeeper();
+    const trains = [8, 3, 6, 1, 7, 2, 5, 4];
+    expect(keeper.step(trains.map(ask), clearNow())).toEqual([
+      grant(1, null),
+      ...trains.filter((t) => t !== 1).map(refuse),
+    ]);
+
+    const order: Array<[TrainId, TrainId | null]> = [[1, null]];
+    let left = trains.filter((t) => t !== 1);
+    while (left.length > 0) {
+      // The holder runs through. The rest keep asking and are refused every time.
+      const during = [...keeper.repeat(8, left, inZone), ...keeper.repeat(4, left, justPast)];
+      expect(during.every((o) => o.msg.type === 'lockRefuse')).toBe(true);
+      const out = keeper.step(left.map(ask), clearNow());
+      const grants = out.filter((o) => o.msg.type === 'lockGrant');
+      expect(grants).toHaveLength(1);
+      // Everyone else who asked on this tick is refused, so nobody falls back to clock slots.
+      expect(out.filter((o) => o.msg.type === 'lockRefuse')).toHaveLength(left.length - 1);
+      const msg = grants[0].msg;
+      if (msg.type !== 'lockGrant') throw new Error('not a grant');
+      order.push([msg.to, msg.follow]);
+      left = left.filter((t) => t !== msg.to);
+    }
+    // Each grant names the train that left before it.
+    expect(order).toEqual([
+      [1, null],
+      [2, 1],
+      [3, 2],
+      [4, 3],
+      [5, 4],
+      [6, 5],
+      [7, 6],
+      [8, 7],
+    ]);
+  });
+
+  it('on hub, eight trains that start asking at different times leave in the order they first asked', () => {
+    applyLayout('hub');
+    const keeper = newJunctionKeeper();
+    // One train from each platform starts asking, one tick apart, in this order.
+    const firstAsked = [5, 8, 2, 7, 1, 6, 4, 3];
+    const asking: TrainId[] = [];
+    for (const train of firstAsked) {
+      asking.push(train);
+      const out = keeper.step([ask(train)], clearNow());
+      expect(out).toEqual(train === firstAsked[0] ? [grant(train, null)] : [refuse(train)]);
+    }
+
+    const order: TrainId[] = [firstAsked[0]];
+    let left = asking.filter((t) => t !== firstAsked[0]);
+    while (left.length > 0) {
+      keeper.repeat(8, left, inZone);
+      keeper.repeat(4, left, justPast);
+      // The trains repeat in ID order, so only the first-heard time can give this order.
+      const out = keeper.step([...left].sort((a, b) => a - b).map(ask), clearNow());
+      const msg = out.find((o) => o.msg.type === 'lockGrant')?.msg;
+      if (msg?.type !== 'lockGrant') throw new Error('nobody was granted');
+      order.push(msg.to);
+      left = left.filter((t) => t !== msg.to);
+    }
+    expect(order).toEqual(firstAsked);
+  });
+
+  it('holds all eight waiting trains in the queue at once and never grants two', () => {
+    applyLayout('hub');
+    const trains = [1, 2, 3, 4, 5, 6, 7, 8];
+    const { memory, sent } = run([{ inbox: trains.map(ask), sensors: clearNow() }]);
+    expect(memory.holder?.train).toBe(1);
+    expect(memory.queue.map((r) => r.train)).toEqual([2, 3, 4, 5, 6, 7, 8]);
+    expect(sent[0].filter((o) => o.msg.type === 'lockGrant')).toHaveLength(1);
+  });
+
+  it('grants and refuses the same way on every layout, since it uses no track names', () => {
+    for (const layout of LAYOUT_IDS) {
+      applyLayout(layout);
+      const keeper = newJunctionKeeper();
+      expect(keeper.step([ask(2), ask(1)], clearNow())).toEqual([grant(1, null), refuse(2)]);
+      keeper.repeat(8, [2], inZone);
+      keeper.repeat(4, [2], justPast);
+      expect(keeper.step([ask(2)], clearNow())).toEqual([grant(2, 1)]);
+    }
   });
 });

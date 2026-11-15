@@ -1,4 +1,5 @@
 import { BRAKE, MARGIN, MAX_SPEED, SIGHT_SPEED, TICK, TRAIN_LENGTH, safeSpeed } from '../shared/constants';
+import { isEntryTrack, isPlatform } from '../shared/map';
 import type {
   Message,
   Outgoing,
@@ -163,7 +164,7 @@ export function stopPointDistance(
   numbers: Pick<TrainNumbers, 'entryLength' | 'platformStop'>,
 ): number {
   if (pos.track === 'EXIT') return Infinity;
-  if (pos.track === 'A' || pos.track === 'B') {
+  if (isEntryTrack(pos.track)) {
     const toEnd = numbers.entryLength - pos.offset;
     return platform === null ? toEnd : toEnd + numbers.platformStop;
   }
@@ -176,8 +177,7 @@ export function stopPointDistance(
  * so a train found there was let through by the centre before the centre failed.
  */
 export function isPastPlatformStop(pos: Position, numbers: Pick<TrainNumbers, 'platformStop'>): boolean {
-  const inPlatform = pos.track !== 'A' && pos.track !== 'B' && pos.track !== 'EXIT';
-  return inPlatform && pos.offset > numbers.platformStop;
+  return isPlatform(pos.track) && pos.offset > numbers.platformStop;
 }
 
 /**

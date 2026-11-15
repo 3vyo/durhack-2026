@@ -1,6 +1,6 @@
 import type { Snapshot } from '../engine/engine';
 import { TRACK_LENGTH, TRACK_START } from '../shared/map';
-import { STATION_FRAME, isStopped, markersFor, toScreenX, type Frame } from './layout';
+import { isStopped, markersFor, stationFrame, toScreenX, type Frame } from './layout';
 import { drawShape, markerSpec } from './markers';
 
 export interface Minimap {
@@ -26,9 +26,10 @@ export function createMinimap(canvas: HTMLCanvasElement): Minimap {
     ctx!.fillStyle = '#1b222c';
     ctx!.fillRect(0, 0, canvas.width, h);
     ctx!.fillStyle = '#2c3746';
-    // Shade exactly the stretch the scene above shows.
-    const from = toScreenX(STATION_FRAME.xMin, frame);
-    ctx!.fillRect(from, 0, toScreenX(STATION_FRAME.xMax, frame) - from, h);
+    // Shade exactly the stretch the scene above shows, which depends on the layout in use.
+    const shown = stationFrame();
+    const from = toScreenX(shown.xMin, frame);
+    ctx!.fillRect(from, 0, toScreenX(shown.xMax, frame) - from, h);
     ctx!.fillStyle = '#3a4658';
     ctx!.fillRect(0, h / 2 - 1, canvas.width, 2);
     // Each train is its mode's shape, so the minimap reads without colour too.

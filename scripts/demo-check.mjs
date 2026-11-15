@@ -26,6 +26,12 @@ const OUT = 'demo-check-out';
 const WIDTH = 1500;
 const HEIGHT = 950;
 
+/** The other layouts the check opens with ?layout=<id>, and the entry lines each must offer. */
+const OTHER_LAYOUTS = [
+  { id: 'hub', lines: ['A', 'B', 'C', 'D'] },
+  { id: 'branch', lines: ['A'] },
+];
+
 /** Extra page text the screen must show, added as the screen grows. */
 const REQUIRED_TEXT = [
   'Delay saved',
@@ -283,7 +289,10 @@ async function main() {
     await setSpeed(16);
     const t0 = await simTime();
     await sleep(QUICK ? 1500 : 3000);
-    const t1 = await simTime();
+    // A busy machine with software rendering may not have drawn a frame yet. Only a clock that
+    // still has not moved after a minute is stuck.
+    let t1 = null;
+    await waitFor('time', async () => (t1 = await simTime()) !== null && t0 !== null && t1 > t0, 60000);
     if (t0 !== null && t1 !== null && t1 > t0) pass('simulated time runs', `${t0} s to ${t1} s`);
     else fail('simulated time runs', `${t0} to ${t1}`);
     await waitForSimTime(QUICK ? 120 : 240, 60000);
@@ -434,6 +443,47 @@ async function main() {
       return info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'unknown';
     })()`);
     pass('frame rate measured', `${fps} fps at 16x speed on ${renderer}${GPU ? '' : '; software rendering, so measure the real laptop with --gpu'}`);
+
+    // 11b. The page opens on the biggest and the smallest layout with ?layout=<id>, says which
+    // one it shows, and runs. A screenshot of each camera is saved: look at the drawn track.
+    for (const { id, lines } of OTHER_LAYOUTS) {
+      const pageErrorsBefore = pageErrors.length;
+      const consoleErrorsBefore = consoleErrors.length;
+      const layoutPage = new URL(pageUrl.href);
+      layoutPage.searchParams.set('layout', id);
+      await send('Page.navigate', { url: layoutPage.href });
+      // The old page is gone for a moment while the new one loads, so a failed read means "not yet".
+      const chosen = () =>
+        evaluate(`(() => {
+          const pick = (label) => [...document.querySelectorAll('select')].find((x) => x.getAttribute('aria-label') === label);
+          const layout = pick('Layout');
+          const line = pick('Line for the new train');
+          if (!layout || !line || !document.querySelector('.clock')) return null;
+          return { layout: layout.value, lines: [...line.options].map((o) => o.value) };
+        })()`).catch(() => null);
+      let shown = null;
+      await waitFor('layout', async () => (shown = await chosen()) !== null, 30000);
+      if (shown && shown.layout === id) pass(`?layout=${id} opens the ${id} layout, and the page shows it as chosen`);
+      else fail(`?layout=${id} opens the ${id} layout, and the page shows it as chosen`, JSON.stringify(shown));
+      if (shown && shown.lines.join() === lines.join()) pass(`the ${id} layout offers its own lines for a new train`, lines.join(', '));
+      else fail(`the ${id} layout offers its own lines for a new train`, JSON.stringify(shown?.lines));
+      await setSpeed(32);
+      // The clock only has to move. The page has just loaded and is still building its scenes
+      // and starting its worker, so on a slow machine the first frames take a while: allow a
+      // minute, as the other waits for simulated time do.
+      const l0 = (await simTime()) ?? 0;
+      const runs = await waitForSimTime(l0 + 10, 60000);
+      if (runs) pass(`simulated time runs on the ${id} layout`, `${await simTime()} s`);
+      else fail(`simulated time runs on the ${id} layout`, `stuck at ${await simTime()} s`);
+      await screenshot(`layout-${id}-angled`);
+      // From overhead the whole drawn track shows. Wait for the first trains to reach the station.
+      await click('Camera');
+      await waitForSimTime(230, 30000);
+      await screenshot(`layout-${id}-overhead`);
+      const newErrors = [...pageErrors.slice(pageErrorsBefore), ...consoleErrors.slice(consoleErrorsBefore)];
+      if (newErrors.length === 0) pass(`no errors on the ${id} layout`);
+      else fail(`no errors on the ${id} layout`, newErrors.slice(0, 3).join(' | '));
+    }
 
     // 12. Nothing went wrong in the page.
     if (pageErrors.length === 0) pass('no page errors');

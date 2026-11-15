@@ -1,4 +1,5 @@
-import type { PlatformId, TimetableEntry, TrainId } from '../shared/types';
+import { ENTRIES, PLATFORM_PAIRS } from '../shared/map';
+import type { EntryId, TimetableEntry, TrainId } from '../shared/types';
 
 /** mulberry32: a small seeded generator returning values in [0, 1). */
 export function makeRng(seed: number): () => number {
@@ -35,11 +36,6 @@ export const DEFAULT_TIMETABLE: TimetableOptions = { trains: 16, minHeadway: 45,
  */
 export const RUN_LENGTH = 7200;
 
-const PAIR: Record<'A' | 'B', [PlatformId, PlatformId]> = {
-  A: ['P1', 'P2'],
-  B: ['P3', 'P4'],
-};
-
 /** True if timetable order puts `a` before `b`: earlier `enterAt` first, lowest ID on a tie. */
 export function entersBefore(a: TimetableEntry, b: TimetableEntry): boolean {
   return a.enterAt < b.enterAt || (a.enterAt === b.enterAt && a.id < b.id);
@@ -50,11 +46,13 @@ export function entersBefore(a: TimetableEntry, b: TimetableEntry): boolean {
  * next free ID. Its leader is the last train on the same track that comes before it in
  * timetable order, which may be one still waiting to enter. Its default platform is the other
  * one of the pair from that leader's, so defaults still alternate. This only builds the entry:
- * Engine.addTrain puts it in the timetable.
+ * Engine.addTrain puts it in the timetable. The track must be an entry track of the layout in use.
  */
-export function spawnEntry(timetable: TimetableEntry[], track: 'A' | 'B', now: number, dwell: number): TimetableEntry {
+export function spawnEntry(timetable: TimetableEntry[], track: EntryId, now: number, dwell: number): TimetableEntry {
+  if (!ENTRIES.includes(track)) throw new Error(`entry track ${track} is not in this layout`);
+  const pair = PLATFORM_PAIRS[track];
   const id = timetable.reduce((max, e) => Math.max(max, e.id), 0) + 1;
-  const entry: TimetableEntry = { id, entry: track, enterAt: now, platform: PAIR[track][0], leader: null, dwell };
+  const entry: TimetableEntry = { id, entry: track, enterAt: now, platform: pair[0], leader: null, dwell };
   let leader: TimetableEntry | null = null;
   for (const e of timetable) {
     if (e.entry !== track || !entersBefore(e, entry)) continue;
@@ -62,38 +60,41 @@ export function spawnEntry(timetable: TimetableEntry[], track: 'A' | 'B', now: n
   }
   if (leader !== null) {
     entry.leader = leader.id;
-    entry.platform = leader.platform === PAIR[track][0] ? PAIR[track][1] : PAIR[track][0];
+    entry.platform = leader.platform === pair[0] ? pair[1] : pair[0];
   }
   return entry;
 }
 
 /**
  * Builds a timetable from a seed. Each gap is minHeadway + rng() * minHeadway, so the
- * timetable stays under full capacity. Each train picks A or B at random from the seed.
- * Default platforms alternate within each entry track.
+ * timetable stays under full capacity. Each train picks one of the layout's entry tracks at
+ * random from the seed, with one draw, so the default layout gives the timetables it always
+ * gave. Default platforms alternate within each entry track's own pair.
  */
 export function generateTimetable(seed: number, opts: TimetableOptions): TimetableEntry[] {
   if (opts.trains < 1) throw new Error('timetable needs at least one train');
   const rng = makeRng(seed);
-  const lastOn: Record<'A' | 'B', TrainId | null> = { A: null, B: null };
-  const countOn: Record<'A' | 'B', number> = { A: 0, B: 0 };
+  const tracks = ENTRIES;
+  const lastOn = new Map<EntryId, TrainId>();
+  const countOn = new Map<EntryId, number>();
   const entries: TimetableEntry[] = [];
   let enterAt = 0;
 
   for (let id = 1; id <= opts.trains; id++) {
     if (id > 1) enterAt += opts.minHeadway + rng() * opts.minHeadway;
-    const entry = rng() < 0.5 ? 'A' : 'B';
-    const platform = PAIR[entry][countOn[entry] % 2];
+    const entry = tracks[Math.floor(rng() * tracks.length)];
+    const count = countOn.get(entry) ?? 0;
+    const pair = PLATFORM_PAIRS[entry];
     entries.push({
       id,
       entry,
       enterAt,
-      platform,
-      leader: lastOn[entry],
+      platform: pair[count % pair.length],
+      leader: lastOn.get(entry) ?? null,
       dwell: opts.dwell,
     });
-    lastOn[entry] = id;
-    countOn[entry] += 1;
+    lastOn.set(entry, id);
+    countOn.set(entry, count + 1);
   }
   return entries;
 }

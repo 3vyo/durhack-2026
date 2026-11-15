@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Snapshot } from '../../src/engine/engine';
 import { ALL_ON } from '../../src/engine/switches';
 import {
@@ -24,10 +24,31 @@ import {
   markersFor,
   modeColor,
   toScreenX,
+  acrossLine,
+  exitJoinLength,
+  exitJoinedX,
+  stageGrowth,
+  stationFrame,
   type Frame,
 } from '../../src/ui/layout';
 import { TRAIN_LENGTH } from '../../src/shared/constants';
+import {
+  ENTRIES,
+  JUNCTION_END_X,
+  LAYOUT_IDS,
+  LAYOUTS,
+  PLATFORMS,
+  PLATFORM_STOP,
+  TRACK_START,
+  applyLayout,
+  entryOf,
+  pairOf,
+  resetLayout,
+} from '../../src/shared/map';
 import type { TrackId } from '../../src/shared/types';
+
+// Some tests below change the layout in use. Every test starts from the default again.
+afterEach(() => resetLayout());
 
 const frame: Frame = { xMin: 4000, xMax: 7000, width: 1500 };
 
@@ -277,5 +298,367 @@ describe('pathAt and routeOf', () => {
       expect(pathAt(6200, routeOf(p, null)).slope).toBe(0);
       expect(pathAt(6300, routeOf(p, null)).slope).toBe(0);
     }
+  });
+});
+
+describe('lanes in every layout', () => {
+  const tracksInUse = (): TrackId[] => [...ENTRIES, ...PLATFORMS];
+
+  it('keeps the default layout in the lanes it has always had', () => {
+    expect((['P1', 'A', 'P2', 'EXIT', 'P3', 'B', 'P4'] as const).map(laneOf)).toEqual([0, 1, 2, 2.5, 3, 4, 5]);
+  });
+
+  it('gives every entry line and platform its own lane', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const lanes = tracksInUse().map(laneOf);
+      expect(new Set(lanes).size).toBe(lanes.length);
+    }
+  });
+
+  it('puts each entry line in the lane between its two platforms', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const entry of ENTRIES) {
+        const [first, second] = pairOf(entry);
+        expect(laneOf(first)).toBe(laneOf(entry) - 1);
+        expect(laneOf(second)).toBe(laneOf(entry) + 1);
+      }
+    }
+  });
+
+  it('lays the four-line layout out as P1 A P2, P3 B P4, P5 C P6, P7 D P8', () => {
+    applyLayout('hub');
+    const inOrder = tracksInUse().sort((a, b) => laneOf(a) - laneOf(b));
+    expect(inOrder).toEqual(['P1', 'A', 'P2', 'P3', 'B', 'P4', 'P5', 'C', 'P6', 'P7', 'D', 'P8']);
+    expect(inOrder.map(laneOf)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('puts EXIT in the middle of the lanes the layout has', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const lanes = tracksInUse().map(laneOf);
+      expect(laneOf('EXIT')).toBe((Math.min(...lanes) + Math.max(...lanes)) / 2);
+      // As many lanes on one side of EXIT as on the other.
+      expect(lanes.filter((l) => l < laneOf('EXIT')).length).toBe(lanes.filter((l) => l > laneOf('EXIT')).length);
+    }
+  });
+
+  it('never puts EXIT in a platform lane, and with an even number of lines it has a lane to itself', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      expect(PLATFORMS.map(laneOf)).not.toContain(laneOf('EXIT'));
+      const shared = ENTRIES.filter((e) => laneOf(e) === laneOf('EXIT'));
+      // With one or three lines the middle line runs straight on into EXIT.
+      expect(shared).toEqual(ENTRIES.length % 2 === 1 ? [ENTRIES[(ENTRIES.length - 1) / 2]] : []);
+    }
+  });
+
+  it('does not move a track when the layout changes, only EXIT', () => {
+    const before = (['A', 'B', 'P1', 'P2', 'P3', 'P4'] as const).map(laneOf);
+    applyLayout('hub');
+    expect((['A', 'B', 'P1', 'P2', 'P3', 'P4'] as const).map(laneOf)).toEqual(before);
+    expect(laneOf('EXIT')).toBe(5.5);
+    applyLayout('busy');
+    expect(laneOf('EXIT')).toBe(4);
+    applyLayout('branch');
+    expect(laneOf('EXIT')).toBe(1);
+  });
+});
+
+describe('pathAt in every layout', () => {
+  const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
+  const intoExit = TRACK_START.EXIT;
+
+  it('takes a train through P5 from line C, beside the platform, and out into EXIT', () => {
+    applyLayout('hub');
+    const route = routeOf('P5', null);
+    expect(route).toEqual({ entry: 'C', platform: 'P5' });
+    expect(pathAt(5900, route)).toEqual({ z: lane('C'), slope: 0 });
+    expect(pathAt(TRACK_START.P5 + PLATFORM_STOP, route)).toEqual({ z: lane('P5'), slope: 0 });
+    expect(pathAt(intoExit + EXIT_MERGE.pairs, route).z).toBeCloseTo(lane('C'), 9);
+    expect(pathAt(exitJoinedX(), route)).toEqual({ z: lane('EXIT'), slope: 0 });
+    expect(pathAt(7400, routeOf('EXIT', 'P5'))).toEqual({ z: lane('EXIT'), slope: 0 });
+  });
+
+  it('takes a train through P8 from line D, beside the platform, and out into EXIT', () => {
+    applyLayout('hub');
+    const route = routeOf('P8', null);
+    expect(route).toEqual({ entry: 'D', platform: 'P8' });
+    expect(pathAt(5900, route)).toEqual({ z: lane('D'), slope: 0 });
+    expect(pathAt(TRACK_START.P8 + PLATFORM_STOP, route)).toEqual({ z: lane('P8'), slope: 0 });
+    expect(pathAt(intoExit + EXIT_MERGE.pairs, route).z).toBeCloseTo(lane('D'), 9);
+    // Line D is the furthest from EXIT, so its pair is the last to join.
+    expect(pathAt(exitJoinedX() - 1, route).z).not.toBeCloseTo(lane('EXIT'), 3);
+    expect(pathAt(exitJoinedX(), route)).toEqual({ z: lane('EXIT'), slope: 0 });
+    expect(pathAt(7400, routeOf('EXIT', 'P8'))).toEqual({ z: lane('EXIT'), slope: 0 });
+  });
+
+  it('works out the route of every entry line and platform', () => {
+    applyLayout('hub');
+    for (const entry of ENTRIES) expect(routeOf(entry, null)).toEqual({ entry, platform: null });
+    for (const p of PLATFORMS) {
+      expect(routeOf(p, null)).toEqual({ entry: entryOf(p), platform: p });
+      expect(routeOf('EXIT', p)).toEqual({ entry: entryOf(p), platform: p });
+    }
+    expect(routeOf('EXIT', null)).toEqual({ entry: null, platform: null });
+  });
+
+  it('has no jumps along x for any platform of any layout', () => {
+    // The sharpest bend is the pairs' merge: one lane over EXIT_MERGE.pairs metres.
+    const steepest = LANE_SPACING / EXIT_MERGE.pairs;
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const p of PLATFORMS) {
+        // The same train: on its platform, then on EXIT having left that platform.
+        for (const route of [routeOf(p, null), routeOf('EXIT', p)]) {
+          let last = pathAt(5800, route).z;
+          for (let x = 5800.5; x <= 7200; x += 0.5) {
+            const { z, slope } = pathAt(x, route);
+            expect(Math.abs(z - last)).toBeLessThanOrEqual(steepest * 0.5 + 1e-9);
+            expect(Math.abs(slope)).toBeLessThanOrEqual(steepest + 1e-12);
+            last = z;
+          }
+        }
+      }
+    }
+  });
+
+  it('runs in the entry lane before the station, the platform lane beside it and the EXIT lane after it', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const p of PLATFORMS) {
+        const route = routeOf(p, null);
+        expect(pathAt(TRACK_START[p] - 1, route)).toEqual({ z: lane(entryOf(p)), slope: 0 });
+        for (const x of [TRACK_START[p] + POINTS_LENGTH, TRACK_START[p] + PLATFORM_STOP, intoExit - 1]) {
+          expect(pathAt(x, route)).toEqual({ z: lane(p), slope: 0 });
+        }
+        expect(pathAt(exitJoinedX(), route)).toEqual({ z: lane('EXIT'), slope: 0 });
+        expect(pathAt(stationFrame().xMax, route)).toEqual({ z: lane('EXIT'), slope: 0 });
+      }
+    }
+  });
+
+  it('joins both platforms of a pair into the entry line\'s lane first', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const entry of ENTRIES) {
+        for (const p of pairOf(entry)) {
+          expect(pathAt(intoExit + EXIT_MERGE.pairs, routeOf('EXIT', p)).z).toBeCloseTo(lane(entry), 9);
+        }
+      }
+    }
+  });
+
+  it('never bends the way into EXIT more sharply than about 30 degrees', () => {
+    const degrees = (slope: number) => (Math.atan2(Math.abs(slope), UNITS_PER_METRE) * 180) / Math.PI;
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const entry of ENTRIES) {
+        const join = exitJoinLength(entry);
+        if (join === 0) continue;
+        const { slope } = pathAt(intoExit + EXIT_MERGE.pairs + join / 2, routeOf('EXIT', pairOf(entry)[0]));
+        expect(degrees(slope)).toBeGreaterThan(0);
+        expect(degrees(slope)).toBeLessThanOrEqual(33);
+      }
+    }
+  });
+
+  it('keeps a stopped train straight in every platform of every layout', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      for (const p of PLATFORMS) {
+        // The whole train, from its front at the stop back to its rear.
+        expect(pathAt(TRACK_START[p] + PLATFORM_STOP, routeOf(p, null)).slope).toBe(0);
+        expect(pathAt(TRACK_START[p] + PLATFORM_STOP - TRAIN_LENGTH, routeOf(p, null)).slope).toBe(0);
+      }
+    }
+  });
+});
+
+describe('the way into EXIT', () => {
+  it('takes the default layout the 120 m it always has', () => {
+    expect(exitJoinLength('A')).toBe(EXIT_MERGE.join);
+    expect(exitJoinLength('B')).toBe(EXIT_MERGE.join);
+    expect(exitJoinedX()).toBe(TRACK_START.EXIT + EXIT_MERGE.pairs + EXIT_MERGE.join);
+  });
+
+  it('takes longer the further a line is from EXIT', () => {
+    applyLayout('hub');
+    expect(exitJoinLength('B')).toBe(EXIT_MERGE.join);
+    expect(exitJoinLength('C')).toBe(EXIT_MERGE.join);
+    expect(exitJoinLength('A')).toBe(3 * EXIT_MERGE.join);
+    expect(exitJoinLength('D')).toBe(3 * EXIT_MERGE.join);
+    expect(exitJoinedX()).toBe(TRACK_START.EXIT + EXIT_MERGE.pairs + 3 * EXIT_MERGE.join);
+  });
+
+  it('is nothing for a line already in line with EXIT', () => {
+    applyLayout('branch');
+    expect(exitJoinLength('A')).toBe(0);
+    expect(exitJoinedX()).toBe(TRACK_START.EXIT + EXIT_MERGE.pairs);
+    applyLayout('busy');
+    expect(exitJoinLength('B')).toBe(0);
+    expect(exitJoinLength('A')).toBe(2 * EXIT_MERGE.join);
+    expect(exitJoinLength('C')).toBe(2 * EXIT_MERGE.join);
+  });
+});
+
+describe('stationFrame', () => {
+  it('is the default frame in the default layout and in the one-line layout', () => {
+    expect(stationFrame()).toEqual(STATION_FRAME);
+    applyLayout('branch');
+    expect(stationFrame()).toEqual(STATION_FRAME);
+  });
+
+  it('shows the whole way into EXIT and some straight track after it, at true scale', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const f = stationFrame();
+      expect(f.xMin).toBe(STATION_FRAME.xMin);
+      expect(f.xMax).toBeGreaterThanOrEqual(exitJoinedX() + 2 * TRAIN_LENGTH);
+      expect(f.xMax).toBeGreaterThan(JUNCTION_END_X);
+      expect(f.width / (f.xMax - f.xMin)).toBeCloseTo(UNITS_PER_METRE, 9);
+    }
+  });
+
+  it('is longer for the four-line layout, whose outer lines join EXIT last', () => {
+    applyLayout('hub');
+    expect(stationFrame().xMax).toBeGreaterThan(STATION_FRAME.xMax);
+  });
+});
+
+describe('cameras in every layout', () => {
+  const tanHalf = Math.tan((CAMERA_FOV / 2) * (Math.PI / 180));
+  const distance = (p: ReturnType<typeof cameraPreset>) => Math.hypot(...p.position.map((v, i) => v - p.lookAt[i]));
+
+  it('keeps the default layout where it has always been', () => {
+    const overhead = cameraPreset('overhead', STATION_FRAME, 1.6);
+    expect(overhead.lookAt).toEqual([72, 0, 5.5]);
+    expect(overhead.position[1]).toBeCloseTo((72 * 1.03) / (tanHalf * 1.6), 9);
+    const angled = cameraPreset('angled', STATION_FRAME, 1.6);
+    expect(angled.lookAt[0]).toBeCloseTo(toScreenX(6150, STATION_FRAME), 9);
+    expect(angled.lookAt[2]).toBe(6.5);
+    expect(distance(angled)).toBeCloseTo(((40 * 1.03) / (tanHalf * 1.6)) * 0.82, 9);
+  });
+
+  it('runs across the line from the control centre to just past the last platform', () => {
+    expect(acrossLine()).toEqual({ from: -10, to: 21 });
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const lanes = PLATFORMS.map((p) => laneOf(p) * LANE_SPACING);
+      expect(acrossLine().from).toBeLessThan(Math.min(...Object.values(DEVICE_SITES).map((s) => s.z)));
+      expect(acrossLine().to).toBe(Math.max(...lanes) + 1);
+    }
+  });
+
+  it('centres the overhead view on the lanes the layout has, and fits them', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const f = stationFrame();
+      const across = acrossLine();
+      for (const aspect of [1, 1.6, 2.2]) {
+        const { position, lookAt } = cameraPreset('overhead', f, aspect);
+        expect(lookAt[0]).toBe(f.width / 2);
+        expect(lookAt[2]).toBe((across.from + across.to) / 2);
+        const height = position[1] - lookAt[1];
+        expect(2 * height * tanHalf * aspect).toBeGreaterThanOrEqual(f.width);
+        expect(2 * height * tanHalf).toBeGreaterThanOrEqual(across.to - across.from);
+      }
+    }
+  });
+
+  it('looks at the one-line layout from as close as the default, a little off the middle of its own lanes', () => {
+    const usual = cameraPreset('angled', STATION_FRAME);
+    applyLayout('branch');
+    const branch = cameraPreset('angled', stationFrame());
+    expect(distance(branch)).toBeCloseTo(distance(usual), 9);
+    const across = acrossLine();
+    expect(branch.lookAt[2]).toBeGreaterThan((across.from + across.to) / 2);
+    expect(branch.lookAt[2]).toBeLessThan(laneOf('P2') * LANE_SPACING);
+    expect(branch.lookAt[2]).toBeLessThan(usual.lookAt[2]);
+  });
+
+  it('backs the angled camera off for a deeper layout, in step with its depth', () => {
+    const usual = cameraPreset('angled', STATION_FRAME);
+    const usualDepth = acrossLine().to - acrossLine().from;
+    for (const id of ['busy', 'hub'] as const) {
+      applyLayout(id);
+      const across = acrossLine();
+      const p = cameraPreset('angled', stationFrame());
+      expect(distance(p)).toBeCloseTo((distance(usual) * (across.to - across.from)) / usualDepth, 9);
+      // Still aimed a little nearer than the middle of the lanes, as the default is.
+      expect(p.lookAt[2]).toBeGreaterThan((across.from + across.to) / 2);
+      expect(p.lookAt[2]).toBeLessThan(across.to);
+      expect(p.position[2]).toBeGreaterThan(p.lookAt[2]);
+    }
+  });
+
+  it('needs no more ground or shadow than the default until the layout is bigger', () => {
+    expect(stageGrowth(stationFrame())).toBe(1);
+    applyLayout('branch');
+    expect(stageGrowth(stationFrame())).toBe(1);
+    applyLayout('busy');
+    const busy = stageGrowth(stationFrame());
+    applyLayout('hub');
+    const hub = stageGrowth(stationFrame());
+    expect(busy).toBeGreaterThan(1);
+    expect(hub).toBeGreaterThan(busy);
+    // Enough for the deeper stage and for the longer frame.
+    expect(hub).toBeGreaterThanOrEqual((acrossLine().to - acrossLine().from) / 31);
+    expect(hub).toBeGreaterThanOrEqual(stationFrame().width / STATION_FRAME.width);
+  });
+});
+
+describe('labels and the junction zone in every layout', () => {
+  it('labels the entry lines, the platforms and EXIT of the layout in use, inside its frame', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const f = stationFrame();
+      const anchors = labelAnchors(f);
+      const tracks = anchors.filter((a) => a.kind === 'track');
+      expect(tracks.map((a) => a.text)).toEqual([...LAYOUTS[id].entries, ...PLATFORMS, 'EXIT']);
+      for (const a of tracks) {
+        expect(a.z).toBe(laneOf(a.text as TrackId) * LANE_SPACING);
+        expect(a.x).toBeGreaterThanOrEqual(f.xMin);
+        expect(a.x).toBeLessThanOrEqual(f.xMax);
+      }
+      expect(anchors.filter((a) => a.kind === 'device')).toHaveLength(4);
+    }
+  });
+
+  it('labels the lines of the four-line layout', () => {
+    applyLayout('hub');
+    const texts = labelAnchors(stationFrame()).map((a) => a.text);
+    for (const t of ['C', 'D', 'P5', 'P6', 'P7', 'P8']) expect(texts).toContain(t);
+  });
+
+  it('does not label a track the layout does not have', () => {
+    applyLayout('branch');
+    const texts = labelAnchors(stationFrame()).map((a) => a.text);
+    for (const t of ['B', 'P3', 'P4']) expect(texts).not.toContain(t);
+  });
+
+  it('keeps the devices clear of every lane', () => {
+    applyLayout('hub');
+    for (const site of Object.values(DEVICE_SITES)) expect(site.z).toBeLessThan(laneOf('P1') * LANE_SPACING);
+  });
+
+  it('lights the junction zone for a train at the end of P7, and not for one on line C or D', () => {
+    applyLayout('hub');
+    const at = (track: TrackId, x: number): Snapshot => {
+      const s = snapshotWith(x);
+      return { ...s, trains: s.trains.map((t) => ({ ...t, pos: { ...t.pos, track } })) };
+    };
+    expect(junctionBusy(at('P7', 6350))).toBe(true);
+    expect(junctionBusy(at('P6', 6290))).toBe(false);
+    expect(junctionBusy(at('C', 5990))).toBe(false);
+    expect(junctionBusy(at('D', 5990))).toBe(false);
+  });
+
+  it('puts a train on line D in line D\'s lane', () => {
+    applyLayout('hub');
+    const s = snapshotWith(5500);
+    const onD: Snapshot = { ...s, trains: s.trains.map((t) => ({ ...t, pos: { ...t.pos, track: 'D' as const } })) };
+    expect(markersFor(onD, stationFrame())[0].lane).toBe(laneOf('D'));
   });
 });

@@ -334,6 +334,11 @@ select option {
 .dock .push {
   margin-left: auto;
 }
+/* A layout's title is long. The list stays narrow in the dock; opened, it shows every title in full. */
+.dock select.layout {
+  max-width: 10.5em;
+  text-overflow: ellipsis;
+}
 
 /* A failure switch reads as a signal lamp: lit green when on, red when switched off. */
 .lamp {

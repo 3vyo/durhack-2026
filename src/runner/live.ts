@@ -4,7 +4,9 @@ import type { Switches } from '../engine/switches';
 import { RUN_LENGTH, generateTimetable, spawnEntry, type TimetableOptions } from '../engine/timetable';
 import type { Scenario } from '../scenarios/scenarios';
 import { TICK } from '../shared/constants';
-import type { TimetableEntry, TrainId } from '../shared/types';
+import { ENTRIES, LAYOUT } from '../shared/map';
+import type { LayoutId } from '../shared/map';
+import type { EntryId, TimetableEntry, TrainId } from '../shared/types';
 import { pressesFor } from './failure';
 
 export interface LiveOptions {
@@ -23,6 +25,10 @@ export interface LiveOptions {
  * The live demo's driver. Two engines, the baseline and ours, run the same timetable on one
  * clock and are always stepped together, so the two scenes can never drift apart. A press
  * goes to both engines at the same simulated time.
+ *
+ * A session runs on the layout that is in use when it is built (src/shared/map.ts). Pick the
+ * layout first, and build a new session to change it. Its engines, agents and keepers all read
+ * the layout in use, so a session refuses to step, spawn or restart on any other layout.
  */
 export class LiveSession {
   /** Simulated seconds per real second. */
@@ -34,6 +40,8 @@ export class LiveSession {
   /** The one timetable both engines run. Spawned trains are added to it. */
   private timetable: TimetableEntry[] = [];
   private carry = 0;
+  /** The layout in use when this session was built. */
+  private readonly layout: LayoutId = LAYOUT.id;
 
   constructor(private readonly options: LiveOptions) {
     this.build();
@@ -53,6 +61,7 @@ export class LiveSession {
    */
   tick(realSeconds: number): void {
     if (this.paused) return;
+    this.checkLayout('step');
     this.carry += realSeconds * this.speed;
     const steps = Math.floor(this.carry / TICK + 1e-9);
     this.carry -= steps * TICK;
@@ -72,8 +81,15 @@ export class LiveSession {
    * Adds a train at the start of `track` in both engines at the same simulated time, due now,
    * with the timetable's dwell. It enters once the start of the track is clear, behind any
    * train already waiting there. Returns its ID. A restart forgets it, like a live press.
+   * Throws if the layout in use has no such entry track, before either engine is touched.
    */
-  spawn(track: 'A' | 'B'): TrainId {
+  spawn(track: EntryId): TrainId {
+    this.checkLayout('spawn a train');
+    if (!ENTRIES.includes(track)) {
+      throw new Error(
+        `cannot spawn a train on ${track}: the ${LAYOUT.id} layout only has entry track${ENTRIES.length === 1 ? '' : 's'} ${ENTRIES.join(', ')}`,
+      );
+    }
     const entry = spawnEntry(this.timetable, track, this.oursEngine.now, this.options.timetable.dwell);
     this.baselineEngine.addTrain(entry);
     this.oursEngine.addTrain(entry);
@@ -82,8 +98,17 @@ export class LiveSession {
 
   /** Back to time 0 with the same seed. Live presses and spawned trains are forgotten. Speed and pause are kept. */
   restart(): void {
+    this.checkLayout('restart');
     this.carry = 0;
     this.build();
+  }
+
+  /** Throws if the layout in use is no longer the one this session was built on. */
+  private checkLayout(doing: string): void {
+    if (LAYOUT.id === this.layout) return;
+    throw new Error(
+      `cannot ${doing}: this session was built on the ${this.layout} layout and the layout in use is now ${LAYOUT.id}. Build a new session`,
+    );
   }
 
   private build(): void {

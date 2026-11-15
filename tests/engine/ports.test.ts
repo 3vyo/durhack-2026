@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlCentre, TrainProgram } from '../../src/engine/ports';
+import { platformReadings } from '../../src/shared/map';
 import type { TimetableEntry, TrackId, TrainAgentFactory } from '../../src/shared/types';
 
 // A message sent on tick t is in the recipient's inbox on tick t + 1, for trains,
@@ -22,7 +23,7 @@ describe('ports', () => {
       0,
       [],
       {
-        platformOccupied: { P1: false, P2: false, P3: false, P4: false },
+        platformOccupied: platformReadings(),
         junctionOccupied: false,
         exitStartClear: true,
       },

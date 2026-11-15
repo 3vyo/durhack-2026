@@ -1,10 +1,16 @@
 import { SENSOR_RANGE } from '../shared/constants';
 import type { PlatformId, SensorReadings, TrackId } from '../shared/types';
 import { footprint, touchesZone, type Body } from './footprint';
-import { PLATFORM_STOP, TRACK_LENGTH } from '../shared/map';
+import {
+  EXIT_CLEAR_LENGTH,
+  PLATFORMS,
+  PLATFORM_STOP,
+  TRACK_LENGTH,
+  isEntryTrack,
+  isPlatform,
+  platformReadings,
+} from '../shared/map';
 import type { Switches } from './switches';
-
-const PLATFORMS: PlatformId[] = ['P1', 'P2', 'P3', 'P4'];
 
 /**
  * Metres from the front of `self` to the rear of the nearest obstacle on its path, or null
@@ -44,28 +50,30 @@ export function sightAhead(self: Body, nextTrack: TrackId | null, others: Body[]
  * A train exactly at the edge gets 0, so it stops there and does not slip in unwarned.
  */
 function zoneEdgeDistance(track: TrackId, offset: number, nextTrack: TrackId | null): number | null {
-  if (track === 'A' || track === 'B') {
+  if (isEntryTrack(track)) {
     const toPlatform = nextTrack !== null && nextTrack !== 'EXIT' ? nextTrack : null;
     return toPlatform ? TRACK_LENGTH[track] - offset + PLATFORM_STOP : null;
   }
-  if (track === 'EXIT') return null;
+  if (!isPlatform(track)) return null;
   return offset <= PLATFORM_STOP ? PLATFORM_STOP - offset : null;
 }
 
 /**
  * What the wired and platform sensors report. A platform reads occupied while any part of a
- * train is on it. A dead platform sensor reads occupied, never empty. The junction and the
- * start of EXIT are wired to the junction keeper, so they do not depend on the platform sensors.
+ * train is on it. A dead platform sensor reads occupied, never empty. A platform that is not in
+ * the layout in use always reads occupied, so the readings name every platform any layout can
+ * have. The junction and the start of EXIT are wired to the junction keeper, so they do not
+ * depend on the platform sensors.
  */
 export function readSensors(bodies: Body[], sw: Switches): SensorReadings {
   const segments = bodies.flatMap((b) => footprint(b));
-  const platformOccupied = {} as Record<PlatformId, boolean>;
+  const occupied: Partial<Record<PlatformId, boolean>> = {};
   for (const p of PLATFORMS) {
-    platformOccupied[p] = !sw.sensors || segments.some((s) => s.track === p);
+    occupied[p] = !sw.sensors || segments.some((s) => s.track === p);
   }
   return {
-    platformOccupied,
+    platformOccupied: platformReadings(occupied),
     junctionOccupied: bodies.some((b) => touchesZone(footprint(b))),
-    exitStartClear: !segments.some((s) => s.track === 'EXIT' && s.from < 300),
+    exitStartClear: !segments.some((s) => s.track === 'EXIT' && s.from < EXIT_CLEAR_LENGTH),
   };
 }

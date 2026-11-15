@@ -1,5 +1,6 @@
 import { SIGHT_SPEED } from '../shared/constants';
-import type { Message, Outgoing, PlatformId, Position, TrackId, TrainId, TrainState } from '../shared/types';
+import { isEntryTrack, isPlatform } from '../shared/map';
+import type { EntryId, Message, Outgoing, PlatformId, Position, TrackId, TrainId, TrainState } from '../shared/types';
 import { elapsed } from './follow';
 import { isStill, type TrainNumbers } from './numbers';
 
@@ -40,7 +41,7 @@ export interface FallbackInput {
 }
 
 export interface CreepInput {
-  entry: 'A' | 'B';
+  entry: EntryId;
   probing: TrackId | null; // the nextTrack the train returned last tick
   sightAhead: number | null; // looks along last tick's nextTrack
 }
@@ -48,13 +49,9 @@ export interface CreepInput {
 export interface RefusalInput {
   lastReply: HeardPlatformKeeperReply | null; // the last station reply, however old
   statuses: PlatformStatusLog;
-  entry: 'A' | 'B';
+  entry: EntryId;
   pos: Position;
   now: number;
-}
-
-function isEntryTrack(track: TrackId): track is 'A' | 'B' {
-  return track === 'A' || track === 'B';
 }
 
 /**
@@ -115,8 +112,7 @@ export function platformRequest(
  */
 export function dwellStart(prev: number | null, self: TrainState, now: number): number | null {
   if (prev !== null) return prev;
-  const inPlatform = !isEntryTrack(self.pos.track) && self.pos.track !== 'EXIT';
-  return inPlatform && isStill(self.speed) ? now : null;
+  return isPlatform(self.pos.track) && isStill(self.speed) ? now : null;
 }
 
 /**
@@ -149,7 +145,7 @@ export function shouldUseFallback(
  * whose sensor says empty, from a fresh status, or null to wait.
  */
 export function fixedSplitPlatform(
-  entry: 'A' | 'B',
+  entry: EntryId,
   statuses: PlatformStatusLog,
   now: number,
   numbers: Pick<TrainNumbers, 'pairs' | 'fresh' | 'slack'>,
@@ -230,7 +226,7 @@ export function hasFreshStatus(
  * of its pair. Where it should hear the sensors, that means they are switched off.
  */
 export function sensorsSilent(
-  entry: 'A' | 'B',
+  entry: EntryId,
   statuses: PlatformStatusLog,
   now: number,
   numbers: Pick<TrainNumbers, 'pairs' | 'fresh' | 'slack'>,

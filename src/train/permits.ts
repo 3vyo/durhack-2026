@@ -1,6 +1,6 @@
 import { BRAKE, TICK } from '../shared/constants';
-import { successors } from '../shared/map';
-import type { Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
+import { isEntryTrack, successors } from '../shared/map';
+import type { EntryId, Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
 import { brakeLimit, elapsed, type Leader } from './follow';
 import { STOP_SHORT, type TrainNumbers } from './numbers';
 
@@ -83,17 +83,17 @@ export function permitLeader(permit: HeldPermit | null): Leader {
 }
 
 /**
- * "The centre comes first". The platform a train on A or B keeps when the centre fails: the
+ * "The centre comes first". The platform a train on an entry track keeps when the centre fails: the
  * one its last permit sent it to, if it can no longer stop before the end of its entry
  * track. Null if it can still stop, or the permit named no platform of its own pair.
  */
 export function committedPlatform(
   self: TrainState,
   permit: HeldPermit | null,
-  entry: 'A' | 'B',
+  entry: EntryId,
   numbers: Pick<TrainNumbers, 'pairs' | 'entryLength'>,
 ): PlatformId | null {
-  if (permit === null || (self.pos.track !== 'A' && self.pos.track !== 'B')) return null;
+  if (permit === null || !isEntryTrack(self.pos.track)) return null;
   const platform = numbers.pairs[entry].find((p) => p === permit.nextTrack) ?? null;
   if (platform === null) return null;
   // Full braking in steps of TICK covers about half a tick less than the smooth formula.

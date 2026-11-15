@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FRESH, REQUEST_REPEAT, SIGHT_SPEED, PLATFORM_KEEPER_TIMEOUT, TICK } from '../../src/shared/constants';
 import { ASK_POINT, PLATFORM_PAIRS } from '../../src/shared/map';
-import type { Message, PlatformId, TrainState } from '../../src/shared/types';
+import type { EntryId, Message, PlatformId, TrainState } from '../../src/shared/types';
 import { createAgent } from '../../src/train/agent';
 import { trainNumbers } from '../../src/train/numbers';
 import {
@@ -66,7 +66,7 @@ function sensors(run: Run, i: number, occupied: Partial<Record<PlatformId, boole
 }
 
 /** Train `id` stopped at the end of its entry track, where it has just started asking. */
-function atEnd(id = 1, entry: 'A' | 'B' = 'A'): Run {
+function atEnd(id = 1, entry: EntryId = 'A'): Run {
   return startRun(createAgent(id, timetable), id, { track: entry, offset: 5999.99 }, 0);
 }
 

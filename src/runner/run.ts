@@ -3,7 +3,26 @@ import { averageDelay, timeToNormal } from '../engine/metrics';
 import type { TrainProgram } from '../engine/ports';
 import { RUN_LENGTH, generateTimetable, type TimetableOptions } from '../engine/timetable';
 import { SCENARIOS, type Scenario, type ScenarioId } from '../scenarios/scenarios';
+import { DEFAULT_LAYOUT, LAYOUT, LAYOUT_IDS, applyLayout, isLayoutId, type LayoutId } from '../shared/map';
 import { failureWindow, pressesFor } from './failure';
+
+// Every run here is built on the layout in use (src/shared/map.ts): the timetable spreads its
+// trains over that layout's entry tracks, and the engine and both programs read the same
+// layout. Pick the layout before a run, with onLayout or applyLayout, never during one.
+
+/**
+ * Does `work` with `layout` in use, then puts back the layout that was in use before, even if
+ * `work` throws. So one batch's layout cannot leak into the next.
+ */
+export function onLayout<T>(layout: LayoutId, work: () => T): T {
+  const before = LAYOUT.id;
+  applyLayout(layout);
+  try {
+    return work();
+  } finally {
+    applyLayout(before);
+  }
+}
 
 export interface RunOptions {
   seed: number;
@@ -142,6 +161,33 @@ export function runBatch(
     baseline: statsFor(runs.baseline, delays.baseline, normals.baseline, caps),
     ours: statsFor(runs.ours, delays.ours, normals.ours, caps),
   };
+}
+
+/** What the page sends the batch worker. No layout means the default one. */
+export interface BatchRequest {
+  scenario: ScenarioId;
+  layout?: LayoutId;
+}
+
+/**
+ * The batch worker's whole job: run one scenario's batch on the layout the page asked for.
+ * Throws for a layout or scenario that does not exist, instead of quietly running another.
+ */
+export function runBatchRequest(
+  request: BatchRequest,
+  seeds: number[],
+  programs: { baseline: TrainProgram; ours: TrainProgram },
+  tt: TimetableOptions,
+  runLength: number = RUN_LENGTH,
+): ScenarioSummary {
+  const layout: unknown = request.layout ?? DEFAULT_LAYOUT;
+  if (!isLayoutId(layout)) {
+    throw new Error(`unknown layout ${JSON.stringify(layout)}: it must be one of ${LAYOUT_IDS.join(', ')}`);
+  }
+  if (!Object.hasOwn(SCENARIOS, request.scenario)) {
+    throw new Error(`unknown scenario ${JSON.stringify(request.scenario)}`);
+  }
+  return onLayout(layout, () => runBatch(SCENARIOS[request.scenario], seeds, programs, tt, runLength));
 }
 
 /** True if any run collided, in either program. A baseline collision is a bug in the rig. */
