@@ -230,8 +230,6 @@ function draw(): void {
       timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
       timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },
       stillOnLine: ended ? { baseline: stuck(b), ours: stuck(o) } : null,
-      collisions: { baseline: b.collisions, ours: o.collisions },
-      closeCalls: { baseline: b.closeCalls, ours: o.closeCalls },
       avg: average,
     }),
   );

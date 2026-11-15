@@ -257,27 +257,6 @@ select option {
   margin-bottom: 6px;
 }
 
-/* One line that stays green while nothing has collided. */
-.board .safety {
-  margin-top: 12px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--lamp-on);
-  background: rgba(57, 211, 83, 0.12);
-}
-.board .safety > div::before {
-  content: '\2713\00a0\00a0';
-}
-.board .safety.alert {
-  color: var(--lamp-off);
-  background: rgba(229, 72, 77, 0.14);
-}
-.board .safety.alert > div::before {
-  content: '\2715\00a0\00a0';
-}
-
 /* The bottom stack: key, minimap and dock. Each sizes itself; nothing overlaps. */
 .bottom {
   position: absolute;

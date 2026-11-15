@@ -208,8 +208,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     views.append(b);
   }
 
-  // The score panel: the delay as two big bars, then the other measurements as small bars,
-  // then one safety line.
+  // The score panel: the delay as two big bars, then the other measurements as small bars.
   const board = el('section', 'glass board');
   board.setAttribute('aria-label', 'Score');
   const head = el('div', 'head');
@@ -225,8 +224,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const runsBox = el('div', 'rows');
   runs.append(runsTitle, runsBox);
   const setRunList = barList(runsBox);
-  const safetyLine = el('div', 'safety');
-  board.append(head, delay.root, rowsBox, runs, safetyLine);
+  board.append(head, delay.root, rowsBox, runs);
 
   // The key: one compact row of shapes and names. Click it to show what each one means.
   const key = el('button', 'glass key');
@@ -418,12 +416,6 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       runs.hidden = score.runs === null;
       setText(runsTitle, score.runs?.title ?? '');
       setRunList(score.runs?.rows ?? []);
-      safetyLine.classList.toggle('alert', !score.safety.ok);
-      const text = score.safety.lines.join('\n');
-      if (safetyLine.dataset.text !== text) {
-        safetyLine.dataset.text = text;
-        safetyLine.replaceChildren(...score.safety.lines.map((line) => el('div', '', line)));
-      }
     },
     setCard(side, lines) {
       const card = cards[side];

@@ -28,8 +28,6 @@ function board(over: Partial<BoardInput> = {}) {
     timeToNormalSeconds: pair(null, 0),
     timeToNormalCapped: pair(false, false),
     stillOnLine: null,
-    collisions: pair(0, 0),
-    closeCalls: pair(0, 0),
     avg: null,
     ...over,
   });
@@ -84,23 +82,8 @@ describe('scoreBoard', () => {
     expect(runs.rows[1].text).toEqual(pair('5.0 min (2 never)', '0.0 min'));
   });
 
-  it('reads as one green line while nothing has collided', () => {
-    expect(board().safety).toEqual({ ok: true, lines: ['No collisions'] });
-    expect(board({ avg: { ...avg, baseline: { ...avg.baseline, collisions: 0 } } }).safety).toEqual({
-      ok: true,
-      lines: ['No collisions, this run and 50 more'],
-    });
-  });
-
-  it('spells out each count that is not zero, one line per side', () => {
-    const s = board({ collisions: pair(2, 0), closeCalls: pair(1, 3) }).safety;
-    expect(s.ok).toBe(false);
-    expect(s.lines).toEqual(["Today's: 2 collisions, 1 close call", 'Ours: 3 close calls']);
-    expect(board({ collisions: pair(1, 0) }).safety.lines).toEqual(["Today's: 1 collision"]);
-  });
-
-  it('counts the many-run collisions on the safety line', () => {
-    expect(board({ avg }).safety).toEqual({ ok: false, lines: ["Today's: 4 collisions in the 50 runs"] });
+  it('has no collision line', () => {
+    expect(JSON.stringify(board({ avg }))).not.toMatch(/collision|close call/i);
   });
 });
 

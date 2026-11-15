@@ -26,8 +26,6 @@ export interface Board {
   rows: BarRow[];
   /** The many-run averages, once the background batch has finished. */
   runs: { title: string; rows: BarRow[] } | null;
-  /** The safety line. `ok` is false as soon as either side has a collision or a close call. */
-  safety: { ok: boolean; lines: string[] };
 }
 
 export interface BoardInput {
@@ -43,8 +41,6 @@ export interface BoardInput {
   timeToNormalCapped: Pair<boolean>;
   /** Trains still on the line when the run ended, or null while the run is going. */
   stillOnLine: Pair<number> | null;
-  collisions: Pair<number>;
-  closeCalls: Pair<number>;
   /** The many-run averages, once the background batch has finished. */
   avg: ScenarioSummary | null;
 }
@@ -52,13 +48,6 @@ export interface BoardInput {
 function minutes(seconds: number): string {
   return (seconds / 60).toFixed(1);
 }
-
-function counted(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
-const SIDES = ['baseline', 'ours'] as const;
-const SIDE_NAMES = { baseline: "Today's", ours: 'Ours' };
 
 function both<T>(f: (side: 'baseline' | 'ours') => T): Pair<T> {
   return { baseline: f('baseline'), ours: f('ours') };
@@ -85,27 +74,9 @@ function timeToNormalRow(i: BoardInput): BarRow {
 }
 
 /**
- * The safety line. Collisions and close calls must stay at zero, so the line reads as one tick
- * while they do, and spells out each count that is not zero when something has gone wrong. The
- * many-run collisions count too once the batch has finished.
- */
-function safety(i: BoardInput): Board['safety'] {
-  const lines: string[] = [];
-  for (const s of SIDES) {
-    const parts: string[] = [];
-    if (i.collisions[s] > 0) parts.push(counted(i.collisions[s], 'collision', 'collisions'));
-    if (i.closeCalls[s] > 0) parts.push(counted(i.closeCalls[s], 'close call', 'close calls'));
-    const batch = i.avg?.[s].collisions ?? 0;
-    if (i.avg && batch > 0) parts.push(`${counted(batch, 'collision', 'collisions')} in the ${i.avg.seeds} runs`);
-    if (parts.length > 0) lines.push(`${SIDE_NAMES[s]}: ${parts.join(', ')}`);
-  }
-  if (lines.length > 0) return { ok: false, lines };
-  return { ok: true, lines: [i.avg ? `No collisions, this run and ${i.avg.seeds} more` : 'No collisions'] };
-}
-
-/**
  * The score panel, as numbers and text. It formats what it is given and works nothing out, so
- * the panel cannot disagree with the engine's metrics. The saving is never negative.
+ * the panel cannot disagree with the engine's metrics. The saving is never negative. Collisions
+ * are not shown: `npm run batch` fails if either program has one.
  */
 export function scoreBoard(i: BoardInput): Board {
   const savedSeconds = i.delaySeconds.baseline - i.delaySeconds.ours;
@@ -131,7 +102,6 @@ export function scoreBoard(i: BoardInput): Board {
     saved: savedSeconds > 0 ? minutes(savedSeconds) : null,
     rows,
     runs,
-    safety: safety(i),
   };
 }
 
