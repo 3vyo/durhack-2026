@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Snapshot, TrainView } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
 import { SENSOR_RANGE, TRAIN_LENGTH } from '../shared/constants';
@@ -107,14 +108,63 @@ interface Car {
   baseTurn: number;
 }
 
+/** A material in two shades: as it is, and dimmed for a stopped train. Every train shares both. */
+interface Shades {
+  lit: THREE.Material;
+  dim: THREE.Material;
+}
+
+function shadesOf(material: THREE.Material): Shades {
+  const dim = material.clone();
+  if ('color' in dim && dim.color instanceof THREE.Color) dim.color.multiplyScalar(bodyDim(true));
+  return { lit: material, dim };
+}
+
+/** One piece of a car, ready to copy: a single geometry for each material the car uses. */
+interface CarPiece {
+  geometry: THREE.BufferGeometry;
+  shades: Shades;
+}
+
+/**
+ * Bakes one kit car into as few meshes as it can: one per material, already moved so the car's
+ * centre is at the origin and its wheels at y 0. A car of three meshes then costs one draw call
+ * for each train, not three, on screen and again in the shadow pass.
+ */
+function bakeCar(car: THREE.Object3D, shadesFor: (m: THREE.Material) => Shades): CarPiece[] {
+  car.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(car);
+  const centre = box.getCenter(new THREE.Vector3());
+  const byMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  car.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    geometry.translate(-centre.x, -box.min.y, -centre.z);
+    const list = byMaterial.get(mesh.material) ?? [];
+    list.push(geometry);
+    byMaterial.set(mesh.material, list);
+  });
+  const pieces: CarPiece[] = [];
+  for (const [material, geometries] of byMaterial) {
+    const merged = geometries.length === 1 ? geometries[0] : mergeGeometries(geometries);
+    // Meshes that cannot be merged stay as they are.
+    for (const geometry of merged ? [merged] : geometries) pieces.push({ geometry, shades: shadesFor(material) });
+    if (merged && geometries.length > 1) for (const g of geometries) g.dispose();
+  }
+  return pieces;
+}
+
 /** One drawn train: a group carrying its cars, its mode marker and a STOPPED tag. */
 interface DrawnTrain {
   group: THREE.Group;
   /** A box before the models load or if they fail, else the three cars of the kit's unit. */
   body: THREE.Object3D;
   cars: Car[];
-  /** The body's own materials, cloned per train so dimming one train leaves the others alone. */
-  bodyMaterials: THREE.MeshStandardMaterial[];
+  /** The body's meshes, each with the shared material it shows when moving and when stopped. */
+  bodyMeshes: Array<{ mesh: THREE.Mesh; shades: Shades }>;
+  /** Whether the body is shown dimmed now, so a frame only swaps materials when this changes. */
+  dimmed: boolean | null;
   marker: THREE.Sprite;
   tag: THREE.Sprite;
   /** True if the body is the kit model, false for the box. */
@@ -235,9 +285,16 @@ export function createScene(
   scene.add(ground);
 
   const world = buildWorld(scene, frame, quality.trees);
+  // The lights, the ground and the scenery never move, so work out where each one sits once
+  // instead of on every frame. Trains are added later and still move.
+  scene.traverse((o) => {
+    o.updateMatrix();
+    o.matrixAutoUpdate = false;
+  });
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   const trainGeometry = new THREE.BoxGeometry(1, TRAIN_HEIGHT, TRAIN_DEPTH);
+  const boxShades = shadesOf(new THREE.MeshStandardMaterial({ color: TRAIN_BODY }));
   const textureFor = markerTextures();
   const stoppedTag = stoppedTexture();
   const trains = new Map<number, DrawnTrain>();
@@ -245,6 +302,17 @@ export function createScene(
 
   // The models load once, in the background. Until then, or if any fails, trains are boxes.
   let kit: KitParts<THREE.Object3D> | null = null;
+  /** Each kit car baked once (bakeCar), nose first. Every train copies these. */
+  let carPieces: CarPiece[][] = [];
+  const kitShades = new Map<THREE.Material, Shades>();
+  const shadesFor = (m: THREE.Material): Shades => {
+    let s = kitShades.get(m);
+    if (!s) {
+      s = shadesOf(m);
+      kitShades.set(m, s);
+    }
+    return s;
+  };
   const loader = new GLTFLoader();
   const base = import.meta.env.BASE_URL;
   void loadKit(
@@ -255,6 +323,7 @@ export function createScene(
   ).then((loaded) => {
     kit = loaded;
     if (!kit) return;
+    carPieces = kit.cars.map((car) => bakeCar(car, shadesFor));
     world.useKitRails(kit.rail);
     // Rebuild every train from the models on the next render.
     for (const t of trains.values()) disposeTrain(t);
@@ -262,36 +331,28 @@ export function createScene(
   });
 
   /** One unit from the kit, nose towards +x, its centre at the origin, wheels at y 0. */
-  function modelBody(): { body: THREE.Object3D; materials: THREE.MeshStandardMaterial[]; cars: Car[] } {
+  function modelBody(): { body: THREE.Object3D; meshes: DrawnTrain['bodyMeshes']; cars: Car[] } {
     const parts = kit!;
     const { scale, centres } = consistLayout(parts.carSizes.map((s) => s.length), trainLength, CAR_GAP);
     const body = new THREE.Group();
-    const materials: THREE.MeshStandardMaterial[] = [];
+    const meshes: DrawnTrain['bodyMeshes'] = [];
     const cars: Car[] = [];
-    parts.cars.forEach((car, i) => {
-      const copy = car.clone(true);
-      const box = new THREE.Box3().setFromObject(car);
-      const centre = box.getCenter(new THREE.Vector3());
-      copy.position.set(-centre.x, -box.min.y, -centre.z);
-      // Share the geometry, clone the material, so each train dims on its own.
-      copy.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        const material = (mesh.material as THREE.MeshStandardMaterial).clone();
-        material.userData.base = material.color.getHex();
-        mesh.material = material;
+    carPieces.forEach((pieces, i) => {
+      const holder = new THREE.Group();
+      // Every train shares the baked geometry and the two shades of each material.
+      for (const piece of pieces) {
+        const mesh = new THREE.Mesh(piece.geometry, piece.shades.lit);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        materials.push(material);
-      });
-      const holder = new THREE.Group();
-      holder.add(copy);
+        holder.add(mesh);
+        meshes.push({ mesh, shades: piece.shades });
+      }
       holder.scale.setScalar(scale);
       body.add(holder);
       // The model runs along +z; a quarter turn points it along +x, the direction of travel.
       cars.push({ holder, behind: (trainLength / 2 - centres[i]) / UNITS_PER_METRE, baseTurn: Math.PI / 2 });
     });
-    return { body, materials, cars };
+    return { body, meshes, cars };
   }
 
   function makeTrain(id: number): DrawnTrain {
@@ -299,21 +360,19 @@ export function createScene(
     group.userData.trainId = id;
     const model = kit !== null;
     let body: THREE.Object3D;
-    let bodyMaterials: THREE.MeshStandardMaterial[];
+    let bodyMeshes: DrawnTrain['bodyMeshes'];
     let cars: Car[];
     if (model) {
-      ({ body, materials: bodyMaterials, cars } = modelBody());
+      ({ body, meshes: bodyMeshes, cars } = modelBody());
       body.position.y = world.railTop();
     } else {
-      const material = new THREE.MeshStandardMaterial({ color: TRAIN_BODY });
-      material.userData.base = TRAIN_BODY;
-      const box = new THREE.Mesh(trainGeometry, material);
+      const box = new THREE.Mesh(trainGeometry, boxShades.lit);
       box.scale.x = trainLength;
       box.position.y = TRAIN_HEIGHT / 2;
       body = new THREE.Group();
       body.add(box);
       body.position.y = world.railTop();
-      bodyMaterials = [material];
+      bodyMeshes = [{ mesh: box, shades: boxShades }];
       cars = [{ holder: box, behind: TRAIN_LENGTH / 2, baseTurn: 0 }];
     }
     const marker = new THREE.Sprite(new THREE.SpriteMaterial({ sizeAttenuation: false, depthTest: false, transparent: true }));
@@ -330,12 +389,13 @@ export function createScene(
     tag.position.y = lift;
     group.add(body, marker, tag);
     scene.add(group);
-    return { group, body, cars, bodyMaterials, marker, tag, model };
+    return { group, body, cars, bodyMeshes, dimmed: null, marker, tag, model };
   }
 
+  /** Frees what one train owns. The body's geometry and materials are shared, so they stay. */
   function disposeTrain(t: DrawnTrain): void {
     scene.remove(t.group);
-    disposeAll([...t.bodyMaterials, t.marker.material as THREE.SpriteMaterial, t.tag.material as THREE.SpriteMaterial]);
+    disposeAll([t.marker.material as THREE.SpriteMaterial, t.tag.material as THREE.SpriteMaterial]);
   }
 
   // Drag to turn the camera, right-drag (or shift-drag) to slide it, scroll to zoom. The
@@ -412,17 +472,26 @@ export function createScene(
         ? 'position:absolute;transform:translate(-50%,-50%);padding:1px 7px;border-radius:9px;font:700 12px system-ui,sans-serif;color:#e6edf3;background:rgba(11,15,20,0.72);'
         : 'position:absolute;transform:translate(-50%,-100%);padding:1px 6px;border-radius:6px;font:600 11px system-ui,sans-serif;color:#c9d4e0;background:rgba(11,15,20,0.6);white-space:nowrap;';
     labelLayer.appendChild(node);
-    return { node, at: new THREE.Vector3(toScreenX(a.x, frame), a.kind === 'track' ? 0.2 : 0, a.z) };
+    return { node, at: new THREE.Vector3(toScreenX(a.x, frame), a.kind === 'track' ? 0.2 : 0, a.z), shown: '' };
   });
+  const labelPoint = new THREE.Vector3();
   function placeLabels(): void {
     const w = container.clientWidth;
     const h = container.clientHeight;
     for (const l of labels) {
-      const p = l.at.clone().project(camera);
+      const p = labelPoint.copy(l.at).project(camera);
       const visible = Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1 && p.z < 1;
+      let where = 'none';
+      if (visible) {
+        const { left, top } = ndcToCss(p, w, h);
+        // Whole pixels, so a camera at rest writes nothing and the page is not laid out again.
+        where = `${Math.round(left)},${Math.round(top)}`;
+      }
+      if (where === l.shown) continue;
+      l.shown = where;
       l.node.style.display = visible ? '' : 'none';
       if (!visible) continue;
-      const { left, top } = ndcToCss(p, w, h);
+      const [left, top] = where.split(',');
       l.node.style.left = `${left}px`;
       l.node.style.top = `${top}px`;
     }
@@ -729,8 +798,10 @@ export function createScene(
       }
       const stopped = isStopped(m.speed);
       const spec = markerSpec(m.mode, stopped);
-      const dim = bodyDim(stopped);
-      for (const material of t.bodyMaterials) material.color.setHex(material.userData.base as number).multiplyScalar(dim);
+      if (t.dimmed !== stopped) {
+        t.dimmed = stopped;
+        for (const { mesh, shades } of t.bodyMeshes) mesh.material = stopped ? shades.dim : shades.lit;
+      }
       const markerMaterial = t.marker.material as THREE.SpriteMaterial;
       markerMaterial.map = textureFor(spec);
       markerMaterial.opacity = spec.opacity;
@@ -817,6 +888,8 @@ export function createScene(
     controls.dispose();
     for (const t of trains.values()) disposeTrain(t);
     trains.clear();
+    disposeAll([trainGeometry, boxShades.lit, boxShades.dim, ...[...kitShades.values()].map((s) => s.dim)]);
+    for (const pieces of carPieces) disposeAll(pieces.map((p) => p.geometry));
     renderer.dispose();
     renderer.domElement.remove();
     linkCanvas.remove();

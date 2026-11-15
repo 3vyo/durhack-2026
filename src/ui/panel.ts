@@ -87,6 +87,14 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text?
   return node;
 }
 
+// The panel is updated on every frame. Writing a value the page already shows still makes the
+// browser lay the page out again, so this and setText write only what has changed.
+
+/** Sets an attribute, if it is not that already. */
+function putAttr(node: Element, name: string, value: string): void {
+  if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** A small inline SVG of a mode's marker shape, for the key. */
@@ -401,10 +409,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     baselineMinimap: minimaps.baseline,
     oursMinimap: minimaps.ours,
     setBanner(t, s) {
-      scenario.textContent = t;
+      setText(scenario, t);
       const [time, ...rest] = s.split('|').map((part) => part.trim());
-      clock.textContent = time;
-      ended.textContent = rest.join(' ');
+      setText(clock, time);
+      setText(ended, rest.join(' '));
     },
     setBoard(score) {
       board.hidden = score === null;
@@ -444,11 +452,11 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setSwitches(sw) {
       for (const k of SWITCH_KEYS) {
-        lamps[k].setAttribute('aria-pressed', String(sw[k]));
-        lamps[k].setAttribute('aria-label', `${SWITCH_NAMES[k]}: ${sw[k] ? 'ON' : 'OFF'}`);
-        lamps[k].dataset.state = sw[k] ? 'ON' : 'OFF';
+        putAttr(lamps[k], 'aria-pressed', String(sw[k]));
+        putAttr(lamps[k], 'aria-label', `${SWITCH_NAMES[k]}: ${sw[k] ? 'ON' : 'OFF'}`);
+        putAttr(lamps[k], 'data-state', sw[k] ? 'ON' : 'OFF');
       }
-      radioText.textContent = radioLabel(sw.radioDrop);
+      setText(radioText, radioLabel(sw.radioDrop));
       // Leave the slider alone while it is being dragged, so it does not jump under the pointer.
       const value = String(Math.round(sw.radioDrop * 100));
       if (document.activeElement !== slider && slider.value !== value) slider.value = value;

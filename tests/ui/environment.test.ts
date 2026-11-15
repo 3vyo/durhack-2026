@@ -20,6 +20,10 @@ describe('qualityPreset', () => {
     expect(qualityPreset('high').shadows).toBe(true);
     expect(qualityPreset('high').shadowMapSize).toBeGreaterThan(0);
   });
+
+  it('draws at most 1.5 screen pixels per CSS pixel in high, so a 2x screen is not drawn in full', () => {
+    expect(qualityPreset('high').pixelRatioCap).toBe(1.5);
+  });
 });
 
 describe('ENVIRONMENT', () => {

@@ -12,7 +12,10 @@ export function parseQuality(search: string): Quality {
 export interface QualityPreset {
   shadows: boolean;
   antialias: boolean;
-  /** The most screen pixels per CSS pixel the renderer uses. */
+  /**
+   * The most screen pixels per CSS pixel the renderer uses. High stops at 1.5: on a 2x screen
+   * that draws a little over half the pixels of 2, and with smoothing on it looks much the same.
+   */
   pixelRatioCap: number;
   shadowMapSize: number;
   /** Trees around the railway. Decoration only. */
@@ -21,7 +24,7 @@ export interface QualityPreset {
 
 export function qualityPreset(q: Quality): QualityPreset {
   if (q === 'low') return { shadows: false, antialias: false, pixelRatioCap: 1, shadowMapSize: 0, trees: 0 };
-  return { shadows: true, antialias: true, pixelRatioCap: 2, shadowMapSize: 2048, trees: 24 };
+  return { shadows: true, antialias: true, pixelRatioCap: 1.5, shadowMapSize: 2048, trees: 24 };
 }
 
 /**

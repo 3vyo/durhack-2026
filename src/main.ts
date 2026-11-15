@@ -15,6 +15,7 @@ import { DEFAULT_CAMERA, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { NORMAL_SPEED, createPanel, type Side } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
+import { paceFrame } from './ui/pace';
 import { createScene } from './ui/scene';
 
 // The layout comes first: ?layout=<id> in the page address, or the default. Everything below
@@ -242,10 +243,15 @@ function draw(): void {
 // Cap the real time passed in, so a tab that was in the background does not run a burst of steps.
 const MAX_FRAME_SECONDS = 0.1;
 let last = performance.now();
+let lastDraw = last;
 function frame(now: number): void {
+  requestAnimationFrame(frame);
+  // At most 60 draws a second (pace.ts). The run keeps to real time whatever the frame rate.
+  const kept = paceFrame(now, lastDraw);
+  if (kept === null) return;
+  lastDraw = kept;
   session.tick(Math.min((now - last) / 1000, MAX_FRAME_SECONDS));
   last = now;
   draw();
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
