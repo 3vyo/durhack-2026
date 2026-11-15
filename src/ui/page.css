@@ -240,6 +240,11 @@ select option {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* A collision or close call on the safety line. */
+.scores td.alert {
+  color: var(--lamp-off);
+  font-weight: 600;
+}
 
 /* The bottom stack: key, minimap and dock. Each sizes itself; nothing overlaps. */
 .bottom {

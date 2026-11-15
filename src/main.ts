@@ -202,7 +202,6 @@ function draw(): void {
   panel.setRows(
     scoreboardRows({
       through: { baseline: b.exits.size, ours: o.exits.size },
-      delaySeconds,
       timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
       timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },
       stillOnLine: ended ? { baseline: stuck(b), ours: stuck(o) } : null,

@@ -12,11 +12,12 @@ export interface Row {
   label: string;
   baseline: string;
   ours: string;
+  /** Present on the safety line only: true for a side with a collision or close call, which the page shows in red. */
+  alert?: Pair<boolean>;
 }
 
 export interface ScoreboardInput {
   through: Pair<number>;
-  delaySeconds: Pair<number>;
   /** Null means not known yet: no restore pressed, or a late train has not left. */
   timeToNormalSeconds: Pair<number | null>;
   collisions: Pair<number>;
@@ -36,30 +37,57 @@ function minutes(seconds: number): string {
   return (seconds / 60).toFixed(1);
 }
 
+function counted(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * One side's safety cell: "none" while everything is zero, otherwise each count that is not.
+ * The many-run collisions are counted too once the batch has finished.
+ */
+function safetyText(collisions: number, closeCalls: number, batch: { collisions: number; runs: number } | null): string {
+  const parts: string[] = [];
+  if (collisions > 0) parts.push(counted(collisions, 'collision', 'collisions'));
+  if (closeCalls > 0) parts.push(counted(closeCalls, 'close call', 'close calls'));
+  if (batch && batch.collisions > 0) parts.push(`${counted(batch.collisions, 'collision', 'collisions')} in the ${batch.runs} runs`);
+  return parts.length === 0 ? 'none' : parts.join(', ');
+}
+
+/**
+ * The safety line. Collisions and close calls must stay at zero, so they share one line that
+ * reads "none" and only spells out a count when something has gone wrong.
+ */
+function safetyRow(i: ScoreboardInput): Row {
+  const side = (s: 'baseline' | 'ours') =>
+    safetyText(i.collisions[s], i.closeCalls[s], i.avg ? { collisions: i.avg[s].collisions, runs: i.avg.seeds } : null);
+  const baseline = side('baseline');
+  const ours = side('ours');
+  return {
+    label: i.avg ? `Collisions and close calls, this run and ${i.avg.seeds} more` : 'Collisions and close calls',
+    baseline,
+    ours,
+    alert: { baseline: baseline !== 'none', ours: ours !== 'none' },
+  };
+}
+
 function normalText(seconds: number | null, capped: boolean): string {
   if (seconds === null) return 'not yet';
   return capped ? `${minutes(seconds)} (run ended, counted at run length)` : minutes(seconds);
 }
 
 /**
- * The numbers under the two scenes, as text. It formats what it is given and works nothing
- * out, so the scoreboard cannot disagree with the engine's metrics.
+ * The scoreboard's lines, as text. It formats what it is given and works nothing out, so the
+ * scoreboard cannot disagree with the engine's metrics. The delay per train is not here: the
+ * big numbers at the top of the page already show it.
  */
 export function scoreboardRows(i: ScoreboardInput): Row[] {
   const rows: Row[] = [
     { label: 'Trains through', baseline: String(i.through.baseline), ours: String(i.through.ours) },
     {
-      label: 'Delay per train (min)',
-      baseline: minutes(i.delaySeconds.baseline),
-      ours: minutes(i.delaySeconds.ours),
-    },
-    {
       label: 'Time to normal (min)',
       baseline: normalText(i.timeToNormalSeconds.baseline, i.timeToNormalCapped.baseline),
       ours: normalText(i.timeToNormalSeconds.ours, i.timeToNormalCapped.ours),
     },
-    { label: 'Collisions', baseline: String(i.collisions.baseline), ours: String(i.collisions.ours) },
-    { label: 'Close calls', baseline: String(i.closeCalls.baseline), ours: String(i.closeCalls.ours) },
   ];
   if (i.stillOnLine && (i.stillOnLine.baseline > 0 || i.stillOnLine.ours > 0)) {
     rows.push({
@@ -83,13 +111,9 @@ export function scoreboardRows(i: ScoreboardInput): Row[] {
         baseline: minutes(i.avg.baseline.meanTimeToNormal) + stuck(i.avg.baseline.neverRecovered),
         ours: minutes(i.avg.ours.meanTimeToNormal) + stuck(i.avg.ours.neverRecovered),
       },
-      {
-        label: `Collisions, same ${i.avg.seeds} runs`,
-        baseline: String(i.avg.baseline.collisions),
-        ours: String(i.avg.ours.collisions),
-      },
     );
   }
+  rows.push(safetyRow(i));
   return rows;
 }
 
