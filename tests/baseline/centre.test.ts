@@ -981,6 +981,67 @@ describe('taking over a train already in the junction zone (design: "The centre 
   });
 });
 
+describe('taking over a train that is setting off into the junction zone (design: "The centre comes first")', () => {
+  const leaving = routes({ 1: 'EXIT' });
+
+  it('makes a moving train with its route set to EXIT the holder, though its front is short of the zone', () => {
+    expect(seen([train(1, 'P1', PLATFORM_STOP - 10, 5)], 0, undefined, leaving).junctionHolder).toBe(1);
+  });
+
+  it('does not take over a train that is arriving, which has no route out of its platform', () => {
+    expect(seen([train(1, 'P1', PLATFORM_STOP - 10, 5)]).junctionHolder).toBeNull();
+    expect(seen([train(1, 'P1', PLATFORM_STOP - 10, 5)], 0, undefined, routes({ 1: null })).junctionHolder).toBeNull();
+  });
+
+  it('does not take over a train that stands still with its route at EXIT, which is only looking', () => {
+    expect(seen([stopped(1, 'P1', PLATFORM_STOP - 0.01)], 0, undefined, leaving).junctionHolder).toBeNull();
+  });
+
+  it('does not take over a broken-down train that is still rolling short of the zone', () => {
+    const rolling = { ...train(1, 'P1', PLATFORM_STOP - 10, 5), brokenDown: true };
+    expect(seen([rolling], 0, undefined, leaving).junctionHolder).toBeNull();
+  });
+
+  it('prefers a train already in the zone, then the train that would stop furthest along', () => {
+    const inZone = train(3, 'P3', PLATFORM_STOP + 5, 1);
+    const fast = train(2, 'P2', PLATFORM_STOP - 20, 6);
+    const slow = train(1, 'P1', PLATFORM_STOP - 20, 2);
+    const all = routes({ 1: 'EXIT', 2: 'EXIT', 3: 'EXIT' });
+    expect(seen([slow, fast, inZone], 0, undefined, all).junctionHolder).toBe(3);
+    expect(seen([slow, fast], 0, undefined, all).junctionHolder).toBe(2);
+  });
+
+  it('gives the junction to no other train, and lets the train it took over run out', () => {
+    const centre = makeCentre(timetable);
+    const waiting = stopped(2, 'P2', PLATFORM_STOP);
+    centre.step(0, [waiting], clear, none);
+    // Train 2's dwell is over. Train 1 set off on its own rules while the centre was off.
+    const permits = centre.step(100, [train(1, 'P1', PLATFORM_STOP - 10, 5), waiting], clear, leaving);
+    expect(permitFor(permits, 1)).toMatchObject({ nextTrack: 'EXIT', untilX: freeRunX() });
+    expect(permitFor(permits, 2)).toMatchObject({ nextTrack: null, untilX: JUNCTION_START_X });
+  });
+
+  it('keeps its own holder that has set off, whatever another train does', () => {
+    const holding = { ...seen([train(1, 'P1', PLATFORM_STOP - 5, 2)]), junctionHolder: 1 };
+    const both = [train(1, 'P1', PLATFORM_STOP - 3, 3), train(2, 'P2', PLATFORM_STOP - 10, 5)];
+    expect(seen(both, 1, holding, routes({ 1: 'EXIT', 2: 'EXIT' })).junctionHolder).toBe(1);
+  });
+
+  it('passes the turn from a holder that has not set off to a train that has the zone', () => {
+    const holding = { ...seen([stopped(1, 'P1', PLATFORM_STOP - 0.01)]), junctionHolder: 1 };
+    const settingOff = [stopped(1, 'P1', PLATFORM_STOP - 0.01), train(2, 'P2', PLATFORM_STOP - 10, 5)];
+    expect(seen(settingOff, 1, holding, routes({ 1: 'EXIT', 2: 'EXIT' })).junctionHolder).toBe(2);
+    const inZone = [stopped(1, 'P1', PLATFORM_STOP - 0.01), stopped(2, 'P2', PLATFORM_STOP + 0.3)];
+    expect(seen(inZone, 1, holding).junctionHolder).toBe(2);
+  });
+
+  it('keeps a holder that has not set off while no other train has the zone', () => {
+    const holding = { ...seen([stopped(1, 'P1', PLATFORM_STOP - 0.01)]), junctionHolder: 1 };
+    const others = [stopped(1, 'P1', PLATFORM_STOP - 0.01), stopped(2, 'P2', PLATFORM_STOP - 0.01), train(4, 'P4', 100, 15)];
+    expect(seen(others, 1, holding, routes({ 1: 'EXIT', 2: 'EXIT' })).junctionHolder).toBe(1);
+  });
+});
+
 describe('leader in the permit (design: "The centre comes first")', () => {
   it('is null when nothing is ahead on the path', () => {
     const t = train(1, 'A', 3000);
