@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LAYOUT_IDS, PLATFORMS, applyLayout, entryOf, resetLayout, type LayoutId } from '../../src/shared/map';
 import { pathAt, stationFrame, toScreenX, type Frame } from '../../src/ui/layout';
-import { buildWorld } from '../../src/ui/world';
+import { ZONE_COLOUR, ZONE_OPACITY, buildWorld } from '../../src/ui/world';
 
 /** One laid piece of track as a line on the ground, from end to end, in scene units. */
 interface Piece {
@@ -112,5 +112,32 @@ describe('sensorReading', () => {
     expect(sensorReading(false, true)).toBe('empty');
     expect(sensorReading(true, true)).toBe('occupied');
     expect(sensorReading(true, false)).toBe('off');
+  });
+});
+
+describe('the junction zone', () => {
+  /** The yellow patches over the junction zone, found by their colour. */
+  function zonePatches(scene: THREE.Scene): THREE.Mesh[] {
+    return scene.children.filter(
+      (c) => (c as THREE.Mesh).isMesh && ((c as THREE.Mesh).material as THREE.MeshBasicMaterial).color?.getHex() === ZONE_COLOUR,
+    ) as THREE.Mesh[];
+  }
+
+  it('is drawn in yellow only while the Show menu has it on, and brighter with a train in it', () => {
+    const scene = new THREE.Scene();
+    const world = buildWorld(scene, stationFrame(), 0);
+    const patches = zonePatches(scene);
+    expect(patches.length).toBeGreaterThan(0);
+    const opacity = () => (patches[0]!.material as THREE.MeshBasicMaterial).opacity;
+
+    world.setJunctionZone(false, true);
+    expect(patches.every((m) => m.visible)).toBe(true);
+    expect(opacity()).toBe(ZONE_OPACITY.empty);
+
+    world.setJunctionZone(true, true);
+    expect(opacity()).toBe(ZONE_OPACITY.busy);
+
+    world.setJunctionZone(true, false);
+    expect(patches.some((m) => m.visible)).toBe(false);
   });
 });

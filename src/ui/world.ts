@@ -30,7 +30,8 @@ import { railFit } from './rails';
 
 // The fixed scenery: track, platforms, the four devices and the junction zone. It is built
 // once, for the layout in use when the scene is made. After that it changes only to show which
-// devices are switched on and whether the junction zone has a train in it.
+// devices are switched on, what the platform sensors read, and whether the junction zone is
+// drawn and has a train in it.
 
 export interface World {
   /** Swaps the flat strips for the kit's track pieces. Call once, when the models have loaded. */
@@ -38,7 +39,11 @@ export interface World {
   /** Height of the top of the rail, where a train's wheels sit. */
   railTop(): number;
   setDevices(sw: Switches): void;
-  setJunctionBusy(busy: boolean): void;
+  /**
+   * Shows the junction zone in yellow, brighter while a train is in it. With `visible` false
+   * the zone is not drawn.
+   */
+  setJunctionZone(busy: boolean, visible: boolean): void;
   /**
    * Shows each platform sensor's reading on its track and its box's lamp. `on` is the sensors'
    * switch. With `visible` false the tracks are untinted and the lamps only show the switch.
@@ -56,6 +61,10 @@ export function sensorReading(occupied: boolean, on: boolean): SensorShown {
 
 /** The colour of each reading, on the platform track's tint and the box's lamp. */
 export const SENSOR_TINT: Record<SensorShown, number> = { empty: 0x3fbf6a, occupied: 0xff5a5a, off: 0x8794a6 };
+
+/** The junction zone's yellow, and how see-through it is when empty and when a train is in it. */
+export const ZONE_COLOUR = 0xffd23f;
+export const ZONE_OPACITY = { empty: 0.22, busy: 0.45 } as const;
 
 /** Height of the top of a platform island, where the sensor boxes stand. */
 const ISLAND_TOP = 0.55;
@@ -138,7 +147,12 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   }
 
   // The junction zone: the last 100 m of every platform and the first 200 m of EXIT.
-  const zoneMaterial = new THREE.MeshBasicMaterial({ color: 0xd9a441, transparent: true, opacity: 0.12, depthWrite: false });
+  const zoneMaterial = new THREE.MeshBasicMaterial({
+    color: ZONE_COLOUR,
+    transparent: true,
+    opacity: ZONE_OPACITY.empty,
+    depthWrite: false,
+  });
   const lanes = platforms.map(z);
   const pairLanes = entries.map(z);
   // The platform ends and the pairs' merge share one patch; the start of EXIT gets another,
@@ -328,8 +342,10 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     }
   }
 
-  function setJunctionBusy(busy: boolean): void {
-    zoneMaterial.opacity = busy ? 0.32 : 0.12;
+  function setJunctionZone(busy: boolean, visible: boolean): void {
+    ends.visible = visible;
+    start.visible = visible;
+    zoneMaterial.opacity = busy ? ZONE_OPACITY.busy : ZONE_OPACITY.empty;
   }
 
   function setSensors(occupied: Readonly<Record<PlatformId, boolean>>, on: boolean, visible: boolean): void {
@@ -348,5 +364,5 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     }
   }
 
-  return { useKitRails, railTop: () => top, setDevices, setJunctionBusy, setSensors };
+  return { useKitRails, railTop: () => top, setDevices, setJunctionZone, setSensors };
 }
