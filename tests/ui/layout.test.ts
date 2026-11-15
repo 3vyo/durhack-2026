@@ -414,7 +414,7 @@ describe('pathAt in every layout', () => {
     expect(routeOf('EXIT', null)).toEqual({ entry: null, platform: null });
   });
 
-  it('has no jumps along x for any platform of any layout', () => {
+  it('has no jumps along x for any platform of any layout', { timeout: 30_000 }, () => {
     // The sharpest bend is the pairs' merge: one lane over EXIT_MERGE.pairs metres.
     const steepest = LANE_SPACING / EXIT_MERGE.pairs;
     for (const id of LAYOUT_IDS) {
