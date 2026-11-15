@@ -24,10 +24,9 @@ const avg: ScenarioSummary = {
 function rows(over: Partial<Parameters<typeof scoreboardRows>[number]> = {}) {
   return scoreboardRows({
     through: pair(7, 9),
-    delaySeconds: pair(90, 0),
     timeToNormalSeconds: pair(null, 0),
     collisions: pair(0, 0),
-    closeCalls: pair(1, 2),
+    closeCalls: pair(0, 0),
     avg: null,
     timeToNormalCapped: pair(false, false),
     stillOnLine: null,
@@ -42,10 +41,8 @@ describe('scoreboardRows', () => {
     expect(byLabel(rows(), 'Trains through')).toEqual({ label: 'Trains through', baseline: '7', ours: '9' });
   });
 
-  it('shows the average delay per train in minutes to one decimal place', () => {
-    const delay = byLabel(rows(), 'Delay per train (min)')!;
-    expect(delay.baseline).toBe('1.5');
-    expect(delay.ours).toBe('0.0');
+  it('leaves the delay per train to the big numbers at the top of the page', () => {
+    expect(rows().some((x) => x.label.startsWith('Delay per train'))).toBe(false);
   });
 
   it('shows time to normal, and not yet while it is unknown', () => {
@@ -54,10 +51,31 @@ describe('scoreboardRows', () => {
     expect(r.ours).toBe('2.5');
   });
 
-  it('shows collisions and close calls exactly as given', () => {
-    const r = rows({ collisions: pair(2, 0), closeCalls: pair(5, 3) });
-    expect(byLabel(r, 'Collisions')).toMatchObject({ baseline: '2', ours: '0' });
-    expect(byLabel(r, 'Close calls')).toMatchObject({ baseline: '5', ours: '3' });
+  it('puts collisions and close calls on one safety line that reads none while both are zero', () => {
+    const r = rows();
+    expect(r.filter((x) => /collision|close call/i.test(x.label))).toHaveLength(1);
+    expect(byLabel(r, 'Collisions and close calls')).toEqual({
+      label: 'Collisions and close calls',
+      baseline: 'none',
+      ours: 'none',
+      alert: { baseline: false, ours: false },
+    });
+  });
+
+  it('spells out each count that is not zero on the safety line, and marks that side', () => {
+    const r = byLabel(rows({ collisions: pair(2, 0), closeCalls: pair(1, 3) }), 'Collisions and close calls')!;
+    expect(r.baseline).toBe('2 collisions, 1 close call');
+    expect(r.ours).toBe('3 close calls');
+    expect(r.alert).toEqual({ baseline: true, ours: true });
+    const one = byLabel(rows({ collisions: pair(1, 0) }), 'Collisions and close calls')!;
+    expect(one.baseline).toBe('1 collision');
+    expect(one.ours).toBe('none');
+    expect(one.alert).toEqual({ baseline: true, ours: false });
+  });
+
+  it('keeps the safety line last, under the averages', () => {
+    const r = rows({ avg });
+    expect(r[r.length - 1].label).toMatch(/^Collisions and close calls/);
   });
 
   it('has no average row until the averages arrive', () => {
@@ -72,13 +90,16 @@ describe('scoreboardRows', () => {
     expect(row.ours).toBe('0.1');
   });
 
-  it('adds the average time to normal, counting stuck seeds, and the collisions over all runs', () => {
+  it('adds the average time to normal, counting stuck seeds, and counts the many-run collisions on the safety line', () => {
     const r = rows({ avg });
     const ttn = r.find((x) => x.label === 'Average time to normal (min), same 50 runs')!;
     expect(ttn.baseline).toBe('5.0 (2 never recovered)');
     expect(ttn.ours).toBe('0.0');
-    const collisions = r.find((x) => x.label === 'Collisions, same 50 runs')!;
-    expect(collisions).toMatchObject({ baseline: '4', ours: '0' });
+    expect(r.some((x) => x.label === 'Collisions, same 50 runs')).toBe(false);
+    const safety = r.find((x) => x.label === 'Collisions and close calls, this run and 50 more')!;
+    expect(safety.baseline).toBe('4 collisions in the 50 runs');
+    expect(safety.ours).toBe('none');
+    expect(safety.alert).toEqual({ baseline: true, ours: false });
   });
 
   it('says the run ended and the time is counted at the run length when a train never got back on time', () => {
