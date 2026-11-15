@@ -157,9 +157,9 @@ Spoken lines, in order, as bullets to say in our own words. Isa is **I**, Ugrada
 
 **Phase 1: today's system, healthy**
 
-- **I:** On 6 August this year, a power cut hit the Manchester control centre, and trains stopped across the North West.
-- **I:** Network Rail says signalling was fully restored late that evening, but disruption ran into the next morning. Reportedly, the outage itself was about 90 seconds.
-- **I:** We understand how the current model works and where it fails. So we built a system that keeps trains moving safely when the centre goes quiet, and we tested it in simulation.
+- **I:** We all commute into university by train. When something goes wrong, there is nothing you can do except wait and refresh an app.
+- **I:** On 6 August, reportedly 90 seconds without power at the Manchester control centre stopped trains across the North West. Network Rail says signalling was not fully restored until late that evening.
+- **I:** We understand how the current model works and where it fails: every decision sits in one place, a single point of failure. So we built a fallback layer that lets trains decide for themselves when that place goes quiet, and keeps them moving safely. Here is what it does.
 - **U:** This is today's system. Every blue square is a train obeying the control centre, which sends it a permit every second.
 - **U:** The title shows the state of the centre. Right now it is working and everything flows.
 - **U:** Today's rule is simple. If the centre or the radio fails, every train in the area stops until staff restart them one at a time.
@@ -187,7 +187,6 @@ Spoken lines, in order, as bullets to say in our own words. Isa is **I**, Ugrada
 - **U:** On this run, with the centre down for two minutes, today's trains lose 1.8 minutes each and take 859 seconds to get back to normal. Ours lose 0.0 and take 238 seconds.
 - **U:** Across 50 seeds of this scenario, delay is 1.4 minutes against 0.0, and time to normal is 12.4 minutes against 2.2. In 900 batch runs there were no collisions.
 - **I:** So it is a layer underneath the centre. It does nothing until the centre is gone.
-- **U:** One caveat. Slow restart is off by default and its per-train time is our assumption, so the real gap may be wider.
 
 **Phase 5: the ladder and the handover (if time)**
 
@@ -200,6 +199,6 @@ Spoken lines, in order, as bullets to say in our own words. Isa is **I**, Ugrada
 
 **Phase 6: future plans and close**
 
-- **I:** We want to explore this at a smaller scale first, in logistics, building software for the people who need it. Logistics has the same shape as the track: many moving things, shared bottlenecks and a central system everyone waits on. The purpose is the same as on the track: keep things moving safely without waiting for a control centre.
+- **I:** We want to explore this at a smaller scale first, in logistics, building software for the people who need it. Logistics has the same shape as the track, and so does any system where many moving units depend on one coordinator. The purpose is the same as on the track: keep things moving safely without waiting for a control centre.
 - **U:** Next steps are the hardware a real fallback layer needs, plus early booking of platforms, borrowing a platform, hazard broadcast and junction order hints.
 - **I:** Manchester showed what happens when one central system goes quiet. We are not replacing it. We are the layer that keeps trains moving until it comes back. Thank you.
