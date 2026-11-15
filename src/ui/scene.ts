@@ -32,7 +32,7 @@ import { loadKit, type KitParts, type Size } from './kit';
 import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
-import { LINK_STYLE, type Link, type LinkEnd } from './links';
+import { LINK_STYLE, linkReach, type Link, type LinkEnd } from './links';
 
 export interface SceneView {
   /** Draws one snapshot, and a line for each link (see links.ts). The view only reads them. */
@@ -66,6 +66,8 @@ const CAR_GAP = 0.12; // model units between the cars of one unit
 const DEVICE_TOP: Record<DeviceKey, number> = { centre: 3.5, platformKeeper: 1.6, junctionKeeper: 1.6, sensors: 1.65 };
 /** How fast the dot on a link line travels from sender to receiver, in trips per real second. */
 const PULSE_RATE = 0.9;
+/** How many straight pieces make up one link arc. */
+const ARC_STEPS = 32;
 
 /** One car of a drawn train, placed on its own so a train bends through the points. */
 interface Car {
@@ -388,11 +390,49 @@ export function createScene(
   container.insertBefore(linkCanvas, labelLayer);
   const linkPen = linkCanvas.getContext('2d');
 
+  /** A train's end of a line: where the line meets it, and how much of the line to show (linkReach). */
+  interface Anchor {
+    at: THREE.Vector3;
+    reach: number;
+  }
+
   /** Where a line meets one end, in scene units, or null for a train that is not drawn. */
-  function linkPoint(end: LinkEnd, anchors: Map<number, THREE.Vector3>): THREE.Vector3 | null {
+  function linkPoint(end: LinkEnd, anchors: Map<number, Anchor>): Anchor | null {
     if ('train' in end) return anchors.get(end.train) ?? null;
     const site = DEVICE_SITES[end.device];
-    return new THREE.Vector3(toScreenX(site.x, frame), DEVICE_TOP[end.device], site.z);
+    return { at: new THREE.Vector3(toScreenX(site.x, frame), DEVICE_TOP[end.device], site.z), reach: 1 };
+  }
+
+  /**
+   * The arc as a run of canvas points. The arc is built in the scene, rising over the middle,
+   * and each point is projected on its own. A point the camera cannot see (behind it, too
+   * close or past the far plane) breaks the run, so a train sliding out of view never flings
+   * the line across the sky.
+   */
+  function arcRuns(a: THREE.Vector3, b: THREE.Vector3, w: number, h: number): Array<Array<{ left: number; top: number }>> {
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    mid.y += Math.min(9, 1.5 + a.distanceTo(b) * 0.2);
+    // The control point that makes the curve pass through the raised middle.
+    const c = mid.multiplyScalar(2).sub(a.clone().add(b).multiplyScalar(0.5));
+    const runs: Array<Array<{ left: number; top: number }>> = [];
+    let run: Array<{ left: number; top: number }> = [];
+    const p = new THREE.Vector3();
+    for (let i = 0; i <= ARC_STEPS; i++) {
+      const u = i / ARC_STEPS;
+      p.set(0, 0, 0)
+        .addScaledVector(a, (1 - u) * (1 - u))
+        .addScaledVector(c, 2 * (1 - u) * u)
+        .addScaledVector(b, u * u)
+        .project(camera);
+      if (p.z < -1 || p.z > 1) {
+        if (run.length > 1) runs.push(run);
+        run = [];
+        continue;
+      }
+      run.push(ndcToCss(p, w, h));
+    }
+    if (run.length > 1) runs.push(run);
+    return runs;
   }
 
   /**
@@ -400,7 +440,7 @@ export function createScene(
    * it the way the message goes. A link fades as its message gets older. A note sits above its
    * train.
    */
-  function drawLinks(links: Link[], anchors: Map<number, THREE.Vector3>): void {
+  function drawLinks(links: Link[], anchors: Map<number, Anchor>): void {
     if (!linkPen) return;
     const w = container.clientWidth;
     const h = container.clientHeight;
@@ -421,23 +461,19 @@ export function createScene(
       const a = linkPoint(link.from, anchors);
       const b = linkPoint(link.to, anchors);
       if (!a || !b) return;
-      const mid = a.clone().add(b).multiplyScalar(0.5);
-      mid.y += Math.min(9, 1.5 + a.distanceTo(b) * 0.2);
-      const [pa, pb, pm] = [a, b, mid].map((p) => p.clone().project(camera));
-      // Leave out a line with an end behind the camera: it would be drawn mirrored.
-      if (pa.z > 1 || pb.z > 1 || pm.z > 1) return;
-      const s = ndcToCss(pa, w, h);
-      const e = ndcToCss(pb, w, h);
-      const m = ndcToCss(pm, w, h);
-      // The control point that makes the curve pass through the raised middle.
-      const c = { left: 2 * m.left - (s.left + e.left) / 2, top: 2 * m.top - (s.top + e.top) / 2 };
+      const reach = Math.min(a.reach, b.reach);
+      if (reach <= 0) return;
+      const runs = arcRuns(a.at, b.at, w, h);
+      if (runs.length === 0) return;
       const style = LINK_STYLE[link.kind];
-      const alpha = 0.25 + 0.75 * link.strength;
+      const alpha = (0.25 + 0.75 * link.strength) * reach;
 
       const curve = () => {
         g.beginPath();
-        g.moveTo(s.left, s.top);
-        g.quadraticCurveTo(c.left, c.top, e.left, e.top);
+        for (const run of runs) {
+          g.moveTo(run[0].left, run[0].top);
+          for (const q of run.slice(1)) g.lineTo(q.left, q.top);
+        }
       };
       g.strokeStyle = style.css;
       g.lineCap = 'round';
@@ -458,19 +494,27 @@ export function createScene(
       g.setLineDash([]);
 
       // The dot, starting from the sender. Each line has its own phase so they do not pulse together.
-      const u = (seconds * PULSE_RATE + i * 0.37) % 1;
-      const along = (p: number, q: number, r: number) => (1 - u) * (1 - u) * p + 2 * (1 - u) * u * q + u * u * r;
+      const points = runs.flat();
+      const along = ((seconds * PULSE_RATE + i * 0.37) % 1) * (points.length - 1);
+      const p0 = points[Math.floor(along)];
+      const p1 = points[Math.min(points.length - 1, Math.floor(along) + 1)];
+      const f = along - Math.floor(along);
       g.fillStyle = style.css;
       g.beginPath();
-      g.arc(along(s.left, c.left, e.left), along(s.top, c.top, e.top), 3.5, 0, Math.PI * 2);
+      g.arc(p0.left + (p1.left - p0.left) * f, p0.top + (p1.top - p0.top) * f, 3.5, 0, Math.PI * 2);
       g.fill();
-      // A ring where the message lands.
+      g.globalAlpha = 1;
+
+      // A ring where the message lands, if the camera can see that end.
+      const end = b.at.clone().project(camera);
+      if (end.z < -1 || end.z > 1) return;
+      const e = ndcToCss(end, w, h);
+      g.globalAlpha = alpha;
       g.lineWidth = 2;
       g.beginPath();
       g.arc(e.left, e.top, 4.5, 0, Math.PI * 2);
       g.stroke();
       g.globalAlpha = 1;
-
       if (link.note && 'train' in link.to) notes.push({ text: link.note, left: e.left, top: e.top - 44 });
     });
 
@@ -545,7 +589,11 @@ export function createScene(
     controls.update();
     setFog();
     renderer.render(scene, camera);
-    const anchors = new Map([...trains].map(([id, t]) => [id, t.marker.position] as const));
+    const anchors = new Map<number, Anchor>();
+    for (const v of s.trains) {
+      const t = trains.get(v.id);
+      if (t) anchors.set(v.id, { at: t.marker.position, reach: linkReach(v.x, frame) });
+    }
     drawLinks(links, anchors);
     placeLabels();
   }

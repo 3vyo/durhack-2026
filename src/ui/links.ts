@@ -1,5 +1,5 @@
 import type { TrainView } from '../engine/engine';
-import { FRESH, PERMIT_FRESH, REQUEST_REPEAT } from '../shared/constants';
+import { FRESH, PERMIT_FRESH, REQUEST_REPEAT, TRAIN_LENGTH } from '../shared/constants';
 import { RANGE, inRange, isEntryTrack } from '../shared/map';
 import type { TrainId } from '../shared/types';
 import type { DeviceKey } from './layout';
@@ -65,6 +65,22 @@ function fade(age: number, window: number): number {
 /** Whole seconds, for a note a judge reads at a glance. */
 function secs(age: number): string {
   return `${Math.floor(age)} s`;
+}
+
+/** How far inside each end of the frame a train's lines take to fade in fully, in metres. */
+export const LINK_FADE = 200;
+
+/**
+ * How much of a train's lines to show, from 0 to 1, by where its middle is. A train outside
+ * the stretch the scene shows (the frame) gets none, so a train far up the line has no line
+ * reaching off into the distance. Lines fade in over LINK_FADE metres inside each end of the
+ * frame, so they appear and go smoothly as a train moves in and out.
+ */
+export function linkReach(frontX: number, frame: { xMin: number; xMax: number }): number {
+  const middle = frontX - TRAIN_LENGTH / 2;
+  const fromStart = (middle - frame.xMin) / LINK_FADE;
+  const fromEnd = (frame.xMax - middle) / LINK_FADE;
+  return Math.max(0, Math.min(1, fromStart, fromEnd));
 }
 
 /**

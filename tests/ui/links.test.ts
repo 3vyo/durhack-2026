@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainView, TracksideView } from '../../src/engine/engine';
-import { LINK_KINDS, LINK_STYLE, linksFor } from '../../src/ui/links';
+import { LINK_FADE, LINK_KINDS, LINK_STYLE, linkReach, linksFor } from '../../src/ui/links';
 
 const quiet: TracksideView = {
   platformKeeper: null,
@@ -92,6 +92,32 @@ describe('linksFor', () => {
     expect(kinds(view({ pos: { track: 'P1', offset: 250 }, x: 6250, trackside: { sensorsAge: 0.3 } }))).toEqual([]);
   });
 
+});
+
+describe('linkReach', () => {
+  const frame = { xMin: 5000, xMax: 6800 };
+  // A train's middle is half a train length behind its front.
+  const front = (middle: number) => middle + 50;
+
+  it('shows no lines for a train outside the frame', () => {
+    expect(linkReach(front(1000), frame)).toBe(0);
+    expect(linkReach(front(4999), frame)).toBe(0);
+    expect(linkReach(front(6900), frame)).toBe(0);
+  });
+
+  it('shows all of them once the train is LINK_FADE metres inside', () => {
+    expect(linkReach(front(5000 + LINK_FADE), frame)).toBe(1);
+    expect(linkReach(front(6000), frame)).toBe(1);
+    expect(linkReach(front(6800 - LINK_FADE), frame)).toBe(1);
+  });
+
+  it('fades in and out smoothly at each end', () => {
+    expect(linkReach(front(5100), frame)).toBeCloseTo(0.5, 5);
+    expect(linkReach(front(6700), frame)).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe('LINK_STYLE', () => {
   it('has a style for every kind', () => {
     for (const kind of LINK_KINDS) expect(LINK_STYLE[kind].css).toMatch(/^#[0-9a-f]{6}$/);
   });
