@@ -60,11 +60,11 @@ describe('trainChoices', () => {
 
 describe('batchRunsText', () => {
   it('names the scripted failure and its length', () => {
-    expect(batchRunsText({ scenario: 'centre-outage', seeds: 50 })).toBe('50 runs with a scripted 2 min centre outage');
+    expect(batchRunsText({ scenario: 'centre-outage', seeds: 50 })).toBe('50 runs, 2 min centre outage');
   });
 
   it('says nothing fails in the healthy scenario', () => {
-    expect(batchRunsText({ scenario: 'healthy', seeds: 10 })).toBe('10 runs with nothing failing');
+    expect(batchRunsText({ scenario: 'healthy', seeds: 10 })).toBe('10 runs, nothing failing');
   });
 });
 

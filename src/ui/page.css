@@ -141,109 +141,141 @@ select option {
   vertical-align: 1px;
 }
 
-/* Top right: the delay board, the one big thing on the page. */
+/* Top right: the score panel. One big number, then bars that compare the two sides. */
 .board {
   top: 14px;
   right: 14px;
-  padding: 10px 14px 12px;
-  min-width: 360px;
+  padding: 12px 14px;
+  width: 340px;
 }
-.board .heading {
-  font-size: 13px;
-  color: var(--ink-2);
-  margin-bottom: 4px;
-}
-.board .cells {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-.board .cell {
-  border-left: 3px solid var(--edge, var(--ink-3));
-  padding-left: 9px;
-  min-width: 0;
-}
-.board .label {
-  font-size: 13px;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-.board .value {
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-}
-.board .unit {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink-2);
-  margin-left: 4px;
-}
-.board .sub {
-  font-size: 12px;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
-/* The scoreboard, on the right under the delay board. It folds away. */
-.side {
-  top: 150px;
-  right: 14px;
-  padding: 0;
-  max-width: 300px;
-}
-.side > button.fold {
-  width: 100%;
-  border: none;
-  background: transparent;
-  text-align: left;
-  font-weight: 600;
-  padding: 8px 12px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-.side > button.fold::after {
-  content: '−';
-  color: var(--ink-3);
-}
-.side.folded > button.fold::after {
-  content: '+';
-}
-.side .body {
-  padding: 0 12px 10px;
-}
-.side.folded .body {
+.board[hidden],
+.board .runs[hidden] {
   display: none;
 }
+.board .saved {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.board .saved .value {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.board .saved .unit {
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.board .saved.none .value,
+.board .saved.none .unit {
+  color: var(--ink-3);
+}
 
-.scores {
-  border-collapse: collapse;
+.metric .name {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.metric .bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.metric .who {
+  width: 52px;
   font-size: 13px;
-}
-.scores th {
-  font-weight: 600;
-  color: var(--ink-2);
-  text-align: right;
-  padding: 2px 0 4px 14px;
-  white-space: nowrap;
-}
-.scores td {
-  padding: 2px 0;
   color: var(--ink-2);
 }
-.scores td + td {
-  color: var(--ink);
+.metric .track {
+  flex: 1;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.metric .fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.metric .num {
+  min-width: 58px;
   text-align: right;
-  padding-left: 14px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* A collision or close call on the safety line. */
-.scores td.alert {
-  color: var(--lamp-off);
+.metric.big .bar + .bar {
+  margin-top: 4px;
+}
+.metric.big .track {
+  height: 16px;
+}
+.metric.big .num {
+  font-size: 16px;
   font-weight: 600;
+}
+
+/* The smaller rows: the name on the left, the two bars on the right. */
+.board .rows {
+  display: grid;
+  gap: 8px;
+}
+.board > .rows {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-edge);
+}
+.metric.small {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  column-gap: 8px;
+  row-gap: 3px;
+  align-items: center;
+}
+.metric.small .name {
+  grid-row: span 2;
+}
+.metric.small .track {
+  height: 7px;
+}
+.metric.small .num {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.board .runs {
+  margin-top: 12px;
+}
+.board .runs-title {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+
+/* One line that stays green while nothing has collided. */
+.board .safety {
+  margin-top: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--lamp-on);
+  background: rgba(57, 211, 83, 0.12);
+}
+.board .safety > div::before {
+  content: '\2713\00a0\00a0';
+}
+.board .safety.alert {
+  color: var(--lamp-off);
+  background: rgba(229, 72, 77, 0.14);
+}
+.board .safety.alert > div::before {
+  content: '\2715\00a0\00a0';
 }
 
 /* The bottom stack: key, minimap and dock. Each sizes itself; nothing overlaps. */
@@ -477,9 +509,10 @@ select option {
 
 @media (max-width: 1100px) {
   .board {
-    min-width: 0;
+    width: 280px;
   }
-  .side {
+  .board > .rows,
+  .board .runs {
     display: none;
   }
 }
