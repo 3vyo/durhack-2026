@@ -4,6 +4,7 @@ import { LAYOUT_IDS, LAYOUTS, applyLayout, resetLayout } from '../../src/shared/
 import {
   batchRunsText,
   entryLines,
+  keepLayoutShown,
   layoutUrl,
   parseLayout,
   radioLabel,
@@ -176,5 +177,55 @@ describe('layoutUrl', () => {
 
   it('gives an address that parseLayout reads back', () => {
     for (const id of LAYOUT_IDS) expect(parseLayout(new URL(layoutUrl('http://localhost:5173/?quality=low', id)).search)).toBe(id);
+  });
+});
+
+describe('keepLayoutShown', () => {
+  afterEach(() => resetLayout());
+
+  /** A stand-in for the Layout list and the window: the list, and a way to show the page again. */
+  function page(value = '') {
+    const list = { value, autocomplete: '' };
+    const shown: Array<() => void> = [];
+    const win = { addEventListener: (type: 'pageshow', listener: () => void) => void (type === 'pageshow' && shown.push(listener)) };
+    return { list, win, showAgain: () => shown.forEach((listener) => listener()) };
+  }
+
+  it('shows the layout in use when the page is built', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const { list, win } = page();
+      keepLayoutShown(list, win);
+      expect(list.value).toBe(id);
+    }
+  });
+
+  it("shows the layout in use again after the browser's Back button brings the page back", () => {
+    // The page runs the default layout. Hub is picked, the page is left, and Back returns to it
+    // with Hub still selected.
+    const { list, win, showAgain } = page();
+    keepLayoutShown(list, win);
+    list.value = 'hub';
+    showAgain();
+    expect(list.value).toBe('junction');
+  });
+
+  it('does the same on every layout, each time the page is shown', () => {
+    for (const id of LAYOUT_IDS) {
+      applyLayout(id);
+      const { list, win, showAgain } = page();
+      keepLayoutShown(list, win);
+      for (const other of LAYOUT_IDS) {
+        list.value = other;
+        showAgain();
+        expect(list.value).toBe(id);
+      }
+    }
+  });
+
+  it('tells the browser not to put an old choice back when it loads the page again', () => {
+    const { list, win } = page();
+    keepLayoutShown(list, win);
+    expect(list.autocomplete).toBe('off');
   });
 });

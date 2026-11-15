@@ -45,7 +45,7 @@ The model is a ladder of fallbacks, so each step down stays safe and throughput 
 
 1. **Healthy.** The control centre sends every train a permit each second, and trains follow them. Each train still runs its own rules and holds its own locks underneath.
 2. **Centre lost, local actors alive.** Trains carry on under their own rules with the platform keeper's and junction keeper's locks. This is the best fallback.
-3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. Clock slots give each platform one 15-second turn every 4 minutes, so at most one train a minute, about 60 trains an hour, gets through the junction.
+3. **Local actors lost too.** Trains use the fixed platform split and clock slots, at `SIGHT_SPEED` or below. Clock slots give each platform one 15-second turn per cycle, with one slot a minute and one slot for each platform. So a platform's turn comes round every 4 minutes on the default layout, every 2 on the smallest layout and every 8 on the biggest. On every layout at most one train a minute, about 60 trains an hour, gets through the junction.
 4. **Sensors dead as well.** Trains creep towards a platform they can't see a train in. This only works if a dead sensor reads as occupied.
 
 ## How the model answers each failure

@@ -251,6 +251,59 @@ describe.each(LAYOUTS)('Junction keeper switched off: the slots on the %s layout
       expect(run.overruns).toBe(0);
     });
   });
+
+  it('a train that starts on the last tick of its window is still clear of the junction zone before the next slot', () => {
+    // The worst case for "the windows never overlap": the later a train starts in its window,
+    // the less of the slot is left for it to clear the zone. Each train below becomes ready a
+    // tick later than the one before, from half a second before its window closes to after it.
+    // The dwell is 30 seconds and the junction keeper's silence takes 10 more, so a train whose
+    // dwell starts 40 seconds before a moment is ready to leave at about that moment.
+    const READY_AFTER = 40;
+    platforms.forEach((platform, k) => {
+      // Slot 0 would need a dwell that starts before time 0, so P1 uses its second turn.
+      const slot = k === 0 ? platforms.length : k;
+      const slotStart = slot * SLOT_LENGTH;
+      const nextSlot = slotStart + SLOT_LENGTH;
+      let latestStart: number | null = null;
+      let missed = 0;
+      for (let late = 5; late >= -2; late--) {
+        const run = dwelling(k + 1, platform, slotStart + SLOT_WINDOW - late * TICK - READY_AFTER);
+        // The start is the decision that first moves the train, not its front crossing into
+        // the zone: a train that starts on the last tick crosses after the window has closed.
+        let startedAt: number | null = null;
+        let clearAt: number | null = null;
+        while (run.now < nextSlot + SLOT_WINDOW && clearAt === null) {
+          const decidedAt = run.now;
+          tick(run);
+          if (startedAt === null && run.state.speed > 0) startedAt = decidedAt;
+          if (xOf(run.state.pos) - TRAIN_LENGTH >= JUNCTION_END_X) clearAt = run.now;
+        }
+        if (startedAt === null) {
+          // Too late for this window. It waits for its next turn, a whole cycle away.
+          missed += 1;
+          expect(run.state.pos).toEqual({ track: platform, offset: 299.99 });
+          continue;
+        }
+        // It started inside its own window, and never after a train that was ready later.
+        expect(startedAt).toBeGreaterThanOrEqual(slotStart - 1e-6);
+        expect(startedAt - slotStart).toBeLessThan(SLOT_WINDOW - 1e-6);
+        latestStart = Math.max(latestStart ?? startedAt, startedAt);
+        // Its rear is past the end of the zone before the next platform's window opens.
+        expect(clearAt).not.toBeNull();
+        expect(clearAt!).toBeLessThan(nextSlot);
+        expect(run.out?.nextTrack).toBeNull();
+        expect(run.state.pos.track).toBe('EXIT');
+        expect(run.out?.mode).toBe('blind');
+        expect(run.topSpeed).toBeLessThanOrEqual(SIGHT_SPEED + 1e-9);
+        expect(run.overruns).toBe(0);
+      }
+      // The sweep reached the edge: one train started on the very last tick of the window, and
+      // the trains that were ready after it did not start at all.
+      expect(latestStart).not.toBeNull();
+      expect(latestStart! - slotStart).toBeGreaterThan(SLOT_WINDOW - TICK - 1e-6);
+      expect(missed).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe.each(CASES)('$layout layout, a train on entry $entry', ({ layout, entry, first, second, id, foreign }) => {

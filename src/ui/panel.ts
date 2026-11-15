@@ -1,6 +1,6 @@
 import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
-import { entryLines, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
+import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
@@ -274,7 +274,8 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     option.value = id;
     layout.append(option);
   }
-  layout.value = LAYOUT.id;
+  // The list shows the layout in use, and still does after the browser's Back button.
+  keepLayoutShown(layout, window);
   layout.addEventListener('change', () => h.onLayout(layout.value as LayoutId));
   const pause = el('button', '', 'Pause');
   pause.title = 'Pause or resume (Space)';

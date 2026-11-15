@@ -33,13 +33,13 @@ Present from a built copy: `npm run build`, then `npx vite preview`. The dev ser
 The page draws and runs any of the four layouts in [design.md](design.md): `branch`, `junction` (the default), `busy` and `hub`.
 
 - The page address picks the layout: `?layout=hub`. `src/main.ts` reads it first and calls `applyLayout` before anything else is built. A name that is not a layout gives the default.
-- The Layout list in the control dock shows the layout in use. Choosing another reloads the page with the new `?layout=`, and keeps the rest of the address, such as `?quality=low`. `parseLayout` and `layoutUrl` in `controls.ts` do this.
+- The Layout list in the control dock shows the layout in use. Choosing another reloads the page with the new `?layout=`, and keeps the rest of the address, such as `?quality=low`. `parseLayout` and `layoutUrl` in `controls.ts` do this. `keepLayoutShown` sets the list to the layout in use each time the page is shown, so it is still right after the browser's Back button.
 - Nothing in `src/ui/` keeps a copy of the layout. Lanes, labels, cameras, scenery and the spawn list read `ENTRIES` and `PLATFORMS` when they are called, so each is right for the layout in use. A scene is built once, for the layout in use at that moment.
 - Lanes run P1, A, P2, P3, B, P4, P5, C, P6, P7, D, P8, and EXIT runs down the middle of the lanes the layout has. With one or three lines, EXIT is in line with the middle entry line.
 - The way out joins in two stages. Each pair of platforms joins in its entry line's lane over 60 m. Then each pair bends into EXIT at the same angle the default layout uses, about 32 degrees, so a pair further from EXIT takes longer: 360 m for lines A and D of `hub`. `exitJoinLength` in `layout.ts` gives the length, and both the drawn track (`world.ts`) and the trains (`pathAt`) use it.
 - `stationFrame()` is the stretch a scene shows for the layout in use. It is `STATION_FRAME` (x 5000 to 6800), made longer on the right for `busy` and `hub` so the whole join is in the picture.
 - Both cameras centre on the lanes the layout has. The angled camera backs off in proportion for a layout deeper than the default.
-- `demo-check` opens `?layout=hub` and `?layout=branch` near its end and saves an angled and an overhead screenshot of each.
+- `demo-check` opens `?layout=hub` and `?layout=branch` near its end and saves an angled and an overhead screenshot of each. It does not open `busy`, and its screenshots are not proof that trains ride the rails: `tests/ui/world.test.ts` builds the scenery of every layout without a canvas and checks that every point `pathAt` gives lies on a laid piece of track.
 - The 50-run averages come from a worker, which has its own copy of the layout. `src/main.ts` sends it the layout with the scenario (`BatchRequest` in `src/runner/run.ts`).
 - `npm run batch` and `npm run sim` name the layout at the top of what they print. A parameter file picks its layout with `"layout"`; `params/layout-branch.json`, `layout-busy.json` and `layout-hub.json` are examples.
 
