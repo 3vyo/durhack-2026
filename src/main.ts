@@ -11,6 +11,7 @@ import { describeTrain } from './ui/overlay';
 import { STATION_FRAME, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { createPanel } from './ui/panel';
+import { parseQuality, qualityPreset } from './ui/environment';
 import { createScene } from './ui/scene';
 
 const SEED = 1;
@@ -78,8 +79,10 @@ const panel = createPanel(app, {
 });
 panel.setCameraLabel(cameraLabel());
 
-const baselineView = createScene(panel.baselineStage, STATION_FRAME);
-const oursView = createScene(panel.oursStage, STATION_FRAME);
+// ?quality=low turns off shadows and trees, for a weak laptop.
+const quality = qualityPreset(parseQuality(location.search));
+const baselineView = createScene(panel.baselineStage, STATION_FRAME, quality);
+const oursView = createScene(panel.oursStage, STATION_FRAME, quality);
 // Click a train to see how it is deciding. Each scene keeps its own selection.
 const selected: { baseline: number | null; ours: number | null } = { baseline: null, ours: null };
 baselineView.onPick((id) => {
