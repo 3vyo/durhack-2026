@@ -25,6 +25,7 @@ const HEIGHT = 950;
 /** Extra page text the screen must show, added as the screen grows. */
 const REQUIRED_TEXT = [
   'How each train is deciding',
+  'Delay saved per train',
   'Obeys the control centre',
   'Moved by staff over the radio, at caution speed',
   'Hears the train ahead',

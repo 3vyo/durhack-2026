@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ScenarioSummary, Stats } from '../../src/runner/run';
-import { scoreboardRows, type Pair } from '../../src/ui/hud';
+import { heroTiles, scoreboardRows, type Pair } from '../../src/ui/hud';
 
 const pair = <T>(baseline: T, ours: T): Pair<T> => ({ baseline, ours });
 
@@ -101,5 +101,30 @@ describe('scoreboardRows', () => {
     const label = 'Not finished at run end (counted at run length)';
     expect(rows().some((x) => x.label === label)).toBe(false);
     expect(rows({ stillOnLine: pair(0, 0) }).some((x) => x.label === label)).toBe(false);
+  });
+});
+
+describe('heroTiles', () => {
+  const tiles = (b: number, o: number, stopped = { baseline: 0, ours: 0 }) =>
+    heroTiles({ delaySeconds: { baseline: b, ours: o }, stopped });
+
+  it('shows each side in minutes and the saving', () => {
+    const t = tiles(1308, 234);
+    expect(t.map((x) => x.value)).toEqual(['21.8', '3.9', '17.9']);
+    expect(t.map((x) => x.tone)).toEqual(['baseline', 'ours', 'neutral']);
+  });
+
+  it('says there is no saving yet instead of showing a negative one', () => {
+    const t = tiles(30, 60);
+    expect(t[2].value).toBe('0.0');
+    expect(t[2].sub).toBe('no saving yet');
+    expect(tiles(0, 0)[2].sub).toBe('no saving yet');
+  });
+
+  it('says how many trains are stopped on each side', () => {
+    const t = tiles(600, 0, { baseline: 9, ours: 0 });
+    expect(t[0].sub).toBe('9 trains stopped on the line');
+    expect(t[1].sub).toBe('every train is moving');
+    expect(tiles(0, 0, { baseline: 1, ours: 0 })[0].sub).toBe('1 train stopped on the line');
   });
 });

@@ -92,3 +92,35 @@ export function scoreboardRows(i: ScoreboardInput): Row[] {
   }
   return rows;
 }
+
+/** One big number at the top of the page. */
+export interface Tile {
+  label: string;
+  value: string;
+  sub: string;
+  tone: 'baseline' | 'ours' | 'neutral';
+}
+
+function trainsText(n: number, what: string): string {
+  return `${n} train${n === 1 ? '' : 's'} ${what}`;
+}
+
+/**
+ * The three big numbers: each side's average delay per train so far, and the delay saved. The
+ * saving is never negative; until there is one it reads 0.0 and says so. Under each delay, how
+ * many trains are stopped on that side right now.
+ */
+export function heroTiles(i: { delaySeconds: Pair<number>; stopped: Pair<number> }): Tile[] {
+  const saved = i.delaySeconds.baseline - i.delaySeconds.ours;
+  const stoppedText = (n: number) => (n === 0 ? 'every train is moving' : trainsText(n, 'stopped on the line'));
+  return [
+    { label: "Today's system: delay per train", value: minutes(i.delaySeconds.baseline), sub: stoppedText(i.stopped.baseline), tone: 'baseline' },
+    { label: 'Our fallback: delay per train', value: minutes(i.delaySeconds.ours), sub: stoppedText(i.stopped.ours), tone: 'ours' },
+    {
+      label: 'Delay saved per train',
+      value: minutes(Math.max(0, saved)),
+      sub: saved > 0 ? 'same timetable, same failure' : 'no saving yet',
+      tone: 'neutral',
+    },
+  ];
+}

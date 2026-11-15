@@ -1,6 +1,6 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
-import { JUNCTION_END_X, JUNCTION_START_X } from '../shared/map';
+import { JUNCTION_END_X, JUNCTION_START_X, TRACK_START } from '../shared/map';
 import type { TrackId, TrainId, TrainOutput } from '../shared/types';
 import { MODE_STYLE, SURFACE, contrastRatio } from './palette';
 
@@ -88,19 +88,71 @@ export function isStopped(speed: number): boolean {
 
 export type CameraMode = 'angled' | 'overhead';
 
+/** The view the page opens with. Overhead reads more clearly; the button switches to angled. */
+export const DEFAULT_CAMERA: CameraMode = 'overhead';
+
+/** The camera's vertical field of view, in degrees. */
+export const CAMERA_FOV = 45;
+
+/** Across the line, the scene runs from the control centre (z -10) to the far platform (z 21). */
+const CONTENT_Z = { from: -10, to: 21 };
+/** How far the angled view looks down, in degrees above the horizon. */
+const ANGLED_ELEVATION = 52;
+/** A little room around the frame, so nothing sits on the very edge. */
+const FIT_MARGIN = 1.03;
+
 /**
- * Where to put the camera. In scene space x runs along the track, y is up and z runs
- * across the lanes. Both presets look at the middle of the frame and the middle lane.
+ * Where to put the camera. In scene space x runs along the track, y is up and z runs across
+ * the lanes. Both views look at the middle of the frame and are just far enough away to show
+ * the whole frame's width, and the whole depth from the control centre to the far platform,
+ * at this canvas aspect (width / height).
  */
 export function cameraPreset(
   mode: CameraMode,
   f: Frame,
+  aspect = 1.6,
 ): { position: [number, number, number]; lookAt: [number, number, number] } {
   const cx = f.width / 2;
-  const cz = 2.5 * LANE_SPACING;
+  const cz = (CONTENT_Z.from + CONTENT_Z.to) / 2;
   const lookAt: [number, number, number] = [cx, 0, cz];
-  if (mode === 'overhead') return { position: [cx, f.width * 0.8, cz], lookAt };
-  return { position: [cx, f.width * 0.42, cz + f.width * 0.55], lookAt };
+  const tanHalf = Math.tan(((CAMERA_FOV / 2) * Math.PI) / 180);
+  const forWidth = ((f.width / 2) * FIT_MARGIN) / (tanHalf * aspect);
+  const forDepth = (((CONTENT_Z.to - CONTENT_Z.from) / 2) * FIT_MARGIN) / tanHalf;
+  const distance = Math.max(forWidth, forDepth);
+  if (mode === 'overhead') return { position: [cx, distance, cz], lookAt };
+  const e = (ANGLED_ELEVATION * Math.PI) / 180;
+  return { position: [cx, distance * Math.sin(e), cz + distance * Math.cos(e)], lookAt };
+}
+
+/** Converts a point in normalised device coordinates (-1 to 1, y up) to CSS pixels on a canvas. */
+export function ndcToCss(ndc: { x: number; y: number }, width: number, height: number): { left: number; top: number } {
+  return { left: ((ndc.x + 1) / 2) * width, top: ((1 - ndc.y) / 2) * height };
+}
+
+/**
+ * Where the HTML labels sit, x in metres and z in scene units. A and B are labelled 150 m in
+ * from the left edge of the frame (their start is off screen), EXIT 150 m in from the right
+ * edge, each platform near its entrance (trains stop further in, so the label never hides
+ * one), and each device just behind its building.
+ */
+export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: number; kind: 'track' | 'device' }> {
+  const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
+  const track = (text: string, x: number, t: TrackId) => ({ text, x, z: lane(t), kind: 'track' as const });
+  const platformEntrance = TRACK_START.P1 + 40;
+  const device = (text: string, key: DeviceKey) => ({ text, x: DEVICE_SITES[key].x, z: DEVICE_SITES[key].z - 1.4, kind: 'device' as const });
+  return [
+    track('A', f.xMin + 150, 'A'),
+    track('B', f.xMin + 150, 'B'),
+    track('P1', platformEntrance, 'P1'),
+    track('P2', platformEntrance, 'P2'),
+    track('P3', platformEntrance, 'P3'),
+    track('P4', platformEntrance, 'P4'),
+    track('EXIT', f.xMax - 150, 'EXIT'),
+    device('Control centre', 'centre'),
+    device('Platform keeper', 'platformKeeper'),
+    device('Sensors', 'sensors'),
+    device('Junction keeper', 'junctionKeeper'),
+  ];
 }
 
 /** The four pieces of trackside equipment the scene draws, keyed like the engine's switches. */

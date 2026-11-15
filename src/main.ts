@@ -6,9 +6,9 @@ import { healthyReference, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
 import { switchesLine, trainChoices } from './ui/controls';
-import { scoreboardRows } from './ui/hud';
+import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
-import { STATION_FRAME, type CameraMode } from './ui/layout';
+import { DEFAULT_CAMERA, STATION_FRAME, isStopped, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { createPanel } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
@@ -40,7 +40,7 @@ try {
 
 let restoredAt: number | null = null;
 let average: ScenarioSummary | null = null;
-let cameraMode: CameraMode = 'angled';
+let cameraMode: CameraMode = DEFAULT_CAMERA;
 
 const cameraLabel = (): string =>
   cameraMode === 'angled' ? 'Camera: angled (switch to overhead)' : 'Camera: overhead (switch to angled)';
@@ -156,13 +156,16 @@ function draw(): void {
     `${SCENARIO.title}: today's system against our fallback`,
     `${switchesLine(sw)}  |  Time ${clock(ours.now)}${ended ? '  |  Run ended' : ''}`,
   );
+  const delaySeconds = {
+    baseline: averageDelaySoFar(b, reference, base.now),
+    ours: averageDelaySoFar(o, reference, ours.now),
+  };
+  const stoppedOn = (trains: Array<{ speed: number }>): number => trains.filter((t) => isStopped(t.speed)).length;
+  panel.setTiles(heroTiles({ delaySeconds, stopped: { baseline: stoppedOn(base.trains), ours: stoppedOn(ours.trains) } }));
   panel.setRows(
     scoreboardRows({
       through: { baseline: b.exits.size, ours: o.exits.size },
-      delaySeconds: {
-        baseline: averageDelaySoFar(b, reference, base.now),
-        ours: averageDelaySoFar(o, reference, ours.now),
-      },
+      delaySeconds,
       timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
       timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },
       stillOnLine: ended ? { baseline: stuck(b), ours: stuck(o) } : null,
