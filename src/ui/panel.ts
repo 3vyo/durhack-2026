@@ -138,7 +138,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   const left = column("Today's system");
   const right = column('Our fallback');
   const cardStyle =
-    'position:absolute;top:8px;left:8px;padding:8px 10px;font-size:13px;line-height:1.5;background:rgba(11,15,20,0.88);border:1px solid #3a4658;border-radius:6px;display:none;pointer-events:none;';
+    'position:absolute;top:8px;left:8px;padding:8px 10px;font-size:13px;line-height:1.5;background:rgba(11,15,20,0.88);border:1px solid #3a4658;border-radius:6px;display:none;pointer-events:none;z-index:2;';
   const cards = { baseline: el('div', cardStyle), ours: el('div', cardStyle) };
   left.stage.append(cards.baseline);
   right.stage.append(cards.ours);
@@ -229,7 +229,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     setRows(rows) {
       table.replaceChildren();
       const head = el('tr', 'color:#9fb0c3;text-align:left;');
-      for (const text of ['', "Today's system", 'Our fallback']) head.append(el('th', 'padding:2px 24px 2px 0;', text));
+      for (const text of ['', "Today's system", 'Our fallback']) head.append(el('th', 'padding:2px 24px 2px 0;white-space:nowrap;', text));
       table.append(head);
       for (const r of rows) {
         const tr = el('tr', '');

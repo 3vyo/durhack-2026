@@ -284,7 +284,7 @@ export function createScene(
 
   // Labels for the tracks and devices are HTML over the canvas, so they stay sharp and readable.
   const labelLayer = document.createElement('div');
-  labelLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
+  labelLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:1;';
   container.appendChild(labelLayer);
   const labels = labelAnchors(frame).map((a) => {
     const node = document.createElement('div');
