@@ -1,7 +1,8 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
+import { JUNCTION_END_X, JUNCTION_START_X } from '../shared/map';
 import type { TrackId, TrainId, TrainOutput } from '../shared/types';
-import { MODE_STYLE } from './palette';
+import { MODE_STYLE, SURFACE, contrastRatio } from './palette';
 
 /**
  * A window onto the track. xMin and xMax are metres along the shared x axis, and width is
@@ -100,4 +101,58 @@ export function cameraPreset(
   const lookAt: [number, number, number] = [cx, 0, cz];
   if (mode === 'overhead') return { position: [cx, f.width * 0.8, cz], lookAt };
   return { position: [cx, f.width * 0.42, cz + f.width * 0.55], lookAt };
+}
+
+/** The four pieces of trackside equipment the scene draws, keyed like the engine's switches. */
+export type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensors';
+
+/**
+ * Where each device stands: x in metres along the line, z in scene units across it. The
+ * control centre stands back from the line, the others beside platform P1's track.
+ */
+export const DEVICE_SITES: Record<DeviceKey, { x: number; z: number }> = {
+  centre: { x: 5500, z: -9 },
+  platformKeeper: { x: 5200, z: -4 },
+  sensors: { x: 5800, z: -4 },
+  junctionKeeper: { x: 6300, z: -4 },
+};
+
+export interface DeviceLook {
+  body: number;
+  roof: number;
+  /** The lamp's colour when the device is on, or null: a switched-off device's lamp is out. */
+  light: number | null;
+}
+
+const DEVICE_BODY: Record<DeviceKey, number> = {
+  centre: 0xd9dee6,
+  platformKeeper: 0x3f8a5f,
+  junctionKeeper: 0x3f8a5f,
+  sensors: 0x8794a6,
+};
+
+/**
+ * How a device looks. On: its own colour and a green lamp. Off: a dull red body and no lamp,
+ * still clear of the background so a judge can see what went dark.
+ */
+export function deviceLook(key: DeviceKey, on: boolean): DeviceLook {
+  if (on) return { body: DEVICE_BODY[key], roof: 0x4a5a70, light: 0x7be07b };
+  return { body: 0x7a2f2f, roof: 0x3a2a2e, light: null };
+}
+
+/** True if a switched-off device still stands out from the scene background, at least 1.5 to 1. */
+export function offDeviceVisible(key: DeviceKey): boolean {
+  return contrastRatio(deviceLook(key, false).body, SURFACE.scene) >= 1.5;
+}
+
+/**
+ * True if any part of a train is in the junction zone: the last 100 m of a platform or the
+ * first 200 m of EXIT. The scene lights the zone up then. It reads the snapshot only.
+ */
+export function junctionBusy(s: Snapshot): boolean {
+  return s.trains.some((t) => {
+    if (t.pos.track === 'A' || t.pos.track === 'B') return false;
+    const rear = t.x - TRAIN_LENGTH;
+    return t.x > JUNCTION_START_X && rear < JUNCTION_END_X;
+  });
 }

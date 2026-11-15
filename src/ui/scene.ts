@@ -2,15 +2,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
-import { TRACK_LENGTH, TRACK_START } from '../shared/map';
-import type { TrackId } from '../shared/types';
 import {
   LANE_SPACING,
   cameraPreset,
   isStopped,
-  laneOf,
+  junctionBusy,
   markersFor,
-  toScreenX,
   type CameraMode,
   type Frame,
 } from './layout';
@@ -19,6 +16,7 @@ import { consistLayout, disposeAll, trainIdOf } from './consist';
 import { loadKit, type KitParts, type Size } from './kit';
 import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { SURFACE } from './palette';
+import { buildWorld } from './world';
 
 export interface SceneView {
   /** Draws one snapshot. The view only reads it. */
@@ -38,36 +36,12 @@ export interface SceneView {
 // Sizes in scene units, 0.08 per metre (see UNITS_PER_METRE in layout.ts).
 const TRAIN_HEIGHT = 1;
 const TRAIN_DEPTH = 1.4;
-const TRACK_DEPTH = 2.2;
-const TRACK_HEIGHT = 0.4;
 const TRAIN_BODY = 0xc9d1dc; // a light grey body; the marker above it carries the mode colour
-const DEVICE_ON = 0x7be07b;
-const DEVICE_OFF = 0x7a2f2f; // dull red: clearly off, and still visible against the background
 /** Marker height on screen, as a share of the canvas height. It does not shrink with distance. */
 const MARKER_SIZE = 0.055;
 const MARKER_LIFT_BOX = 2.4; // scene units above the rail, over a box train
 const MARKER_LIFT_MODEL = 2.2; // just over the roof of a model train, which is 1.93 high
 const CAR_GAP = 0.12; // model units between the cars of one unit
-
-const TRACK_COLOR: Record<TrackId, number> = {
-  A: 0x4a5a70,
-  B: 0x4a5a70,
-  P1: 0x7088a6,
-  P2: 0x7088a6,
-  P3: 0x7088a6,
-  P4: 0x7088a6,
-  EXIT: 0x4a5a70,
-};
-
-type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensors';
-
-/** Where each device sits, in metres along the track and scene z. They go dark when switched off. */
-const DEVICES: Array<{ key: DeviceKey; x: number; z: number }> = [
-  { key: 'centre', x: 5500, z: -9 },
-  { key: 'platformKeeper', x: 5200, z: -4 },
-  { key: 'junctionKeeper', x: 6300, z: -4 },
-  { key: 'sensors', x: 5800, z: -4 },
-];
 
 /** One drawn train: a group carrying its body, its mode marker and a STOPPED tag. */
 interface DrawnTrain {
@@ -123,10 +97,9 @@ function stoppedTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Builds the whole three.js scene once: flat strips for tracks and platforms, a train body per
- * train with its mode's shape marker above it, boxes for the devices that go dark when switched
- * off, and a camera that can switch between an angled and an overhead view. Labels, controls
- * and metrics are plain HTML outside the scene.
+ * Builds the whole three.js scene once: the scenery from world.ts, a train per train with its
+ * mode's shape marker above it, and a camera that can switch between an angled and an overhead
+ * view. Labels, controls and metrics are plain HTML outside the scene.
  */
 export function createScene(container: HTMLElement, frame: Frame): SceneView {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -140,29 +113,7 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
   sun.position.set(frame.width / 2, 60, 40);
   scene.add(sun);
 
-  const scale = frame.width / (frame.xMax - frame.xMin);
-  for (const track of Object.keys(TRACK_START) as TrackId[]) {
-    const length = TRACK_LENGTH[track] * scale;
-    const strip = new THREE.Mesh(
-      new THREE.BoxGeometry(length, TRACK_HEIGHT, TRACK_DEPTH),
-      new THREE.MeshStandardMaterial({ color: TRACK_COLOR[track] }),
-    );
-    strip.position.set(
-      toScreenX(TRACK_START[track], frame) + length / 2,
-      TRACK_HEIGHT / 2,
-      laneOf(track) * LANE_SPACING,
-    );
-    scene.add(strip);
-  }
-
-  const devices = new Map<DeviceKey, THREE.MeshStandardMaterial>();
-  for (const d of DEVICES) {
-    const material = new THREE.MeshStandardMaterial({ color: DEVICE_ON });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 2.4), material);
-    mesh.position.set(toScreenX(d.x, frame), 0.7, d.z);
-    scene.add(mesh);
-    devices.set(d.key, material);
-  }
+  const world = buildWorld(scene, frame);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   const trainGeometry = new THREE.BoxGeometry(1, TRAIN_HEIGHT, TRAIN_DEPTH);
@@ -183,6 +134,7 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
   ).then((loaded) => {
     kit = loaded;
     if (!kit) return;
+    world.useKitRails(kit.rail);
     // Rebuild every train from the models on the next render.
     for (const t of trains.values()) disposeTrain(t);
     trains.clear();
@@ -226,12 +178,12 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
     let bodyMaterials: THREE.MeshStandardMaterial[];
     if (model) {
       ({ body, materials: bodyMaterials } = modelBody());
-      body.position.y = TRACK_HEIGHT;
+      body.position.y = world.railTop();
     } else {
       const material = new THREE.MeshStandardMaterial({ color: TRAIN_BODY });
       material.userData.base = TRAIN_BODY;
       body = new THREE.Mesh(trainGeometry, material);
-      body.position.y = TRACK_HEIGHT + TRAIN_HEIGHT / 2;
+      body.position.y = world.railTop() + TRAIN_HEIGHT / 2;
       bodyMaterials = [material];
     }
     const marker = new THREE.Sprite(new THREE.SpriteMaterial({ sizeAttenuation: false, depthTest: false, transparent: true }));
@@ -273,7 +225,8 @@ export function createScene(container: HTMLElement, frame: Frame): SceneView {
   }
 
   function render(s: Snapshot): void {
-    for (const [key, material] of devices) material.color.setHex(s.switches[key] ? DEVICE_ON : DEVICE_OFF);
+    world.setDevices(s.switches);
+    world.setJunctionBusy(junctionBusy(s));
 
     const seen = new Set<number>();
     for (const m of markersFor(s, frame)) {
