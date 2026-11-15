@@ -311,11 +311,12 @@ select option {
 .key .line.dashed {
   border-top-style: dashed;
 }
-/* The sensor beam: pale blue, ending in the red bar it shows when something is in the way. */
-.key .line.beam {
-  border-right: 3px solid var(--blocked);
-  height: 6px;
-  margin-top: 6px;
+/* The sensor cone: opening from the train's nose, fading towards its rim. */
+.key .cone {
+  width: 18px;
+  height: 14px;
+  background: linear-gradient(90deg, var(--line), transparent);
+  clip-path: polygon(0 50%, 100% 0, 100% 100%);
 }
 
 .minimap {

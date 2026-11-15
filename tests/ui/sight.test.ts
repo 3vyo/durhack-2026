@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainView } from '../../src/engine/engine';
-import { SENSOR_RANGE } from '../../src/shared/constants';
-import { sightBeam } from '../../src/ui/sight';
+import { sightCone } from '../../src/ui/sight';
 
 function view(over: Partial<TrainView> = {}): TrainView {
   return {
@@ -21,31 +20,20 @@ function view(over: Partial<TrainView> = {}): TrainView {
   };
 }
 
-describe('sightBeam', () => {
-  it('reaches the full sensor range when nothing is in the way', () => {
-    expect(sightBeam(view(), null)).toEqual({ route: { entry: 'A', platform: null }, fromX: 5000, toX: 5000 + SENSOR_RANGE, blocked: false });
+describe('sightCone', () => {
+  it('starts at the front of the train and finds nothing when the sensor sees nothing', () => {
+    expect(sightCone(view(), null)).toEqual({ route: { entry: 'A', platform: null }, frontX: 5000, obstacleX: null });
   });
 
-  it('stops at the obstacle the sensor reported, and says it is blocked', () => {
-    const beam = sightBeam(view({ sightAhead: 120 }), null);
-    expect(beam.toX).toBe(5120);
-    expect(beam.blocked).toBe(true);
+  it('marks the obstacle the sensor reported, that far ahead of the front', () => {
+    expect(sightCone(view({ sightAhead: 120 }), null).obstacleX).toBe(5120);
   });
 
-  it('ends at the end of an entry line when the train has no platform set', () => {
-    const beam = sightBeam(view({ pos: { track: 'A', offset: 5900 }, x: 5900 }), null);
-    expect(beam.toX).toBe(6000);
-    expect(beam.blocked).toBe(false);
-  });
-
-  it('runs on into the platform the train has set, bending with the points', () => {
-    const beam = sightBeam(view({ pos: { track: 'B', offset: 5900 }, x: 5900, nextTrack: 'P4' }), null);
-    expect(beam.toX).toBe(5900 + SENSOR_RANGE);
-    expect(beam.route).toEqual({ entry: 'B', platform: 'P4' });
+  it('heads into the platform the train has set, so it turns with the points', () => {
+    expect(sightCone(view({ pos: { track: 'B', offset: 5900 }, x: 5900, nextTrack: 'P4' }), null).route).toEqual({ entry: 'B', platform: 'P4' });
   });
 
   it('follows a train on EXIT out of the platform it came from', () => {
-    const beam = sightBeam(view({ pos: { track: 'EXIT', offset: 10 }, x: 6410 }), 'P2');
-    expect(beam.route).toEqual({ entry: 'A', platform: 'P2' });
+    expect(sightCone(view({ pos: { track: 'EXIT', offset: 10 }, x: 6410 }), 'P2').route).toEqual({ entry: 'A', platform: 'P2' });
   });
 });

@@ -197,10 +197,9 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     line.style.setProperty('--line', style.css);
     keyItem(line, style.label, style.meaning);
   }
-  const beam = el('span', 'line beam');
-  beam.style.setProperty('--line', SIGHT_STYLE.clear);
-  beam.style.setProperty('--blocked', SIGHT_STYLE.blocked);
-  keyItem(beam, SIGHT_STYLE.label, SIGHT_STYLE.meaning);
+  const cone = el('span', 'cone');
+  cone.style.setProperty('--line', SIGHT_STYLE.clear);
+  keyItem(cone, SIGHT_STYLE.label, SIGHT_STYLE.meaning);
   key.addEventListener('click', () => {
     const open = key.classList.toggle('open');
     key.setAttribute('aria-expanded', String(open));

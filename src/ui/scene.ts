@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot, TrainView } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
-import { TRAIN_LENGTH } from '../shared/constants';
+import { SENSOR_RANGE, TRAIN_LENGTH } from '../shared/constants';
 import { isPlatform } from '../shared/map';
 import {
   DEFAULT_CAMERA,
@@ -33,12 +33,12 @@ import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
 import { LINK_STYLE, linkReach, type Link, type LinkEnd } from './links';
-import { SIGHT_STYLE, sightBeam } from './sight';
+import { SIGHT_HALF_ANGLE, SIGHT_STYLE, sightCone } from './sight';
 
 export interface SceneView {
   /**
    * Draws one snapshot, a line for each link (see links.ts) and, if `sight` is true, each
-   * train's sensor beam (see sight.ts). The view only reads them.
+   * train's sensor cone (see sight.ts). The view only reads them.
    */
   render(s: Snapshot, links?: Link[], sight?: boolean): void;
   setCamera(mode: CameraMode): void;
@@ -72,8 +72,8 @@ const DEVICE_TOP: Record<DeviceKey, number> = { centre: 3.5, platformKeeper: 1.6
 const PULSE_RATE = 0.9;
 /** How many straight pieces make up one link arc. */
 const ARC_STEPS = 32;
-/** Metres between the points of a sensor beam, so it bends with the track through the points. */
-const SIGHT_STEP = 10;
+/** How many straight pieces make up the rim of a sensor cone. */
+const SIGHT_ARC_STEPS = 12;
 
 /** One car of a drawn train, placed on its own so a train bends through the points. */
 interface Car {
@@ -473,60 +473,79 @@ export function createScene(
   }
 
   /**
-   * A beam along the track ahead of each train for its own front sensor, just above the rails.
-   * Pale blue while nothing is in the way. Red, with a bar across its end, when the sensor
-   * sees a train or a busy junction zone there.
+   * A cone on the ground ahead of each train for its own front sensor: it opens from the
+   * train's nose in the direction the track runs there, out to SENSOR_RANGE, and fades towards
+   * its rim. Pale blue while the sensor sees nothing. Red when it sees a train or a busy
+   * junction zone, with a bar across the track where that is.
    */
   function drawSight(views: TrainView[]): void {
     if (!linkPen) return;
     const g = linkPen;
     const w = container.clientWidth;
     const h = container.clientHeight;
-    const y = world.railTop() + 0.3;
+    const y = world.railTop() + 0.15;
+    const radius = SENSOR_RANGE * UNITS_PER_METRE;
     for (const v of views) {
       const reach = linkReach(v.x, frame);
       if (reach <= 0 || !trains.has(v.id)) continue;
-      const beam = sightBeam(v, lastPlatform.get(v.id) ?? null);
-      if (beam.toX - beam.fromX < 1) continue;
-      const steps = Math.max(2, Math.ceil((beam.toX - beam.fromX) / SIGHT_STEP));
-      const points: THREE.Vector3[] = [];
-      for (let i = 0; i <= steps; i++) {
-        const x = beam.fromX + ((beam.toX - beam.fromX) * i) / steps;
-        points.push(new THREE.Vector3(toScreenX(x, frame), y, pathAt(x, beam.route).z));
+      const cone = sightCone(v, lastPlatform.get(v.id) ?? null);
+      const { z, slope } = pathAt(cone.frontX, cone.route);
+      const apex = new THREE.Vector3(toScreenX(cone.frontX, frame), y, z);
+      // The way the track runs at the nose, in scene units: x per metre is UNITS_PER_METRE.
+      const heading = Math.atan2(slope, UNITS_PER_METRE);
+      const fan: THREE.Vector3[] = [apex];
+      for (let i = 0; i <= SIGHT_ARC_STEPS; i++) {
+        const angle = heading - SIGHT_HALF_ANGLE + (2 * SIGHT_HALF_ANGLE * i) / SIGHT_ARC_STEPS;
+        fan.push(new THREE.Vector3(apex.x + Math.cos(angle) * radius, y, apex.z + Math.sin(angle) * radius));
       }
-      const runs = projectRuns(points, w, h);
-      if (runs.length === 0) continue;
-      const css = beam.blocked ? SIGHT_STYLE.blocked : SIGHT_STYLE.clear;
+      const projected = fan.map((p) => p.clone().project(camera));
+      // Leave out a cone the camera cannot see all of, so it never stretches across the view.
+      if (projected.some((p) => p.z < -1 || p.z > 1)) continue;
+      const pts = projected.map((p) => ndcToCss(p, w, h));
+      const tip = pts[0];
+      const rim = pts[1 + Math.floor(SIGHT_ARC_STEPS / 2)];
+      const css = cone.obstacleX === null ? SIGHT_STYLE.clear : SIGHT_STYLE.blocked;
+
+      const fill = g.createRadialGradient(tip.left, tip.top, 0, tip.left, tip.top, Math.max(1, Math.hypot(rim.left - tip.left, rim.top - tip.top)));
+      fill.addColorStop(0, `${css}66`);
+      fill.addColorStop(1, `${css}08`);
+      g.globalAlpha = reach;
+      g.fillStyle = fill;
+      g.beginPath();
+      g.moveTo(tip.left, tip.top);
+      for (const p of pts.slice(1)) g.lineTo(p.left, p.top);
+      g.closePath();
+      g.fill();
+      // The rim, where the sensor's reach ends.
       g.strokeStyle = css;
-      g.lineCap = 'round';
+      g.globalAlpha = reach * 0.45;
+      g.lineWidth = 1.5;
+      g.setLineDash([4, 4]);
+      g.beginPath();
+      g.moveTo(pts[1].left, pts[1].top);
+      for (const p of pts.slice(2)) g.lineTo(p.left, p.top);
+      g.stroke();
       g.setLineDash([]);
-      for (const [width, alpha] of [
-        [10, 0.16],
-        [2.5, 0.75],
-      ] as const) {
-        g.globalAlpha = alpha * reach;
-        g.lineWidth = width;
-        g.beginPath();
-        for (const run of runs) {
-          g.moveTo(run[0].left, run[0].top);
-          for (const q of run.slice(1)) g.lineTo(q.left, q.top);
+
+      // A bar across the track where the sensor found something.
+      if (cone.obstacleX !== null) {
+        const at = pathAt(cone.obstacleX, cone.route);
+        const across = (1.4 * UNITS_PER_METRE) / Math.hypot(UNITS_PER_METRE, at.slope);
+        const along = (1.4 * at.slope) / Math.hypot(UNITS_PER_METRE, at.slope);
+        const mid = new THREE.Vector3(toScreenX(cone.obstacleX, frame), y, at.z);
+        const ends = [mid.clone().add(new THREE.Vector3(along, 0, -across)), mid.clone().add(new THREE.Vector3(-along, 0, across))].map((p) =>
+          p.project(camera),
+        );
+        if (ends.every((p) => p.z >= -1 && p.z <= 1)) {
+          const [a, b] = ends.map((p) => ndcToCss(p, w, h));
+          g.globalAlpha = reach;
+          g.lineWidth = 4;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.moveTo(a.left, a.top);
+          g.lineTo(b.left, b.top);
+          g.stroke();
         }
-        g.stroke();
-      }
-      // A bar across the end of the beam, where the obstacle is.
-      const last = runs[runs.length - 1];
-      if (beam.blocked && last.length > 1) {
-        const p = last[last.length - 1];
-        const q = last[last.length - 2];
-        const len = Math.hypot(p.left - q.left, p.top - q.top) || 1;
-        const nx = (-(p.top - q.top) / len) * 9;
-        const ny = ((p.left - q.left) / len) * 9;
-        g.globalAlpha = reach;
-        g.lineWidth = 3;
-        g.beginPath();
-        g.moveTo(p.left - nx, p.top - ny);
-        g.lineTo(p.left + nx, p.top + ny);
-        g.stroke();
       }
       g.globalAlpha = 1;
     }
