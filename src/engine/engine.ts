@@ -5,6 +5,8 @@ import type {
   Outgoing,
   PlatformId,
   Position,
+  ResourceId,
+  SensorReadings,
   TimetableEntry,
   TrackId,
   TrainAgent,
@@ -13,7 +15,7 @@ import type {
   TrainState,
 } from '../shared/types';
 import type { Body } from './footprint';
-import { ENTRIES, LAYOUT, PLATFORMS, xOf } from '../shared/map';
+import { ENTRIES, LAYOUT, PLATFORMS, PLATFORM_STOP, isPlatform, xOf } from '../shared/map';
 import { advanceTrain } from './physics';
 import type { ControlCentre, TrainProgram } from './ports';
 import { route, type Recipient, type Sender } from './radio';
@@ -31,6 +33,29 @@ export interface EngineConfig {
   presses: Press[];
 }
 
+/** The last reply a train heard from one keeper. Display only. */
+export interface HeardReply {
+  /** Seconds since it arrived. */
+  age: number;
+  /** True for a grant, false for a refusal. */
+  granted: boolean;
+}
+
+/**
+ * Who a train last heard from beside the track, and when it last asked a keeper, for the lines
+ * the scene draws. The engine decides nothing from this.
+ */
+export interface TracksideView {
+  platformKeeper: HeardReply | null;
+  junctionKeeper: HeardReply | null;
+  /** Seconds since a platformStatus arrived, or null if none has. */
+  sensorsAge: number | null;
+  /** Seconds since the train last sent a platform request, heard or not, or null if it never has. */
+  askedPlatformKeeper: number | null;
+  /** Seconds since the train last sent a JUNCTION request, heard or not, or null if it never has. */
+  askedJunctionKeeper: number | null;
+}
+
 export interface TrainView {
   id: TrainId;
   pos: Position;
@@ -40,7 +65,13 @@ export interface TrainView {
   reason?: string;
   /** Present and true once the train has broken down. It never moves again. */
   brokenDown?: boolean;
-  /** Seconds since a position report from this train's timetable leader arrived, or null if none has. */
+  /**
+   * The train the engine takes to be this one's leader: the timetable's on an entry line, then
+   * the one a junction grant or the centre's last permit names on the way out. Null for none.
+   * A junction grant that names the train itself means the keeper does not know. Display only.
+   */
+  leaderId: TrainId | null;
+  /** Seconds since a position report from that leader arrived, or null if none has. */
   leaderAge: number | null;
   /** Seconds since a permit arrived, or null if none has. */
   permitAge: number | null;
@@ -49,11 +80,24 @@ export interface TrainView {
    * was told, not what an actor believes, so it is labelled "last grant" and not "lock held".
    */
   lastGrants: { platform: PlatformId | null; junction: boolean };
+  trackside: TracksideView;
+  /** The track the train has set to take at the end of this one, or null if none. */
+  nextTrack: TrackId | null;
+  /**
+   * What the train's own sensor reported on its last tick: metres to the nearest train or busy
+   * junction zone on its path, or null if nothing is within SENSOR_RANGE.
+   */
+  sightAhead: number | null;
 }
 
 export interface Snapshot {
   now: number;
   switches: Switches;
+  /**
+   * What the trackside sensors read for the trains where they are now, as the keepers see
+   * them on the next tick. A platform whose sensor is switched off reads occupied.
+   */
+  sensors: SensorReadings;
   trains: TrainView[];
 }
 
@@ -81,6 +125,30 @@ interface Runtime {
   lastLeaderAt: number | null;
   lastPermitAt: number | null;
   lastGrants: { platform: PlatformId | null; junction: boolean };
+  /** When each keeper last replied, and whether it granted. */
+  replies: Record<Keeper, { at: number; granted: boolean } | null>;
+  lastStatusAt: number | null;
+  /** What the train's own sensor reported on its last tick. */
+  sight: number | null;
+  /** When the train last sent a request to each keeper. */
+  askedAt: Record<Keeper, number | null>;
+}
+
+type Keeper = 'platformKeeper' | 'junctionKeeper';
+
+/** The keeper that answers requests for this resource. */
+function keeperFor(resource: ResourceId): Keeper {
+  return resource === 'JUNCTION' ? 'junctionKeeper' : 'platformKeeper';
+}
+
+/** True past offset 300 in a platform, or on EXIT. */
+function onWayOut(pos: Position): boolean {
+  return pos.track === 'EXIT' || (isPlatform(pos.track) && pos.offset > PLATFORM_STOP);
+}
+
+/** Seconds since `at`, or null if it never happened. */
+function ageOf(at: number | null, now: number): number | null {
+  return at === null ? null : now - at;
 }
 
 interface Sent {
@@ -262,16 +330,21 @@ export class Engine {
     // Every agent decides from the state at the start of the tick, then all move together,
     // so the result does not depend on the order trains are listed in.
     for (const rt of this.active) this.observe(rt, trainInbox.get(rt.id) ?? [], now);
-    const outputs = this.active.map((rt, i) =>
-      rt.agent.decide({
+    const outputs = this.active.map((rt, i) => {
+      rt.sight = sightAhead(bodies[i], rt.nextTrack, bodies);
+      return rt.agent.decide({
         now,
         self: rt.state,
         inbox: trainInbox.get(rt.id) ?? [],
-        sightAhead: sightAhead(bodies[i], rt.nextTrack, bodies),
-      }),
-    );
+        sightAhead: rt.sight,
+      });
+    });
     outputs.forEach((o, i) => {
-      for (const out of o.outbox) sent.push({ out, from: { kind: 'train', id: this.active[i].id } });
+      const rt = this.active[i];
+      for (const out of o.outbox) {
+        sent.push({ out, from: { kind: 'train', id: rt.id } });
+        if (out.msg.type === 'lockRequest') rt.askedAt[keeperFor(out.msg.resource)] = now;
+      }
     });
 
     // One function decides who hears each message. Delivery is next tick.
@@ -313,6 +386,10 @@ export class Engine {
     return {
       now: this.now,
       switches: { ...this.switches },
+      sensors: readSensors(
+        this.active.map((rt) => ({ state: rt.state, prev: rt.prev })),
+        this.switches,
+      ),
       trains: this.active.map((rt) => ({
         id: rt.id,
         pos: { ...rt.state.pos },
@@ -321,9 +398,19 @@ export class Engine {
         mode: rt.mode,
         ...(rt.reason !== undefined ? { reason: rt.reason } : {}),
         ...(rt.state.brokenDown ? { brokenDown: true } : {}),
-        leaderAge: rt.lastLeaderAt === null ? null : this.now - rt.lastLeaderAt,
-        permitAge: rt.lastPermitAt === null ? null : this.now - rt.lastPermitAt,
+        leaderId: rt.leaderId,
+        leaderAge: ageOf(rt.lastLeaderAt, this.now),
+        permitAge: ageOf(rt.lastPermitAt, this.now),
         lastGrants: { ...rt.lastGrants },
+        trackside: {
+          platformKeeper: this.replyView(rt.replies.platformKeeper),
+          junctionKeeper: this.replyView(rt.replies.junctionKeeper),
+          sensorsAge: ageOf(rt.lastStatusAt, this.now),
+          askedPlatformKeeper: ageOf(rt.askedAt.platformKeeper, this.now),
+          askedJunctionKeeper: ageOf(rt.askedAt.junctionKeeper, this.now),
+        },
+        nextTrack: rt.nextTrack,
+        sightAhead: rt.sight,
       })),
     };
   }
@@ -339,13 +426,28 @@ export class Engine {
     };
   }
 
+  private replyView(reply: { at: number; granted: boolean } | null): HeardReply | null {
+    return reply === null ? null : { age: this.now - reply.at, granted: reply.granted };
+  }
+
   /** Notes what a train was just told, for the overlay. The engine decides nothing from this. */
   private observe(rt: Runtime, inbox: Message[], now: number): void {
     for (const m of inbox) {
-      if (m.type === 'position' && rt.leaderId !== null && m.from === rt.leaderId) {
+      if (m.type === 'lockGrant' || m.type === 'lockRefuse') {
+        rt.replies[keeperFor(m.resource)] = { at: now, granted: m.type === 'lockGrant' };
+      }
+      if (m.type === 'platformStatus') {
+        rt.lastStatusAt = now;
+      } else if (m.type === 'position' && rt.leaderId !== null && m.from === rt.leaderId) {
         rt.lastLeaderAt = now;
       } else if (m.type === 'permit') {
         rt.lastPermitAt = now;
+        // Once a train is on its way out, past offset 300 in its platform or on EXIT, it takes
+        // the leader its permit names (design: "The centre comes first").
+        if (!m.caution && m.leader !== undefined && m.leader !== rt.leaderId && onWayOut(rt.state.pos)) {
+          rt.leaderId = m.leader;
+          rt.lastLeaderAt = null;
+        }
       } else if (m.type === 'lockGrant') {
         if (m.resource === 'JUNCTION') {
           rt.lastGrants.junction = true;
@@ -403,6 +505,10 @@ export class Engine {
         lastLeaderAt: null,
         lastPermitAt: null,
         lastGrants: { platform: null, junction: false },
+        replies: { platformKeeper: null, junctionKeeper: null },
+        lastStatusAt: null,
+        sight: null,
+        askedAt: { platformKeeper: null, junctionKeeper: null },
       });
     }
     this.pending.length = 0;

@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { Snapshot } from '../engine/engine';
+import type { Snapshot, TrainView } from '../engine/engine';
 import type { PlatformId } from '../shared/types';
-import { TRAIN_LENGTH } from '../shared/constants';
+import { SENSOR_RANGE, TRAIN_LENGTH } from '../shared/constants';
 import { isPlatform } from '../shared/map';
 import {
   DEFAULT_CAMERA,
@@ -17,6 +17,9 @@ import {
   pathAt,
   routeOf,
   toScreenX,
+  DEVICE_SITES,
+  sensorSite,
+  type DeviceKey,
   type Route,
   isStopped,
   junctionBusy,
@@ -30,10 +33,16 @@ import { loadKit, type KitParts, type Size } from './kit';
 import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
+import { LINK_STYLE, linkReach, type Link, type LinkEnd } from './links';
+import { SIGHT_HALF_ANGLE, SIGHT_STYLE, sightCone } from './sight';
 
 export interface SceneView {
-  /** Draws one snapshot. The view only reads it. */
-  render(s: Snapshot): void;
+  /**
+   * Draws one snapshot and a line for each link (see links.ts). `drawn.sight` adds each train's
+   * sensor cone (see sight.ts), and `drawn.tint` colours each platform track by its sensor's
+   * reading. The view only reads them.
+   */
+  render(s: Snapshot, links?: Link[], drawn?: { sight: boolean; tint: boolean }): void;
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
@@ -59,6 +68,18 @@ const MARKER_SIZE = 0.042;
 const MARKER_LIFT_BOX = 2.4; // scene units above the rail, over a box train
 const MARKER_LIFT_MODEL = 2.2; // just over the roof of a model train, which is 1.93 high
 const CAR_GAP = 0.12; // model units between the cars of one unit
+/** Where a link line meets each device: its lamp, in scene units above the ground (world.ts). */
+const DEVICE_TOP: Record<Exclude<DeviceKey, 'sensors'>, number> = { centre: 3.5, platformKeeper: 1.6, junctionKeeper: 1.6 };
+/** Height of a platform sensor box's lamp, where its radio lines start (world.ts). */
+const SENSOR_LAMP_Y = 1.2;
+/** Height of a cable on the ground, just clear of it. */
+const CABLE_Y = 0.06;
+/** How fast the dot on a link line travels from sender to receiver, in trips per real second. */
+const PULSE_RATE = 0.9;
+/** How many straight pieces make up one link arc. */
+const ARC_STEPS = 32;
+/** How many straight pieces make up the rim of a sensor cone. */
+const SIGHT_ARC_STEPS = 12;
 
 /** One car of a drawn train, placed on its own so a train bends through the points. */
 interface Car {
@@ -374,6 +395,269 @@ export function createScene(
     }
   }
 
+  // The link lines are drawn on a flat canvas over the 3D one, under the labels, so they can be
+  // thick, curved and animated. A WebGL line is always one pixel wide.
+  const linkCanvas = document.createElement('canvas');
+  linkCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;';
+  container.insertBefore(linkCanvas, labelLayer);
+  const linkPen = linkCanvas.getContext('2d');
+
+  /** A train's end of a line: where the line meets it, and how much of the line to show (linkReach). */
+  interface Anchor {
+    at: THREE.Vector3;
+    reach: number;
+  }
+
+  /** Where a line meets one end, in scene units, or null for a train that is not drawn. */
+  function linkPoint(end: LinkEnd, anchors: Map<number, Anchor>): Anchor | null {
+    if ('train' in end) return anchors.get(end.train) ?? null;
+    if ('sensor' in end) {
+      const box = sensorSite(end.sensor);
+      return { at: new THREE.Vector3(toScreenX(box.x, frame), SENSOR_LAMP_Y, box.z), reach: 1 };
+    }
+    const site = DEVICE_SITES[end.device];
+    return { at: new THREE.Vector3(toScreenX(site.x, frame), DEVICE_TOP[end.device], site.z), reach: 1 };
+  }
+
+  /**
+   * The arc as a run of canvas points. The arc is built in the scene, rising over the middle,
+   * and each point is projected on its own. A point the camera cannot see (behind it, too
+   * close or past the far plane) breaks the run, so a train sliding out of view never flings
+   * the line across the sky.
+   */
+  function arcRuns(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    w: number,
+    h: number,
+    rise = Math.min(9, 1.5 + a.distanceTo(b) * 0.2),
+  ): Array<Array<{ left: number; top: number }>> {
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    mid.y += rise;
+    // The control point that makes the curve pass through the raised middle.
+    const c = mid.multiplyScalar(2).sub(a.clone().add(b).multiplyScalar(0.5));
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= ARC_STEPS; i++) {
+      const u = i / ARC_STEPS;
+      points.push(
+        new THREE.Vector3()
+          .addScaledVector(a, (1 - u) * (1 - u))
+          .addScaledVector(c, 2 * (1 - u) * u)
+          .addScaledVector(b, u * u),
+      );
+    }
+    return projectRuns(points, w, h);
+  }
+
+  /** Projects scene points to the canvas, breaking the run at any point the camera cannot see. */
+  function projectRuns(points: THREE.Vector3[], w: number, h: number): Array<Array<{ left: number; top: number }>> {
+    const runs: Array<Array<{ left: number; top: number }>> = [];
+    let run: Array<{ left: number; top: number }> = [];
+    for (const point of points) {
+      const p = point.clone().project(camera);
+      if (p.z < -1 || p.z > 1) {
+        if (run.length > 1) runs.push(run);
+        run = [];
+        continue;
+      }
+      run.push(ndcToCss(p, w, h));
+    }
+    if (run.length > 1) runs.push(run);
+    return runs;
+  }
+
+  /**
+   * Each link is an arc from its sender up and over to its receiver, with a dot running along
+   * it the way the message goes. A link fades as its message gets older. A note sits above its
+   * train.
+   */
+  /** Clears the overlay canvas, sized to the container, and returns its pen and size in CSS pixels. */
+  function clearOverlay(): { g: CanvasRenderingContext2D; w: number; h: number } | null {
+    if (!linkPen) return null;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const ratio = Math.min(window.devicePixelRatio, 2);
+    const pw = Math.max(1, Math.round(w * ratio));
+    const ph = Math.max(1, Math.round(h * ratio));
+    if (linkCanvas.width !== pw || linkCanvas.height !== ph) {
+      linkCanvas.width = pw;
+      linkCanvas.height = ph;
+    }
+    linkPen.setTransform(ratio, 0, 0, ratio, 0, 0);
+    linkPen.clearRect(0, 0, w, h);
+    return { g: linkPen, w, h };
+  }
+
+  /**
+   * A cone on the ground ahead of each train for its own front sensor: it opens from the
+   * train's nose in the direction the track runs there, out to SENSOR_RANGE, and fades towards
+   * its rim. Pale blue while the sensor sees nothing. Red when it sees a train or a busy
+   * junction zone, with a bar across the track where that is.
+   */
+  function drawSight(views: TrainView[]): void {
+    if (!linkPen) return;
+    const g = linkPen;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const y = world.railTop() + 0.15;
+    const radius = SENSOR_RANGE * UNITS_PER_METRE;
+    for (const v of views) {
+      const reach = linkReach(v.x, frame);
+      if (reach <= 0 || !trains.has(v.id)) continue;
+      const cone = sightCone(v, lastPlatform.get(v.id) ?? null);
+      const { z, slope } = pathAt(cone.frontX, cone.route);
+      const apex = new THREE.Vector3(toScreenX(cone.frontX, frame), y, z);
+      // The way the track runs at the nose, in scene units: x per metre is UNITS_PER_METRE.
+      const heading = Math.atan2(slope, UNITS_PER_METRE);
+      const fan: THREE.Vector3[] = [apex];
+      for (let i = 0; i <= SIGHT_ARC_STEPS; i++) {
+        const angle = heading - SIGHT_HALF_ANGLE + (2 * SIGHT_HALF_ANGLE * i) / SIGHT_ARC_STEPS;
+        fan.push(new THREE.Vector3(apex.x + Math.cos(angle) * radius, y, apex.z + Math.sin(angle) * radius));
+      }
+      const projected = fan.map((p) => p.clone().project(camera));
+      // Leave out a cone the camera cannot see all of, so it never stretches across the view.
+      if (projected.some((p) => p.z < -1 || p.z > 1)) continue;
+      const pts = projected.map((p) => ndcToCss(p, w, h));
+      const tip = pts[0];
+      const rim = pts[1 + Math.floor(SIGHT_ARC_STEPS / 2)];
+      const css = cone.obstacleX === null ? SIGHT_STYLE.clear : SIGHT_STYLE.blocked;
+
+      const fill = g.createRadialGradient(tip.left, tip.top, 0, tip.left, tip.top, Math.max(1, Math.hypot(rim.left - tip.left, rim.top - tip.top)));
+      fill.addColorStop(0, `${css}66`);
+      fill.addColorStop(1, `${css}08`);
+      g.globalAlpha = reach;
+      g.fillStyle = fill;
+      g.beginPath();
+      g.moveTo(tip.left, tip.top);
+      for (const p of pts.slice(1)) g.lineTo(p.left, p.top);
+      g.closePath();
+      g.fill();
+      // The rim, where the sensor's reach ends.
+      g.strokeStyle = css;
+      g.globalAlpha = reach * 0.45;
+      g.lineWidth = 1.5;
+      g.setLineDash([4, 4]);
+      g.beginPath();
+      g.moveTo(pts[1].left, pts[1].top);
+      for (const p of pts.slice(2)) g.lineTo(p.left, p.top);
+      g.stroke();
+      g.setLineDash([]);
+
+      // A bar across the track where the sensor found something.
+      if (cone.obstacleX !== null) {
+        const at = pathAt(cone.obstacleX, cone.route);
+        const across = (1.4 * UNITS_PER_METRE) / Math.hypot(UNITS_PER_METRE, at.slope);
+        const along = (1.4 * at.slope) / Math.hypot(UNITS_PER_METRE, at.slope);
+        const mid = new THREE.Vector3(toScreenX(cone.obstacleX, frame), y, at.z);
+        const ends = [mid.clone().add(new THREE.Vector3(along, 0, -across)), mid.clone().add(new THREE.Vector3(-along, 0, across))].map((p) =>
+          p.project(camera),
+        );
+        if (ends.every((p) => p.z >= -1 && p.z <= 1)) {
+          const [a, b] = ends.map((p) => ndcToCss(p, w, h));
+          g.globalAlpha = reach;
+          g.lineWidth = 4;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.moveTo(a.left, a.top);
+          g.lineTo(b.left, b.top);
+          g.stroke();
+        }
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  function drawLinks(links: Link[], anchors: Map<number, Anchor>): void {
+    if (!linkPen) return;
+    const g = linkPen;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const seconds = performance.now() / 1000;
+    const notes: Array<{ text: string; left: number; top: number }> = [];
+
+    links.forEach((link, i) => {
+      const a = linkPoint(link.from, anchors);
+      const b = linkPoint(link.to, anchors);
+      if (!a || !b) return;
+      const reach = Math.min(a.reach, b.reach);
+      if (reach <= 0) return;
+      const style = LINK_STYLE[link.kind];
+      // A cable lies on the ground; a radio message arcs through the air.
+      const runs = style.ground
+        ? arcRuns(new THREE.Vector3(a.at.x, CABLE_Y, a.at.z), new THREE.Vector3(b.at.x, CABLE_Y, b.at.z), w, h, 0)
+        : arcRuns(a.at, b.at, w, h);
+      if (runs.length === 0) return;
+      const alpha = (0.25 + 0.75 * link.strength) * reach;
+
+      const curve = () => {
+        g.beginPath();
+        for (const run of runs) {
+          g.moveTo(run[0].left, run[0].top);
+          for (const q of run.slice(1)) g.lineTo(q.left, q.top);
+        }
+      };
+      g.strokeStyle = style.css;
+      g.lineCap = 'round';
+      // A soft glow under the line, so it reads over the track and the trains.
+      g.setLineDash([]);
+      g.globalAlpha = alpha * 0.22;
+      g.lineWidth = 8;
+      curve();
+      g.stroke();
+      g.globalAlpha = alpha;
+      g.lineWidth = 2.5;
+      if (style.dashed) {
+        g.setLineDash([7, 6]);
+        g.lineDashOffset = -seconds * 30;
+      }
+      curve();
+      g.stroke();
+      g.setLineDash([]);
+
+      // The dot, starting from the sender. Each line has its own phase so they do not pulse together.
+      const points = runs.flat();
+      const along = ((seconds * PULSE_RATE + i * 0.37) % 1) * (points.length - 1);
+      const p0 = points[Math.floor(along)];
+      const p1 = points[Math.min(points.length - 1, Math.floor(along) + 1)];
+      const f = along - Math.floor(along);
+      // A cable that is switched off carries nothing, so it has no dot.
+      if (link.strength > 0) {
+        g.fillStyle = style.css;
+        g.beginPath();
+        g.arc(p0.left + (p1.left - p0.left) * f, p0.top + (p1.top - p0.top) * f, style.ground ? 2.5 : 3.5, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+      // A cable just ends at the keeper's hut, with no ring.
+      if (style.ground) return;
+
+      // A ring where the message lands, if the camera can see that end.
+      const end = b.at.clone().project(camera);
+      if (end.z < -1 || end.z > 1) return;
+      const e = ndcToCss(end, w, h);
+      g.globalAlpha = alpha;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(e.left, e.top, 4.5, 0, Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = 1;
+      if (link.note && 'train' in link.to) notes.push({ text: link.note, left: e.left, top: e.top - 44 });
+    });
+
+    g.font = '600 12px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (const n of notes) {
+      const width = g.measureText(n.text).width + 14;
+      g.fillStyle = 'rgba(11,15,20,0.85)';
+      g.beginPath();
+      g.roundRect(n.left - width / 2, n.top - 11, width, 22, 8);
+      g.fill();
+      g.fillStyle = '#ffd2a0';
+      g.fillText(n.text, n.left, n.top);
+    }
+  }
+
   // The platform each train was last seen in. A train on EXIT has left it behind, but its rear
   // cars still bend out of it through the points.
   const lastPlatform = new Map<number, PlatformId>();
@@ -394,10 +678,12 @@ export function createScene(
     return middle;
   }
 
-  function render(s: Snapshot): void {
+  function render(s: Snapshot, links: Link[] = [], drawn = { sight: false, tint: false }): void {
+    const sight = drawn.sight;
     observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
+    world.setSensors(s.sensors.platformOccupied, s.switches.sensors, drawn.tint);
     const views = new Map(s.trains.map((v) => [v.id, v]));
 
     const seen = new Set<number>();
@@ -431,6 +717,14 @@ export function createScene(
     controls.update();
     setFog();
     renderer.render(scene, camera);
+    const anchors = new Map<number, Anchor>();
+    for (const v of s.trains) {
+      const t = trains.get(v.id);
+      if (t) anchors.set(v.id, { at: t.marker.position, reach: linkReach(v.x, frame) });
+    }
+    clearOverlay();
+    if (sight) drawSight(s.trains);
+    drawLinks(links, anchors);
     placeLabels();
   }
 
@@ -492,6 +786,7 @@ export function createScene(
     trains.clear();
     renderer.dispose();
     renderer.domElement.remove();
+    linkCanvas.remove();
     labelLayer.remove();
   }
 

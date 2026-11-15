@@ -2,6 +2,9 @@ import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
 import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
+import { LINK_KINDS, LINK_STYLE } from './links';
+import { SHOW_ITEMS, type Show, type ShowKey } from './show';
+import { SIGHT_STYLE } from './sight';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
 import './page.css';
@@ -17,6 +20,10 @@ export interface PanelHandlers {
   onPause(): void;
   onRestart(): void;
   onCamera(): void;
+  /** Show or hide one of the explanatory drawings (see show.ts). */
+  onShow(key: ShowKey, on: boolean): void;
+  /** Show all the drawings if none are on, else hide them all (key L). */
+  onShowAll(): void;
   /** Add a train at the start of one of the layout's entry lines. */
   onSpawn(line: EntryLine): void;
   /** Another layout was chosen. The page reloads to change it. */
@@ -39,6 +46,8 @@ export interface Panel {
   setCard(side: Side, lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
+  /** Ticks the Show menu's boxes to match. */
+  setShow(show: Show): void;
   /** The note beside the spawn button. An empty string clears it. */
   setSpawnNote(text: string): void;
   /** Shows the current switches on the lamps and the radio slider. */
@@ -52,6 +61,8 @@ export interface Panel {
  * is relative to the normal speed, 8 simulated seconds a second, which reads as 1x.
  */
 export const SPEEDS = [
+  // One simulated second a second, slow enough to watch a train wait out its 5 s without a permit.
+  { value: 1, label: 'Real time' },
   { value: 4, label: '0.5x' },
   { value: 8, label: '1x' },
   { value: 16, label: '2x' },
@@ -117,7 +128,8 @@ function foldingPanel(className: string, heading: string, folded: boolean): { bo
  * the scoreboard on the sides (each folds away), and the minimap over the control dock at the
  * bottom. Everything is plain HTML, so it stays readable whatever the camera does.
  *
- * Keys: V switches the view, Space pauses, C cuts or restores the control centre.
+ * Keys: V switches the view, Space pauses, C cuts or restores the control centre, L shows or
+ * hides all the explanatory drawings (the Show menu picks them one by one).
  */
 export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   root.replaceChildren();
@@ -183,6 +195,16 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   for (const item of legendItems()) keyItem(shapeIcon(item.shape, item.css), item.label, item.meaning);
   keyItem(shapeIcon('square', '#8b96a5', 0.55), 'Stopped', 'Dimmed, with a STOPPED tag');
   keyItem(el('span', 'zone'), 'Junction zone', 'One train at a time');
+  keyItem(el('span', 'tint'), 'Platform track', 'Its own sensor reads it: green empty, red occupied, grey switched off');
+  for (const kind of LINK_KINDS) {
+    const style = LINK_STYLE[kind];
+    const line = el('span', style.dashed ? 'line dashed' : 'line');
+    line.style.setProperty('--line', style.css);
+    keyItem(line, style.label, style.meaning);
+  }
+  const cone = el('span', 'cone');
+  cone.style.setProperty('--line', SIGHT_STYLE.clear);
+  keyItem(cone, SIGHT_STYLE.label, SIGHT_STYLE.meaning);
   key.addEventListener('click', () => {
     const open = key.classList.toggle('open');
     key.setAttribute('aria-expanded', String(open));
@@ -284,7 +306,36 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   restart.addEventListener('click', h.onRestart);
   const camera = el('button', '', 'Camera');
   camera.addEventListener('click', h.onCamera);
-  run.append(layout, speed, pause, restart, camera);
+  // The Show menu: a box for each explanatory drawing. It opens above the dock.
+  const showMenu = el('details', 'show');
+  const showButton = el('summary', '', 'Show');
+  showButton.title = 'Choose what the view draws. L shows or hides it all';
+  const showList = el('div', 'glass show-list');
+  showList.setAttribute('role', 'group');
+  showList.setAttribute('aria-label', 'What the view draws');
+  const showBoxes = {} as Record<ShowKey, HTMLInputElement>;
+  for (const item of SHOW_ITEMS) {
+    const row = el('label');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.addEventListener('change', () => h.onShow(item.key, box.checked));
+    showBoxes[item.key] = box;
+    row.append(box, item.label);
+    showList.append(row);
+  }
+  const allRow = el('button', 'all', 'All on or off (L)');
+  allRow.addEventListener('click', h.onShowAll);
+  showList.append(allRow);
+  showMenu.append(showButton, showList);
+  // A click anywhere else, or Escape, closes the menu.
+  document.addEventListener('click', (e) => {
+    if (showMenu.open && !showMenu.contains(e.target as Node)) showMenu.open = false;
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') showMenu.open = false;
+  });
+  run.append(layout, speed, pause, restart, camera, showMenu);
   dock.append(failures, traffic, run);
 
   // The bottom: the key, the minimap and the control dock, stacked.
@@ -300,6 +351,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     if (e.key === 'v' || e.key === 'V') h.onView(stages.baseline.hidden ? 'baseline' : 'ours');
     else if (e.key === 'c' || e.key === 'C') h.onToggle('centre');
     else if (e.key === 't' || e.key === 'T') spawnTrain();
+    else if (e.key === 'l' || e.key === 'L') h.onShowAll();
     else if (e.key === ' ' && target?.tagName !== 'BUTTON') {
       e.preventDefault();
       h.onPause();
@@ -364,6 +416,9 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setCameraLabel(text) {
       camera.textContent = text;
+    },
+    setShow(show) {
+      for (const item of SHOW_ITEMS) showBoxes[item.key].checked = show[item.key];
     },
     setSpawnNote(text) {
       spawnNoteText.textContent = text;
