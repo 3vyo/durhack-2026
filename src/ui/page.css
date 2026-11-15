@@ -301,6 +301,16 @@ select option {
   background: rgba(217, 164, 65, 0.35);
   border: 1px dashed #d9a441;
 }
+/* A line in the key, in the colour of one kind of link. */
+.key .line {
+  width: 18px;
+  height: 0;
+  border-top: 3px solid var(--line);
+  border-radius: 2px;
+}
+.key .line.dashed {
+  border-top-style: dashed;
+}
 
 .minimap {
   padding: 4px 6px;

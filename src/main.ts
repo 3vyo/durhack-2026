@@ -8,6 +8,7 @@ import { SCENARIOS } from './scenarios/scenarios';
 import { LAYOUT, applyLayout } from './shared/map';
 import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
+import { linksFor } from './ui/links';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
@@ -51,6 +52,8 @@ let average: ScenarioSummary | null = null;
 let cameraMode: CameraMode = DEFAULT_CAMERA;
 /** The side on show. The other keeps running; only the one on show is drawn. */
 let view: Side = 'baseline';
+/** True while the scene draws a line from each train to what it is listening to. */
+let showLinks = true;
 
 const cameraLabel = (): string => (cameraMode === 'angled' ? 'Camera: angled' : 'Camera: overhead');
 
@@ -97,7 +100,12 @@ const panel = createPanel(app, {
     oursView.setCamera(cameraMode);
     panel.setCameraLabel(cameraLabel());
   },
+  onLinks: () => {
+    showLinks = !showLinks;
+    panel.setLinksLabel(showLinks);
+  },
 });
+panel.setLinksLabel(showLinks);
 panel.setCameraLabel(cameraLabel());
 
 // ?quality=low turns off shadows and trees, for a weak laptop.
@@ -157,12 +165,13 @@ function clock(seconds: number): string {
 function draw(): void {
   const base = session.baseline.snapshot();
   const ours = session.ours.snapshot();
+  const links = (snap: typeof base, side: Side) => (showLinks ? snap.trains.flatMap((t) => linksFor(t, side)) : []);
   if (view === 'baseline') {
-    baselineView.render(base);
+    baselineView.render(base, links(base, 'baseline'));
     baselineMap.render(base);
     oursView.observe(ours);
   } else {
-    oursView.render(ours);
+    oursView.render(ours, links(ours, 'ours'));
     oursMap.render(ours);
     baselineView.observe(base);
   }

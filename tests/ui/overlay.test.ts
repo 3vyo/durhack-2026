@@ -9,9 +9,11 @@ function view(over: Partial<TrainView> = {}): TrainView {
     x: 100,
     speed: 20,
     mode: 'central',
+    leaderId: null,
     leaderAge: null,
     permitAge: null,
     lastGrants: { platform: null, junction: false },
+    trackside: { platformKeeper: null, junctionKeeper: null, sensorsAge: null, askedPlatformKeeper: null, askedJunctionKeeper: null },
     ...over,
   };
 }

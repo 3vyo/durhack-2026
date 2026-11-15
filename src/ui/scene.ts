@@ -17,6 +17,8 @@ import {
   pathAt,
   routeOf,
   toScreenX,
+  DEVICE_SITES,
+  type DeviceKey,
   type Route,
   isStopped,
   junctionBusy,
@@ -30,10 +32,11 @@ import { loadKit, type KitParts, type Size } from './kit';
 import { bodyDim, drawShape, markerSpec, type MarkerSpec } from './markers';
 import { ENVIRONMENT, qualityPreset, type QualityPreset } from './environment';
 import { buildWorld } from './world';
+import { LINK_STYLE, type Link, type LinkEnd } from './links';
 
 export interface SceneView {
-  /** Draws one snapshot. The view only reads it. */
-  render(s: Snapshot): void;
+  /** Draws one snapshot, and a line for each link (see links.ts). The view only reads them. */
+  render(s: Snapshot, links?: Link[]): void;
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
@@ -59,6 +62,10 @@ const MARKER_SIZE = 0.042;
 const MARKER_LIFT_BOX = 2.4; // scene units above the rail, over a box train
 const MARKER_LIFT_MODEL = 2.2; // just over the roof of a model train, which is 1.93 high
 const CAR_GAP = 0.12; // model units between the cars of one unit
+/** Where a link line meets each device: its lamp, in scene units above the ground (world.ts). */
+const DEVICE_TOP: Record<DeviceKey, number> = { centre: 3.5, platformKeeper: 1.6, junctionKeeper: 1.6, sensors: 1.65 };
+/** How fast the dot on a link line travels from sender to receiver, in trips per real second. */
+const PULSE_RATE = 0.9;
 
 /** One car of a drawn train, placed on its own so a train bends through the points. */
 interface Car {
@@ -374,6 +381,113 @@ export function createScene(
     }
   }
 
+  // The link lines are drawn on a flat canvas over the 3D one, under the labels, so they can be
+  // thick, curved and animated. A WebGL line is always one pixel wide.
+  const linkCanvas = document.createElement('canvas');
+  linkCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;';
+  container.insertBefore(linkCanvas, labelLayer);
+  const linkPen = linkCanvas.getContext('2d');
+
+  /** Where a line meets one end, in scene units, or null for a train that is not drawn. */
+  function linkPoint(end: LinkEnd, anchors: Map<number, THREE.Vector3>): THREE.Vector3 | null {
+    if ('train' in end) return anchors.get(end.train) ?? null;
+    const site = DEVICE_SITES[end.device];
+    return new THREE.Vector3(toScreenX(site.x, frame), DEVICE_TOP[end.device], site.z);
+  }
+
+  /**
+   * Each link is an arc from its sender up and over to its receiver, with a dot running along
+   * it the way the message goes. A link fades as its message gets older. A note sits above its
+   * train.
+   */
+  function drawLinks(links: Link[], anchors: Map<number, THREE.Vector3>): void {
+    if (!linkPen) return;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const ratio = Math.min(window.devicePixelRatio, 2);
+    const pw = Math.max(1, Math.round(w * ratio));
+    const ph = Math.max(1, Math.round(h * ratio));
+    if (linkCanvas.width !== pw || linkCanvas.height !== ph) {
+      linkCanvas.width = pw;
+      linkCanvas.height = ph;
+    }
+    const g = linkPen;
+    g.setTransform(ratio, 0, 0, ratio, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const seconds = performance.now() / 1000;
+    const notes: Array<{ text: string; left: number; top: number }> = [];
+
+    links.forEach((link, i) => {
+      const a = linkPoint(link.from, anchors);
+      const b = linkPoint(link.to, anchors);
+      if (!a || !b) return;
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      mid.y += Math.min(9, 1.5 + a.distanceTo(b) * 0.2);
+      const [pa, pb, pm] = [a, b, mid].map((p) => p.clone().project(camera));
+      // Leave out a line with an end behind the camera: it would be drawn mirrored.
+      if (pa.z > 1 || pb.z > 1 || pm.z > 1) return;
+      const s = ndcToCss(pa, w, h);
+      const e = ndcToCss(pb, w, h);
+      const m = ndcToCss(pm, w, h);
+      // The control point that makes the curve pass through the raised middle.
+      const c = { left: 2 * m.left - (s.left + e.left) / 2, top: 2 * m.top - (s.top + e.top) / 2 };
+      const style = LINK_STYLE[link.kind];
+      const alpha = 0.25 + 0.75 * link.strength;
+
+      const curve = () => {
+        g.beginPath();
+        g.moveTo(s.left, s.top);
+        g.quadraticCurveTo(c.left, c.top, e.left, e.top);
+      };
+      g.strokeStyle = style.css;
+      g.lineCap = 'round';
+      // A soft glow under the line, so it reads over the track and the trains.
+      g.setLineDash([]);
+      g.globalAlpha = alpha * 0.22;
+      g.lineWidth = 8;
+      curve();
+      g.stroke();
+      g.globalAlpha = alpha;
+      g.lineWidth = 2.5;
+      if (style.dashed) {
+        g.setLineDash([7, 6]);
+        g.lineDashOffset = -seconds * 30;
+      }
+      curve();
+      g.stroke();
+      g.setLineDash([]);
+
+      // The dot, starting from the sender. Each line has its own phase so they do not pulse together.
+      const u = (seconds * PULSE_RATE + i * 0.37) % 1;
+      const along = (p: number, q: number, r: number) => (1 - u) * (1 - u) * p + 2 * (1 - u) * u * q + u * u * r;
+      g.fillStyle = style.css;
+      g.beginPath();
+      g.arc(along(s.left, c.left, e.left), along(s.top, c.top, e.top), 3.5, 0, Math.PI * 2);
+      g.fill();
+      // A ring where the message lands.
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(e.left, e.top, 4.5, 0, Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = 1;
+
+      if (link.note && 'train' in link.to) notes.push({ text: link.note, left: e.left, top: e.top - 44 });
+    });
+
+    g.font = '600 12px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (const n of notes) {
+      const width = g.measureText(n.text).width + 14;
+      g.fillStyle = 'rgba(11,15,20,0.85)';
+      g.beginPath();
+      g.roundRect(n.left - width / 2, n.top - 11, width, 22, 8);
+      g.fill();
+      g.fillStyle = '#ffd2a0';
+      g.fillText(n.text, n.left, n.top);
+    }
+  }
+
   // The platform each train was last seen in. A train on EXIT has left it behind, but its rear
   // cars still bend out of it through the points.
   const lastPlatform = new Map<number, PlatformId>();
@@ -394,7 +508,7 @@ export function createScene(
     return middle;
   }
 
-  function render(s: Snapshot): void {
+  function render(s: Snapshot, links: Link[] = []): void {
     observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
@@ -431,6 +545,8 @@ export function createScene(
     controls.update();
     setFog();
     renderer.render(scene, camera);
+    const anchors = new Map([...trains].map(([id, t]) => [id, t.marker.position] as const));
+    drawLinks(links, anchors);
     placeLabels();
   }
 
@@ -492,6 +608,7 @@ export function createScene(
     trains.clear();
     renderer.dispose();
     renderer.domElement.remove();
+    linkCanvas.remove();
     labelLayer.remove();
   }
 

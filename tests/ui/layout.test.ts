@@ -63,9 +63,11 @@ function snapshotWith(x: number): Snapshot {
         x,
         speed: 45,
         mode: 'blind',
+        leaderId: null,
         leaderAge: null,
         permitAge: null,
         lastGrants: { platform: null, junction: false },
+        trackside: { platformKeeper: null, junctionKeeper: null, sensorsAge: null, askedPlatformKeeper: null, askedJunctionKeeper: null },
       },
     ],
   };

@@ -2,6 +2,7 @@ import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
 import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
+import { LINK_KINDS, LINK_STYLE } from './links';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
 import './page.css';
@@ -17,6 +18,8 @@ export interface PanelHandlers {
   onPause(): void;
   onRestart(): void;
   onCamera(): void;
+  /** Show or hide the lines from each train to what it is listening to. */
+  onLinks(): void;
   /** Add a train at the start of one of the layout's entry lines. */
   onSpawn(line: EntryLine): void;
   /** Another layout was chosen. The page reloads to change it. */
@@ -39,6 +42,7 @@ export interface Panel {
   setCard(side: Side, lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
+  setLinksLabel(on: boolean): void;
   /** The note beside the spawn button. An empty string clears it. */
   setSpawnNote(text: string): void;
   /** Shows the current switches on the lamps and the radio slider. */
@@ -52,6 +56,8 @@ export interface Panel {
  * is relative to the normal speed, 8 simulated seconds a second, which reads as 1x.
  */
 export const SPEEDS = [
+  // One simulated second a second, slow enough to watch a train wait out its 5 s without a permit.
+  { value: 1, label: 'Real time' },
   { value: 4, label: '0.5x' },
   { value: 8, label: '1x' },
   { value: 16, label: '2x' },
@@ -117,7 +123,8 @@ function foldingPanel(className: string, heading: string, folded: boolean): { bo
  * the scoreboard on the sides (each folds away), and the minimap over the control dock at the
  * bottom. Everything is plain HTML, so it stays readable whatever the camera does.
  *
- * Keys: V switches the view, Space pauses, C cuts or restores the control centre.
+ * Keys: V switches the view, Space pauses, C cuts or restores the control centre, L shows or
+ * hides the lines from each train to what it listens to.
  */
 export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   root.replaceChildren();
@@ -183,6 +190,12 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   for (const item of legendItems()) keyItem(shapeIcon(item.shape, item.css), item.label, item.meaning);
   keyItem(shapeIcon('square', '#8b96a5', 0.55), 'Stopped', 'Dimmed, with a STOPPED tag');
   keyItem(el('span', 'zone'), 'Junction zone', 'One train at a time');
+  for (const kind of LINK_KINDS) {
+    const style = LINK_STYLE[kind];
+    const line = el('span', style.dashed ? 'line dashed' : 'line');
+    line.style.setProperty('--line', style.css);
+    keyItem(line, style.label, style.meaning);
+  }
   key.addEventListener('click', () => {
     const open = key.classList.toggle('open');
     key.setAttribute('aria-expanded', String(open));
@@ -284,7 +297,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   restart.addEventListener('click', h.onRestart);
   const camera = el('button', '', 'Camera');
   camera.addEventListener('click', h.onCamera);
-  run.append(layout, speed, pause, restart, camera);
+  const links = el('button', '', 'Lines: on');
+  links.title = 'Show or hide the lines from each train to what it listens to (L)';
+  links.addEventListener('click', h.onLinks);
+  run.append(layout, speed, pause, restart, camera, links);
   dock.append(failures, traffic, run);
 
   // The bottom: the key, the minimap and the control dock, stacked.
@@ -300,6 +316,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     if (e.key === 'v' || e.key === 'V') h.onView(stages.baseline.hidden ? 'baseline' : 'ours');
     else if (e.key === 'c' || e.key === 'C') h.onToggle('centre');
     else if (e.key === 't' || e.key === 'T') spawnTrain();
+    else if (e.key === 'l' || e.key === 'L') h.onLinks();
     else if (e.key === ' ' && target?.tagName !== 'BUTTON') {
       e.preventDefault();
       h.onPause();
@@ -364,6 +381,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setCameraLabel(text) {
       camera.textContent = text;
+    },
+    setLinksLabel(on) {
+      links.textContent = on ? 'Lines: on' : 'Lines: off';
+      links.setAttribute('aria-pressed', String(on));
     },
     setSpawnNote(text) {
       spawnNoteText.textContent = text;

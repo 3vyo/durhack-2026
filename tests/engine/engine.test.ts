@@ -1027,3 +1027,112 @@ describe('Engine on the other layouts', () => {
     });
   });
 });
+
+describe('Engine trackside view', () => {
+  // One train that asks the platform keeper and the junction keeper every tick. The platform
+  // keeper refuses and the junction keeper grants.
+  function asking(): TrainProgram {
+    const answer = (id: 'platformKeeper' | 'junctionKeeper', grant: boolean): LocalActor => ({
+      id,
+      step: (_now, inbox) =>
+        inbox.flatMap((m: Message): Outgoing[] => {
+          if (m.type !== 'lockRequest') return [];
+          const msg: Message = grant
+            ? { type: 'lockGrant', to: m.from, resource: m.resource, follow: null }
+            : { type: 'lockRefuse', to: m.from, resource: m.resource, alternative: null };
+          return [{ msg, range: 'short' }];
+        }),
+    });
+    return {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => ({
+          accel: 0,
+          nextTrack: null,
+          outbox:
+            input.self.pos.track === 'A' && input.self.pos.offset < 4400
+              ? []
+              : [
+                  { msg: { type: 'lockRequest', from: id, resource: 'P1' }, range: 'short' },
+                  { msg: { type: 'lockRequest', from: id, resource: 'JUNCTION' }, range: 'short' },
+                ],
+          mode: 'blind',
+        }),
+      }),
+      makeActors: () => [answer('platformKeeper', false), answer('junctionKeeper', true)],
+      makeCentre: () => null,
+    };
+  }
+
+  it('starts with nothing heard and nothing asked', () => {
+    const engine = new Engine(config(one, 60));
+    engine.step();
+    expect(engine.snapshot().trains[0].trackside).toEqual({
+      platformKeeper: null,
+      junctionKeeper: null,
+      sensorsAge: null,
+      askedPlatformKeeper: null,
+      askedJunctionKeeper: null,
+    });
+  });
+
+  it('records each request the train sends, whether or not a keeper hears it', () => {
+    // At x 4400 the train reaches the platform keeper but not the junction keeper.
+    const engine = new Engine(config(one, 400, asking()));
+    engine.step();
+    while (engine.snapshot().trains[0].x < 4500) engine.step();
+    for (let i = 0; i < 5; i++) engine.step();
+    const t = engine.snapshot().trains[0].trackside;
+    expect(t.askedPlatformKeeper).toBeCloseTo(0.1, 5);
+    expect(t.askedJunctionKeeper).toBeCloseTo(0.1, 5);
+    expect(t.platformKeeper).toEqual({ age: expect.any(Number), granted: false });
+    expect(t.platformKeeper!.age).toBeLessThan(0.5);
+    expect(t.junctionKeeper).toBeNull();
+  });
+
+  it('records platform sensor status once a train is in the sensors range', () => {
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: () => ({ decide: () => ({ accel: ACCEL, nextTrack: 'P1', outbox: [], mode: 'blind' }) }),
+      makeActors: () => [],
+      makeCentre: () => null,
+    };
+    const engine = new Engine(config(one, 400, program));
+    engine.step();
+    while (engine.snapshot().trains[0].x < 5400) engine.step();
+    expect(engine.snapshot().trains[0].trackside.sensorsAge).toBeNull();
+    while (engine.snapshot().trains[0].x < 5700) engine.step();
+    expect(engine.snapshot().trains[0].trackside.sensorsAge as number).toBeLessThan(1.1);
+  });
+
+  it('takes the leader the centre names once the train is on its way out, not before', () => {
+    const tt: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P1', leader: null, dwell: 30 },
+      { id: 2, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const centre: ControlCentre = {
+      step: (now) => [{ type: 'permit', to: 2, untilX: 12400, nextTrack: null, sentAt: now, leader: 1 }],
+    };
+    const program: TrainProgram = {
+      name: 'ours',
+      agentFactory: (id) => ({
+        decide: (input) => ({
+          accel: id === 1 ? 0 : ACCEL,
+          nextTrack: input.self.pos.track === 'B' ? 'P3' : 'EXIT',
+          outbox: [],
+          mode: 'central',
+        }),
+      }),
+      makeActors: () => [],
+      makeCentre: () => centre,
+    };
+    const engine = new Engine(config(tt, 400, program));
+    const two = () => engine.snapshot().trains.find((t) => t.id === 2)!;
+    engine.step();
+    while (two().pos.track === 'B') engine.step();
+    expect(two().leaderId).toBeNull();
+    while (two().pos.track !== 'EXIT') engine.step();
+    for (let i = 0; i < 12; i++) engine.step();
+    expect(two().leaderId).toBe(1);
+  });
+});
