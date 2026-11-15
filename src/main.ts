@@ -186,7 +186,7 @@ function draw(): void {
   const ours = session.ours.snapshot();
   const links = (snap: typeof base, side: Side) =>
     [...wiredLinks(snap.switches, side), ...snap.trains.flatMap((t) => linksFor(t, side))].filter((l) => kindShown(l.kind, show));
-  const drawn = { sight: show.cones, tint: show.tint };
+  const drawn = { sight: show.cones, tint: show.tint, zone: show.zone };
   if (view === 'baseline') {
     baselineView.render(base, links(base, 'baseline'), drawn);
     baselineMap.render(base);
