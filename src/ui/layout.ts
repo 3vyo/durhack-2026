@@ -88,40 +88,65 @@ export function isStopped(speed: number): boolean {
 
 export type CameraMode = 'angled' | 'overhead';
 
-/** The view the page opens with. Overhead reads more clearly; the button switches to angled. */
-export const DEFAULT_CAMERA: CameraMode = 'overhead';
+/** The view the page opens with: a close 3D view of the station. The button switches to the overhead overview. */
+export const DEFAULT_CAMERA: CameraMode = 'angled';
 
 /** The camera's vertical field of view, in degrees. */
 export const CAMERA_FOV = 45;
 
+/**
+ * The stretch the angled view looks at, in metres: the approach, the platforms and the
+ * junction. 1,000 m, so a train is about a tenth of the width and reads as a model. The
+ * overhead view still shows the whole frame, and the minimap the whole line.
+ */
+export const ANGLED_FOCUS = { xMin: 5500, xMax: 6500 } as const;
+
 /** Across the line, the scene runs from the control centre (z -10) to the far platform (z 21). */
 const CONTENT_Z = { from: -10, to: 21 };
 /** How far the angled view looks down, in degrees above the horizon. */
-const ANGLED_ELEVATION = 52;
+const ANGLED_ELEVATION = 30;
+/** How far the angled view swings to the left of straight-on, in degrees, to look a little along the line. */
+const ANGLED_SWING = 10;
+/**
+ * The angled camera sits this share of the distance that would fit the focus at its middle.
+ * Perspective makes the near tracks wider than the middle, so less than 1 still shows the focus.
+ */
+const ANGLED_CLOSENESS = 0.9;
 /** A little room around the frame, so nothing sits on the very edge. */
 const FIT_MARGIN = 1.03;
 
 /**
  * Where to put the camera. In scene space x runs along the track, y is up and z runs across
- * the lanes. Both views look at the middle of the frame and are just far enough away to show
- * the whole frame's width, and the whole depth from the control centre to the far platform,
- * at this canvas aspect (width / height).
+ * the lanes, at this canvas aspect (width / height).
+ * - Overhead looks straight down at the middle of the frame, just far enough away to show the
+ *   whole frame's width and the whole depth from the control centre to the far platform.
+ * - Angled is a close 3D view of ANGLED_FOCUS: low over the line, a little to one side.
  */
 export function cameraPreset(
   mode: CameraMode,
   f: Frame,
   aspect = 1.6,
 ): { position: [number, number, number]; lookAt: [number, number, number] } {
-  const cx = f.width / 2;
-  const cz = (CONTENT_Z.from + CONTENT_Z.to) / 2;
-  const lookAt: [number, number, number] = [cx, 0, cz];
   const tanHalf = Math.tan(((CAMERA_FOV / 2) * Math.PI) / 180);
-  const forWidth = ((f.width / 2) * FIT_MARGIN) / (tanHalf * aspect);
-  const forDepth = (((CONTENT_Z.to - CONTENT_Z.from) / 2) * FIT_MARGIN) / tanHalf;
-  const distance = Math.max(forWidth, forDepth);
-  if (mode === 'overhead') return { position: [cx, distance, cz], lookAt };
+  const cz = (CONTENT_Z.from + CONTENT_Z.to) / 2;
+  if (mode === 'overhead') {
+    const cx = f.width / 2;
+    const forWidth = ((f.width / 2) * FIT_MARGIN) / (tanHalf * aspect);
+    const forDepth = (((CONTENT_Z.to - CONTENT_Z.from) / 2) * FIT_MARGIN) / tanHalf;
+    return { position: [cx, Math.max(forWidth, forDepth), cz], lookAt: [cx, 0, cz] };
+  }
+  const scale = f.width / (f.xMax - f.xMin);
+  const focusWidth = (ANGLED_FOCUS.xMax - ANGLED_FOCUS.xMin) * scale;
+  const fx = toScreenX((ANGLED_FOCUS.xMin + ANGLED_FOCUS.xMax) / 2, f);
+  // Look a little nearer than the middle of the lanes: perspective already makes the far side small.
+  const fz = cz + 1;
+  const distance = (((focusWidth / 2) * FIT_MARGIN) / (tanHalf * aspect)) * ANGLED_CLOSENESS;
   const e = (ANGLED_ELEVATION * Math.PI) / 180;
-  return { position: [cx, distance * Math.sin(e), cz + distance * Math.cos(e)], lookAt };
+  const a = (ANGLED_SWING * Math.PI) / 180;
+  return {
+    position: [fx - distance * Math.cos(e) * Math.sin(a), distance * Math.sin(e), fz + distance * Math.cos(e) * Math.cos(a)],
+    lookAt: [fx, 0, fz],
+  };
 }
 
 /** Converts a point in normalised device coordinates (-1 to 1, y up) to CSS pixels on a canvas. */
@@ -130,8 +155,8 @@ export function ndcToCss(ndc: { x: number; y: number }, width: number, height: n
 }
 
 /**
- * Where the HTML labels sit, x in metres and z in scene units. A and B are labelled 150 m in
- * from the left edge of the frame (their start is off screen), EXIT 150 m in from the right
+ * Where the HTML labels sit, x in metres and z in scene units. A, B and EXIT are labelled just
+ * inside the angled view's focus, so both camera views show them, and EXIT near the right
  * edge, each platform near its entrance (trains stop further in, so the label never hides
  * one), and each device just behind its building.
  */
@@ -141,13 +166,13 @@ export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: numb
   const platformEntrance = TRACK_START.P1 + 40;
   const device = (text: string, key: DeviceKey) => ({ text, x: DEVICE_SITES[key].x, z: DEVICE_SITES[key].z - 1.4, kind: 'device' as const });
   return [
-    track('A', f.xMin + 150, 'A'),
-    track('B', f.xMin + 150, 'B'),
+    track('A', Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), 'A'),
+    track('B', Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), 'B'),
     track('P1', platformEntrance, 'P1'),
     track('P2', platformEntrance, 'P2'),
     track('P3', platformEntrance, 'P3'),
     track('P4', platformEntrance, 'P4'),
-    track('EXIT', f.xMax - 150, 'EXIT'),
+    track('EXIT', Math.min(f.xMax - 150, ANGLED_FOCUS.xMax - 30), 'EXIT'),
     device('Control centre', 'centre'),
     device('Platform keeper', 'platformKeeper'),
     device('Sensors', 'sensors'),
@@ -163,10 +188,10 @@ export type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensor
  * control centre stands back from the line, the others beside platform P1's track.
  */
 export const DEVICE_SITES: Record<DeviceKey, { x: number; z: number }> = {
-  centre: { x: 5500, z: -9 },
-  platformKeeper: { x: 5200, z: -4 },
-  sensors: { x: 5800, z: -4 },
-  junctionKeeper: { x: 6300, z: -4 },
+  centre: { x: 5720, z: -9 },
+  platformKeeper: { x: 5560, z: -4 },
+  sensors: { x: 5880, z: -4 },
+  junctionKeeper: { x: 6320, z: -4 },
 };
 
 export interface DeviceLook {

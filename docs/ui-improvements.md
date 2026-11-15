@@ -14,7 +14,7 @@ Headline: **"When the hub goes dark, every train still decides for itself, and t
 - **Modes without relying on colour.** Five checked colours, each with its own shape: central square, radio hexagon, full circle, stale triangle, blind diamond. Stopped trains dim and carry a STOPPED tag. A legend explains every mode and the junction zone.
 - **The look.** Kenney Train Kit subway units and track (CC0), platform islands with a shelter, a building for the control centre and each keeper, a sensors post, lamps that go out when a device is switched off, the junction zone lit while a train is in it, a sky, ground, fog, trees, and shadows.
 - **Real scale.** 0.08 scene units per metre, so trains are their true length. The frame is x 5000 to 6800.
-- **Camera.** Overhead by default and angled on the button. Both fit the whole frame to the canvas, whatever its shape.
+- **Camera.** The page opens in a close angled 3D view of the station (x 5,500 to 6,500 m, 30 degrees above the horizon), where the trains read as models. The button switches to the overhead overview, which fits the whole frame to the canvas whatever its shape.
 - **Labels.** Tracks and devices are labelled in HTML over each scene.
 - **Every failure control.** Switches for the centre, both keepers and the sensors, a radio-loss slider, and a breakdown picker. Each acts on both sides at once.
 - **A safety net.** Trains fall back to boxes if a model fails to load. `?quality=low` turns off shadows and trees.
@@ -38,7 +38,7 @@ Headline: **"When the hub goes dark, every train still decides for itself, and t
 ## Decisions on record
 
 - Kenney Train Kit subway unit, native units and the x 5000 to 6800 frame: chosen by the project owner.
-- Both camera views, overhead first: chosen by the project owner.
+- Both camera views, the close angled view first and overhead as the overview: chosen by the project owner, so the screen reads as 3D when it opens.
 - The #51 failure controls stay: chosen by the project owner.
 - The `radio` mode and its purple hexagon: chosen by the project owner, so radio working shows apart from the control centre.
 - Today's system on the left, ours on the right, same timetable, same failures.

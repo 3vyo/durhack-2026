@@ -38,7 +38,7 @@ The view only reads engine state. three.js is imported only in `src/ui/`, and on
 |---|---|
 | `palette.ts` | The five mode colours, checked together with the data-viz palette checker, and a shape per mode. The one source of mode colours |
 | `markers.ts` | The marker over each train, stopped dimming, the legend entries, and drawing the shapes |
-| `layout.ts` | Real-scale units (0.08 per metre), the frame (x 5000 to 6800), lanes, camera fitting, label anchors, device sites and looks, `junctionBusy` |
+| `layout.ts` | Real-scale units (0.08 per metre), the frame (x 5000 to 6800), lanes, the two cameras (a close angled view of `ANGLED_FOCUS`, x 5500 to 6500, opens first; overhead fits the whole frame), label anchors, device sites and looks, `junctionBusy` |
 | `assets.ts`, `kit.ts`, `consist.ts`, `rails.ts` | Kenney model paths, loading with a fallback, laying cars end to end, laying track pieces |
 | `environment.ts` | The sky, light and fog values, and `?quality=low` |
 | `hud.ts` | The scoreboard rows and the three big tiles |
