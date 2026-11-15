@@ -186,5 +186,6 @@ describe('LiveSession spawn', () => {
       expect(r.overruns).toBe(0);
       expect(r.exits.size).toBe(DEFAULT_TIMETABLE.trains + 5);
     }
-  });
+    // Two whole runs of the real programs: well over the default 5 s on a busy machine.
+  }, 60_000);
 });

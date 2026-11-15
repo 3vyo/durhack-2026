@@ -322,7 +322,11 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       table.append(head);
       for (const r of rows) {
         const tr = el('tr');
-        tr.append(el('td', '', r.label), el('td', '', r.baseline), el('td', '', r.ours));
+        tr.append(
+          el('td', '', r.label),
+          el('td', r.alert?.baseline ? 'alert' : '', r.baseline),
+          el('td', r.alert?.ours ? 'alert' : '', r.ours),
+        );
         table.append(tr);
       }
     },
