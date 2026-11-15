@@ -1,9 +1,12 @@
 import type { Switches } from '../engine/switches';
 import type { TrainId } from '../shared/types';
-import { radioLabel, SWITCH_KEYS, switchLabel, type SwitchKey } from './controls';
+import { radioLabel, SWITCH_KEYS, type SwitchKey } from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
-import { TEXT } from './palette';
+import { MODE_STYLE } from './palette';
+import './page.css';
+
+export type Side = 'baseline' | 'ours';
 
 export interface PanelHandlers {
   /** Flip one on/off switch. The page reads the new state back from the engines. */
@@ -15,6 +18,8 @@ export interface PanelHandlers {
   onPause(): void;
   onRestart(): void;
   onCamera(): void;
+  /** Show this side's 3D view. */
+  onView(side: Side): void;
 }
 
 export interface Panel {
@@ -22,31 +27,52 @@ export interface Panel {
   oursStage: HTMLElement;
   baselineMinimap: HTMLCanvasElement;
   oursMinimap: HTMLCanvasElement;
+  /** The scenario name and the clock line. */
   setBanner(title: string, status: string): void;
   setRows(rows: Row[]): void;
-  /** The three big numbers above the scenes. */
+  /** The three numbers on the delay board. */
   setTiles(tiles: Tile[]): void;
   /** Shows the decision card for a clicked train over a scene, or hides it with null. */
-  setCard(side: 'baseline' | 'ours', lines: string[] | null): void;
+  setCard(side: Side, lines: string[] | null): void;
   setPauseLabel(paused: boolean): void;
   setCameraLabel(text: string): void;
-  /** Shows the current switches on the switch buttons and the radio slider. */
+  /** Shows the current switches on the lamps and the radio slider. */
   setSwitches(sw: Switches): void;
   /** The trains the breakdown picker offers. */
   setTrains(ids: TrainId[]): void;
+  /** Shows one side's view and minimap, and marks it on the view switch. */
+  setView(side: Side): void;
 }
 
 const SPEEDS = [1, 4, 8, 16];
 
+const SWITCH_NAMES: Record<SwitchKey, string> = {
+  centre: 'Control centre',
+  platformKeeper: 'Platform keeper',
+  junctionKeeper: 'Junction keeper',
+  sensors: 'Platform sensors',
+};
+
+const SIDE_NAMES: Record<Side, string> = { baseline: "Today's system", ours: 'Our fallback' };
+/** The colour tick beside each side's name, the same as on the delay board. */
+const SIDE_COLOUR: Record<Side, string> = { baseline: MODE_STYLE.blind.css, ours: MODE_STYLE.central.css };
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/** A small inline SVG of a mode's marker shape, for the legend. */
-function shapeIcon(shape: Parameters<typeof shapePath>[0], fill: string, size = 18, opacity = 1): SVGSVGElement {
+/** A small inline SVG of a mode's marker shape, for the key. */
+function shapeIcon(shape: Parameters<typeof shapePath>[0], fill: string, opacity = 1): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('width', String(size));
-  svg.setAttribute('height', String(size));
+  svg.setAttribute('width', '16');
+  svg.setAttribute('height', '16');
   svg.setAttribute('viewBox', '-10 -10 20 20');
-  svg.style.flex = 'none';
+  svg.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS(SVG_NS, 'path');
   path.setAttribute('d', shapePath(shape, 7.5));
   path.setAttribute('fill', fill);
@@ -58,197 +84,239 @@ function shapeIcon(shape: Parameters<typeof shapePath>[0], fill: string, size = 
   return svg;
 }
 
-/** "How each train is deciding": one entry per mode, its shape, colour and meaning, plus stopped. */
-function legendBox(): HTMLElement {
-  const box = el('div', `flex:1;min-width:0;padding:8px 12px;border:1px solid #26303c;border-radius:6px;`);
-  box.append(el('div', `font-size:12px;color:${TEXT.muted};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;`, 'How each train is deciding'));
-  const grid = el('div', 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px;');
-  const entry = (icon: Element, label: string, meaning: string): HTMLElement => {
-    const row = el('div', 'display:flex;gap:8px;align-items:flex-start;');
-    const words = el('div', 'min-width:0;');
-    words.append(el('div', `font-size:14px;color:${TEXT.primary};`, label), el('div', `font-size:12px;color:${TEXT.secondary};`, meaning));
-    row.append(icon, words);
-    return row;
-  };
-  for (const item of legendItems()) grid.append(entry(shapeIcon(item.shape, item.css), item.label, item.meaning));
-  grid.append(entry(shapeIcon('square', '#8b96a5', 18, 0.55), 'Stopped', 'Dimmed, with a STOPPED tag'));
-  const zone = el('span', 'flex:none;width:18px;height:18px;border-radius:4px;background:rgba(217,164,65,0.35);border:1px dashed #d9a441;');
-  grid.append(entry(zone, 'Junction zone', 'Only one train in it at a time. Brighter while a train is in it'));
-  box.append(grid);
-  return box;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  style: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  node.style.cssText = style;
-  if (text !== undefined) node.textContent = text;
-  return node;
+/** A panel with a heading button that folds its body away. */
+function foldingPanel(className: string, heading: string, folded: boolean): { box: HTMLElement; body: HTMLElement } {
+  const box = el('section', `glass side ${className}${folded ? ' folded' : ''}`);
+  const toggle = el('button', 'fold', heading);
+  toggle.setAttribute('aria-expanded', String(!folded));
+  const body = el('div', 'body');
+  toggle.addEventListener('click', () => {
+    const nowFolded = box.classList.toggle('folded');
+    toggle.setAttribute('aria-expanded', String(!nowFolded));
+  });
+  box.append(toggle, body);
+  return { box, body };
 }
 
 /**
- * The page around the two scenes: banner, a column each for the baseline and ours with a
- * minimap under each, the scoreboard, and the buttons. Everything here is plain HTML, so
- * the numbers stay readable whatever the camera does.
+ * The page: one side's 3D view fills the window, and small glass panels float over it. The
+ * title and clock top left, the view switch top centre, the delay board top right, the key and
+ * the scoreboard on the sides (each folds away), and the minimap over the control dock at the
+ * bottom. Everything is plain HTML, so it stays readable whatever the camera does.
+ *
+ * Keys: V switches the view, Space pauses, C cuts or restores the control centre.
  */
 export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
-  root.style.cssText =
-    'position:fixed;inset:0;display:flex;flex-direction:column;background:#0b0f14;color:#e6edf3;font-family:system-ui,sans-serif;';
+  root.replaceChildren();
 
-  const banner = el('div', 'padding:10px 16px;border-bottom:1px solid #26303c;');
-  const title = el('div', 'font-size:20px;font-weight:600;');
-  const status = el('div', 'font-size:14px;color:#9fb0c3;margin-top:2px;');
-  const legend = el(
-    'div',
-    'font-size:12px;color:#7d8da1;margin-top:2px;',
-    'A device with a green lamp is on; dull red with no lamp is off. Click a train to see how it is deciding.',
-  );
-  banner.append(title, status, legend);
+  // The two views. Only the chosen one is shown.
+  const stages = { baseline: el('div', 'stage'), ours: el('div', 'stage') };
+  const cards = { baseline: el('div', 'card'), ours: el('div', 'card') };
+  for (const side of ['baseline', 'ours'] as const) {
+    cards[side].hidden = true;
+    stages[side].append(cards[side]);
+  }
 
-  // The three big numbers, readable from across a room. Built once; only their text changes.
-  const tilesRow = el('div', 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:10px 16px 0 16px;');
-  const ACCENT: Record<Tile['tone'], string> = { baseline: '#d55181', ours: '#3987e5', neutral: '#9fb0c3' };
-  const tileParts = [0, 1, 2].map(() => {
-    const box = el('div', 'padding:8px 14px;border:1px solid #26303c;border-left-width:4px;border-radius:8px;background:#121821;min-width:0;');
-    const label = el('div', `font-size:14px;color:${TEXT.secondary};`);
-    const value = el('div', `font-size:52px;font-weight:700;line-height:1.05;color:${TEXT.primary};font-variant-numeric:tabular-nums;`);
-    const unit = el('span', `font-size:20px;font-weight:500;color:${TEXT.secondary};margin-left:6px;`, 'min');
-    const number = el('span', '');
-    value.append(number, unit);
-    const sub = el('div', `font-size:13px;color:${TEXT.secondary};`);
-    box.append(label, value, sub);
-    tilesRow.append(box);
-    return { box, label, number, sub };
+  // Title and clock.
+  const title = el('div', 'glass title');
+  const scenario = el('span', 'scenario');
+  const clock = el('span', 'clock');
+  const ended = el('span', 'ended');
+  title.append(scenario, clock, ended);
+
+  // Which side is showing.
+  const views = el('div', 'glass views');
+  views.setAttribute('role', 'group');
+  views.setAttribute('aria-label', 'Which railway to show');
+  const viewButtons = {} as Record<Side, HTMLButtonElement>;
+  for (const side of ['baseline', 'ours'] as const) {
+    const b = el('button');
+    const tick = el('span', 'tick');
+    tick.style.background = SIDE_COLOUR[side];
+    b.append(tick, SIDE_NAMES[side]);
+    b.title = 'Switch view (V)';
+    b.addEventListener('click', () => h.onView(side));
+    viewButtons[side] = b;
+    views.append(b);
+  }
+
+  // The delay board.
+  const board = el('section', 'glass board');
+  board.append(el('div', 'heading', 'Delay per train, so far'));
+  const cells = el('div', 'cells');
+  const cellParts = [0, 1, 2].map(() => {
+    const cell = el('div', 'cell');
+    const label = el('div', 'label');
+    const value = el('div', 'value');
+    const number = el('span');
+    value.append(number, el('span', 'unit', 'min'));
+    const sub = el('div', 'sub');
+    cell.append(label, value, sub);
+    cells.append(cell);
+    return { cell, label, number, sub };
+  });
+  board.append(cells);
+  const EDGE: Record<Tile['tone'], string> = { baseline: SIDE_COLOUR.baseline, ours: SIDE_COLOUR.ours, neutral: '#a9b6c5' };
+
+  // The key: one compact row of shapes and names. Click it to show what each one means.
+  const key = el('button', 'glass key');
+  key.setAttribute('aria-expanded', 'false');
+  key.title = 'Show what each mark means';
+  const keyItem = (icon: Element, name: string, meaning: string) => {
+    const item = el('span', 'item');
+    item.append(icon, el('span', 'name', name), el('span', 'meaning', meaning));
+    key.append(item);
+  };
+  for (const item of legendItems()) keyItem(shapeIcon(item.shape, item.css), item.label, item.meaning);
+  keyItem(shapeIcon('square', '#8b96a5', 0.55), 'Stopped', 'Dimmed, with a STOPPED tag');
+  keyItem(el('span', 'zone'), 'Junction zone', 'One train at a time');
+  key.addEventListener('click', () => {
+    const open = key.classList.toggle('open');
+    key.setAttribute('aria-expanded', String(open));
   });
 
-  const columns = el('div', 'display:flex;gap:12px;padding:12px 16px;flex:1;min-height:0;');
-  function column(heading: string): { wrap: HTMLElement; stage: HTMLElement; minimap: HTMLCanvasElement } {
-    const wrap = el('div', 'flex:1;display:flex;flex-direction:column;min-width:0;');
-    const label = el('div', 'font-size:16px;font-weight:600;margin-bottom:6px;', heading);
-    const stage = el('div', 'flex:1;min-height:0;position:relative;border:1px solid #26303c;border-radius:6px;overflow:hidden;');
-    const minimap = el('canvas', 'width:100%;height:36px;margin-top:6px;border-radius:4px;');
-    minimap.width = 700;
-    minimap.height = 36;
-    wrap.append(label, stage, minimap);
-    return { wrap, stage, minimap };
-  }
-  const left = column("Today's system");
-  const right = column('Our fallback');
-  const cardStyle =
-    'position:absolute;top:8px;left:8px;padding:8px 10px;font-size:13px;line-height:1.5;background:rgba(11,15,20,0.88);border:1px solid #3a4658;border-radius:6px;display:none;pointer-events:none;z-index:2;';
-  const cards = { baseline: el('div', cardStyle), ours: el('div', cardStyle) };
-  left.stage.append(cards.baseline);
-  right.stage.append(cards.ours);
-  columns.append(left.wrap, right.wrap);
+  // The scoreboard, on the right.
+  const scores = foldingPanel('right', 'Scoreboard', false);
+  const table = el('table', 'scores');
+  scores.body.append(table);
+  let shownRows = '';
 
-  const table = el('table', 'border-collapse:collapse;font-size:15px;');
-  const scoreboard = el('div', 'display:flex;gap:16px;align-items:flex-start;padding:4px 16px 8px 16px;');
-  const tableBox = el('div', 'flex:1;min-width:0;');
-  tableBox.append(table);
-  scoreboard.append(tableBox, legendBox());
-
-  const controls = el('div', 'display:flex;flex-wrap:wrap;gap:16px;padding:10px 16px;border-top:1px solid #26303c;');
-  const groupStyle = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 10px;border:1px solid #26303c;border-radius:6px;';
-  function group(heading: string): HTMLElement {
-    const g = el('div', groupStyle);
-    g.append(el('span', 'font-size:12px;color:#7d8da1;text-transform:uppercase;letter-spacing:0.05em;', heading));
-    return g;
-  }
-  function button(text: string, onClick: () => void): HTMLButtonElement {
-    const b = el('button', 'padding:8px 12px;font-size:14px;cursor:pointer;', text);
-    b.addEventListener('click', onClick);
-    return b;
+  // The minimap of the whole line, for the side on show.
+  const minimapBox = el('div', 'glass minimap');
+  minimapBox.title = 'Every train on the whole line. The lighter stretch is what the view shows from above';
+  const minimaps = { baseline: el('canvas'), ours: el('canvas') };
+  for (const side of ['baseline', 'ours'] as const) {
+    minimaps[side].width = 1400;
+    minimaps[side].height = 26;
+    minimaps[side].setAttribute('aria-label', `Every train on the whole line, ${SIDE_NAMES[side]}`);
+    minimapBox.append(minimaps[side]);
   }
 
-  // Failures: one toggle per switch, the radio slider, and the breakdown picker.
-  const failures = group('Failures');
-  const toggles = {} as Record<SwitchKey, HTMLButtonElement>;
-  for (const key of SWITCH_KEYS) {
-    toggles[key] = button(switchLabel(key, true), () => h.onToggle(key));
-    failures.append(toggles[key]);
+  // The control dock: failures on the left, running the demo on the right.
+  const dock = el('div', 'glass dock');
+  const failures = el('div', 'group');
+  failures.setAttribute('role', 'group');
+  failures.setAttribute('aria-label', 'Failures');
+  const lamps = {} as Record<SwitchKey, HTMLButtonElement>;
+  for (const k of SWITCH_KEYS) {
+    const b = el('button', 'lamp', SWITCH_NAMES[k]);
+    b.setAttribute('aria-pressed', 'true');
+    b.title = k === 'centre' ? 'Switch on or off (C)' : 'Switch on or off';
+    b.addEventListener('click', () => h.onToggle(k));
+    lamps[k] = b;
+    failures.append(b);
   }
-  const radio = el('label', 'display:flex;align-items:center;gap:6px;font-size:14px;');
-  const radioText = el('span', 'min-width:118px;', radioLabel(0));
-  const slider = el('input', 'width:120px;cursor:pointer;');
+  const radio = el('label', 'radio');
+  const radioText = el('span', 'value', radioLabel(0));
+  const slider = el('input');
   slider.type = 'range';
   slider.min = '0';
   slider.max = '100';
   slider.step = '5';
   slider.value = '0';
+  slider.setAttribute('aria-label', 'Share of train-to-train radio messages lost');
   slider.addEventListener('input', () => h.onRadioDrop(Number(slider.value) / 100));
   radio.append(radioText, slider);
-  const breakdown = el('label', 'display:flex;align-items:center;gap:6px;font-size:14px;', 'Break down train');
-  const picker = el('select', 'padding:8px;font-size:14px;');
-  const breakButton = button('▸', () => {
+  const breakdown = el('label', 'breakdown', 'Train');
+  const picker = el('select');
+  picker.setAttribute('aria-label', 'Train to break down');
+  const breakButton = el('button', '', 'Break down');
+  breakButton.title = 'Break down the chosen train on both sides';
+  breakButton.addEventListener('click', () => {
     if (picker.value !== '') h.onBreakDown(Number(picker.value));
   });
-  breakButton.title = 'Break down the chosen train on both sides';
   breakdown.append(picker, breakButton);
   failures.append(radio, breakdown);
 
-  // Running the demo.
-  const run = group('Run');
-  const pause = button('Pause', h.onPause);
-  const camera = button('Camera', h.onCamera);
-  const speed = el('select', 'padding:8px;font-size:14px;');
+  const run = el('div', 'group push');
+  run.setAttribute('role', 'group');
+  run.setAttribute('aria-label', 'Run');
+  const speed = el('select');
+  speed.setAttribute('aria-label', 'Speed');
   for (const s of SPEEDS) {
     const option = el('option', '', `${s}x speed`);
     option.value = String(s);
     speed.append(option);
   }
   speed.addEventListener('change', () => h.onSpeed(Number(speed.value)));
-  run.append(speed, pause, button('Restart', h.onRestart), camera);
-  controls.append(failures, run);
+  const pause = el('button', '', 'Pause');
+  pause.title = 'Pause or resume (Space)';
+  pause.addEventListener('click', h.onPause);
+  const restart = el('button', '', 'Restart');
+  restart.addEventListener('click', h.onRestart);
+  const camera = el('button', '', 'Camera');
+  camera.addEventListener('click', h.onCamera);
+  run.append(speed, pause, restart, camera);
+  dock.append(failures, run);
+
+  // The bottom: the key, the minimap and the control dock, stacked.
+  const bottom = el('div', 'bottom');
+  bottom.append(key, minimapBox, dock);
+  root.append(stages.baseline, stages.ours, title, views, board, scores.box, bottom);
+
+  // Keys for the presenter. They do nothing while a text box or a list has focus.
+  window.addEventListener('keydown', (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'v' || e.key === 'V') h.onView(stages.baseline.hidden ? 'baseline' : 'ours');
+    else if (e.key === 'c' || e.key === 'C') h.onToggle('centre');
+    else if (e.key === ' ' && target?.tagName !== 'BUTTON') {
+      e.preventDefault();
+      h.onPause();
+    }
+  });
 
   let shownTrains = '';
 
-  root.append(banner, tilesRow, columns, scoreboard, controls);
-
   return {
-    baselineStage: left.stage,
-    oursStage: right.stage,
-    baselineMinimap: left.minimap,
-    oursMinimap: right.minimap,
+    baselineStage: stages.baseline,
+    oursStage: stages.ours,
+    baselineMinimap: minimaps.baseline,
+    oursMinimap: minimaps.ours,
     setBanner(t, s) {
-      title.textContent = t;
-      status.textContent = s;
+      scenario.textContent = t;
+      const [time, ...rest] = s.split('|').map((part) => part.trim());
+      clock.textContent = time;
+      ended.textContent = rest.join(' ');
     },
     setTiles(tiles) {
       tiles.forEach((t, i) => {
-        const part = tileParts[i];
+        const part = cellParts[i];
         if (!part) return;
         part.label.textContent = t.label;
         part.number.textContent = t.value;
         part.sub.textContent = t.sub;
-        part.box.style.borderLeftColor = ACCENT[t.tone];
+        part.cell.style.setProperty('--edge', EDGE[t.tone]);
       });
     },
     setRows(rows) {
+      // Rebuild only when the text changes, so the table can be read and selected.
+      const text = JSON.stringify(rows);
+      if (text === shownRows) return;
+      shownRows = text;
       table.replaceChildren();
-      const head = el('tr', 'color:#9fb0c3;text-align:left;');
-      for (const text of ['', "Today's system", 'Our fallback']) head.append(el('th', 'padding:2px 24px 2px 0;white-space:nowrap;', text));
+      const head = el('tr');
+      for (const t of ['', "Today's", 'Ours']) head.append(el('th', '', t));
       table.append(head);
       for (const r of rows) {
-        const tr = el('tr', '');
-        tr.append(
-          el('td', 'padding:2px 24px 2px 0;color:#9fb0c3;', r.label),
-          el('td', 'padding:2px 24px 2px 0;font-variant-numeric:tabular-nums;', r.baseline),
-          el('td', 'padding:2px 24px 2px 0;font-variant-numeric:tabular-nums;', r.ours),
-        );
+        const tr = el('tr');
+        tr.append(el('td', '', r.label), el('td', '', r.baseline), el('td', '', r.ours));
         table.append(tr);
       }
     },
     setCard(side, lines) {
       const card = cards[side];
       if (lines === null) {
-        card.style.display = 'none';
+        card.hidden = true;
         return;
       }
-      card.replaceChildren(...lines.map((line) => el('div', '', line)));
-      card.style.display = 'block';
+      const text = lines.join('\n');
+      if (card.dataset.text !== text) {
+        card.dataset.text = text;
+        card.replaceChildren(...lines.map((line) => el('div', '', line)));
+      }
+      card.hidden = false;
     },
     setPauseLabel(paused) {
       pause.textContent = paused ? 'Resume' : 'Pause';
@@ -257,11 +325,10 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       camera.textContent = text;
     },
     setSwitches(sw) {
-      for (const key of SWITCH_KEYS) {
-        const on = sw[key];
-        toggles[key].textContent = switchLabel(key, on);
-        toggles[key].style.background = on ? '' : '#5a2a2a';
-        toggles[key].style.color = on ? '' : '#ffd7d7';
+      for (const k of SWITCH_KEYS) {
+        lamps[k].setAttribute('aria-pressed', String(sw[k]));
+        lamps[k].setAttribute('aria-label', `${SWITCH_NAMES[k]}: ${sw[k] ? 'ON' : 'OFF'}`);
+        lamps[k].dataset.state = sw[k] ? 'ON' : 'OFF';
       }
       radioText.textContent = radioLabel(sw.radioDrop);
       // Leave the slider alone while it is being dragged, so it does not jump under the pointer.
@@ -270,9 +337,9 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
     },
     setTrains(ids) {
       // Rebuild only when the list changes, so an open dropdown is not closed every frame.
-      const key = ids.join(',');
-      if (key === shownTrains) return;
-      shownTrains = key;
+      const listed = ids.join(',');
+      if (listed === shownTrains) return;
+      shownTrains = listed;
       const chosen = picker.value;
       picker.replaceChildren(
         ...ids.map((id) => {
@@ -283,6 +350,14 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
       );
       if (ids.map(String).includes(chosen)) picker.value = chosen;
       breakButton.disabled = ids.length === 0;
+    },
+    setView(side) {
+      for (const s of ['baseline', 'ours'] as const) {
+        const on = s === side;
+        stages[s].hidden = !on;
+        minimaps[s].hidden = !on;
+        viewButtons[s].setAttribute('aria-pressed', String(on));
+      }
     },
   };
 }

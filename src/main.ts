@@ -5,12 +5,12 @@ import type { RunResult } from './engine/engine';
 import { healthyReference, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
-import { switchesLine, trainChoices } from './ui/controls';
+import { trainChoices } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, STATION_FRAME, isStopped, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
-import { createPanel } from './ui/panel';
+import { createPanel, type Side } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
 import { createScene } from './ui/scene';
 
@@ -41,9 +41,10 @@ try {
 let restoredAt: number | null = null;
 let average: ScenarioSummary | null = null;
 let cameraMode: CameraMode = DEFAULT_CAMERA;
+/** The side on show. The other keeps running; only the one on show is drawn. */
+let view: Side = 'baseline';
 
-const cameraLabel = (): string =>
-  cameraMode === 'angled' ? 'Camera: angled (switch to overhead)' : 'Camera: overhead (switch to angled)';
+const cameraLabel = (): string => (cameraMode === 'angled' ? 'Camera: angled' : 'Camera: overhead');
 
 const panel = createPanel(app, {
   // Every failure control goes to both engines at the same simulated time.
@@ -70,6 +71,12 @@ const panel = createPanel(app, {
     session.restart();
     restoredAt = null;
   },
+  onView: (side) => {
+    view = side;
+    panel.setView(side);
+    // A hidden view had no size, so give it the window's now.
+    (side === 'baseline' ? baselineView : oursView).resize();
+  },
   onCamera: () => {
     cameraMode = cameraMode === 'angled' ? 'overhead' : 'angled';
     baselineView.setCamera(cameraMode);
@@ -83,6 +90,7 @@ panel.setCameraLabel(cameraLabel());
 const quality = qualityPreset(parseQuality(location.search));
 const baselineView = createScene(panel.baselineStage, STATION_FRAME, quality);
 const oursView = createScene(panel.oursStage, STATION_FRAME, quality);
+panel.setView(view);
 // Click a train to see how it is deciding. Each scene keeps its own selection.
 const selected: { baseline: number | null; ours: number | null } = { baseline: null, ours: null };
 baselineView.onPick((id) => {
@@ -95,7 +103,7 @@ oursView.onPick((id) => {
 // trains are, so it can click a real one. The page never reads this itself.
 if (new URLSearchParams(location.search).has('check')) {
   (window as unknown as { demoCheck: unknown }).demoCheck = {
-    trainPoints: () => oursView.trainScreenPoints(),
+    trainPoints: () => (view === 'baseline' ? baselineView : oursView).trainScreenPoints(),
   };
 }
 const baselineMap = createMinimap(panel.baselineMinimap);
@@ -121,10 +129,15 @@ function clock(seconds: number): string {
 function draw(): void {
   const base = session.baseline.snapshot();
   const ours = session.ours.snapshot();
-  baselineView.render(base);
-  oursView.render(ours);
-  baselineMap.render(base);
-  oursMap.render(ours);
+  if (view === 'baseline') {
+    baselineView.render(base);
+    baselineMap.render(base);
+    oursView.observe(ours);
+  } else {
+    oursView.render(ours);
+    oursMap.render(ours);
+    baselineView.observe(base);
+  }
   for (const [side, snap] of [['baseline', base], ['ours', ours]] as const) {
     const train = snap.trains.find((t) => t.id === selected[side]);
     panel.setCard(side, train ? describeTrain(train) : null);
@@ -136,7 +149,7 @@ function draw(): void {
   panel.setSwitches(sw);
   panel.setTrains(trainChoices(base.trains, ours.trains));
   if (referenceError !== null || reference === null) {
-    panel.setBanner(`${SCENARIO.title}: today's system against our fallback`, `Cannot score this run: ${referenceError}`);
+    panel.setBanner(SCENARIO.title, `${clock(ours.now)} | Cannot score this run: ${referenceError}`);
     panel.setRows([]);
     return;
   }
@@ -152,10 +165,7 @@ function draw(): void {
   const baseTtn = ttn(b, base.now);
   const oursTtn = ttn(o, ours.now);
   const stuck = (run: RunResult): number => reference!.exits.size - [...reference!.exits.keys()].filter((id) => run.exits.has(id)).length;
-  panel.setBanner(
-    `${SCENARIO.title}: today's system against our fallback`,
-    `${switchesLine(sw)}  |  Time ${clock(ours.now)}${ended ? '  |  Run ended' : ''}`,
-  );
+  panel.setBanner(SCENARIO.title, `${clock(ours.now)}${ended ? ' | Run ended' : ''}`);
   const delaySeconds = {
     baseline: averageDelaySoFar(b, reference, base.now),
     ours: averageDelaySoFar(o, reference, ours.now),

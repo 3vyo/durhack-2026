@@ -1,0 +1,414 @@
+/*
+ * The page around the 3D view: a signal-box look. The scene fills the window; everything
+ * else floats over it in small glass panels. Bahnschrift is Windows' DIN signage face, the
+ * lettering family of railway and road signs. Mode colours stay on the trains and the key;
+ * text wears text colours.
+ */
+
+:root {
+  --ink: #e8edf2;
+  --ink-2: #a9b6c5;
+  --ink-3: #7d8a99;
+  --glass: rgba(13, 18, 25, 0.76);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --lamp-on: #39d353;
+  --lamp-off: #e5484d;
+  --focus: #8ab4ff;
+  --face: Bahnschrift, 'DIN Alternate', 'DIN 2014', 'Barlow', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d1218;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  color: var(--ink);
+  font-family: var(--face);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+/* The two views fill the window. Only the chosen one is shown. */
+.stage {
+  position: absolute;
+  inset: 0;
+}
+.stage[hidden] {
+  display: none;
+}
+
+.glass {
+  position: absolute;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: 10px;
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  z-index: 3;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+button,
+select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover,
+select:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+select option {
+  background: #141b24;
+}
+
+/* Top left: what is running and the clock. */
+.title {
+  top: 14px;
+  left: 14px;
+  padding: 8px 14px 9px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.title .scenario {
+  font-size: 18px;
+  font-weight: 600;
+  font-stretch: semi-condensed;
+}
+.title .clock {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.title .ended {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* Top centre: which side you are looking at. */
+.views {
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px;
+  display: flex;
+  gap: 4px;
+}
+.views button {
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 7px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.views button[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink);
+}
+.views button .tick {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+
+/* Top right: the delay board, the one big thing on the page. */
+.board {
+  top: 14px;
+  right: 14px;
+  padding: 10px 14px 12px;
+  min-width: 360px;
+}
+.board .heading {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-bottom: 4px;
+}
+.board .cells {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.board .cell {
+  border-left: 3px solid var(--edge, var(--ink-3));
+  padding-left: 9px;
+  min-width: 0;
+}
+.board .label {
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.board .value {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.board .unit {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-left: 4px;
+}
+.board .sub {
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* The scoreboard, on the right under the delay board. It folds away. */
+.side {
+  top: 150px;
+  right: 14px;
+  padding: 0;
+  max-width: 300px;
+}
+.side > button.fold {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-weight: 600;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.side > button.fold::after {
+  content: '−';
+  color: var(--ink-3);
+}
+.side.folded > button.fold::after {
+  content: '+';
+}
+.side .body {
+  padding: 0 12px 10px;
+}
+.side.folded .body {
+  display: none;
+}
+
+.scores {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.scores th {
+  font-weight: 600;
+  color: var(--ink-2);
+  text-align: right;
+  padding: 2px 0 4px 14px;
+  white-space: nowrap;
+}
+.scores td {
+  padding: 2px 0;
+  color: var(--ink-2);
+}
+.scores td + td {
+  color: var(--ink);
+  text-align: right;
+  padding-left: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The bottom stack: key, minimap and dock. Each sizes itself; nothing overlaps. */
+.bottom {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  z-index: 3;
+  pointer-events: none;
+}
+.bottom > * {
+  position: relative;
+  pointer-events: auto;
+}
+
+/* The key: shapes and names in one row; click it for the meanings. */
+.key {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 13px;
+}
+.key .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.key .name {
+  font-weight: 600;
+}
+.key .meaning {
+  display: none;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.key.open {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, auto));
+}
+.key.open .meaning {
+  display: inline;
+}
+.key .zone {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(217, 164, 65, 0.35);
+  border: 1px dashed #d9a441;
+}
+
+.minimap {
+  padding: 4px 6px;
+}
+.minimap canvas {
+  display: block;
+  width: 100%;
+  height: 22px;
+}
+.minimap canvas[hidden] {
+  display: none;
+}
+
+.dock {
+  padding: 7px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.dock .group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.dock .group + .group {
+  padding-left: 16px;
+  border-left: 1px solid var(--glass-edge);
+}
+.dock .push {
+  margin-left: auto;
+}
+
+/* A failure switch reads as a signal lamp: lit green when on, red when switched off. */
+.lamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px 5px 9px;
+}
+.lamp::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--lamp-on);
+  box-shadow: 0 0 6px var(--lamp-on);
+}
+.lamp[aria-pressed='false'] {
+  background: rgba(229, 72, 77, 0.16);
+  border-color: rgba(229, 72, 77, 0.55);
+}
+.lamp[aria-pressed='false']::before {
+  background: var(--lamp-off);
+  box-shadow: 0 0 6px var(--lamp-off);
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.radio input {
+  width: 110px;
+  accent-color: #a9b6c5;
+}
+.radio .value {
+  min-width: 70px;
+  font-variant-numeric: tabular-nums;
+}
+.breakdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* A clicked train's card sits under the title. */
+.card {
+  position: absolute;
+  top: 74px;
+  left: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 3;
+}
+.card[hidden] {
+  display: none;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+@media (max-width: 1100px) {
+  .board {
+    min-width: 0;
+  }
+  .side {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

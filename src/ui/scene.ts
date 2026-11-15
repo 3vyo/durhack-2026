@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
+import type { PlatformId } from '../shared/types';
 import { TRAIN_LENGTH } from '../shared/constants';
 import {
   DEFAULT_CAMERA,
   LANE_SPACING,
   cameraPreset,
+  UNITS_PER_METRE,
   labelAnchors,
   ndcToCss,
+  pathAt,
+  routeOf,
   toScreenX,
+  type Route,
   isStopped,
   junctionBusy,
   markersFor,
@@ -28,6 +33,8 @@ export interface SceneView {
   setCamera(mode: CameraMode): void;
   /** Calls back with the id of the train under a click, or null for a click on empty space. */
   onPick(handler: (id: number | null) => void): void;
+  /** Keeps track of where trains are without drawing, for a view that is not on show. */
+  observe(s: Snapshot): void;
   /**
    * Where each drawn train's middle is on the canvas, in CSS pixels from its top left corner.
    * For the demo check, which clicks a real train. Trains off the canvas are left out.
@@ -42,16 +49,26 @@ const TRAIN_HEIGHT = 1;
 const TRAIN_DEPTH = 1.4;
 const TRAIN_BODY = 0xc9d1dc; // a light grey body; the marker above it carries the mode colour
 /** Marker height on screen, as a share of the canvas height. It does not shrink with distance. */
-const MARKER_SIZE = 0.055;
+const MARKER_SIZE = 0.042;
 const MARKER_LIFT_BOX = 2.4; // scene units above the rail, over a box train
 const MARKER_LIFT_MODEL = 2.2; // just over the roof of a model train, which is 1.93 high
 const CAR_GAP = 0.12; // model units between the cars of one unit
 
-/** One drawn train: a group carrying its body, its mode marker and a STOPPED tag. */
+/** One car of a drawn train, placed on its own so a train bends through the points. */
+interface Car {
+  holder: THREE.Object3D;
+  /** Metres from the train's front to the middle of this car. */
+  behind: number;
+  /** The car's turn about the vertical before it follows the track: the model runs along z. */
+  baseTurn: number;
+}
+
+/** One drawn train: a group carrying its cars, its mode marker and a STOPPED tag. */
 interface DrawnTrain {
   group: THREE.Group;
   /** A box before the models load or if they fail, else the three cars of the kit's unit. */
   body: THREE.Object3D;
+  cars: Car[];
   /** The body's own materials, cloned per train so dimming one train leaves the others alone. */
   bodyMaterials: THREE.MeshStandardMaterial[];
   marker: THREE.Sprite;
@@ -189,11 +206,12 @@ export function createScene(
   });
 
   /** One unit from the kit, nose towards +x, its centre at the origin, wheels at y 0. */
-  function modelBody(): { body: THREE.Object3D; materials: THREE.MeshStandardMaterial[] } {
+  function modelBody(): { body: THREE.Object3D; materials: THREE.MeshStandardMaterial[]; cars: Car[] } {
     const parts = kit!;
     const { scale, centres } = consistLayout(parts.carSizes.map((s) => s.length), trainLength, CAR_GAP);
     const body = new THREE.Group();
     const materials: THREE.MeshStandardMaterial[] = [];
+    const cars: Car[] = [];
     parts.cars.forEach((car, i) => {
       const copy = car.clone(true);
       const box = new THREE.Box3().setFromObject(car);
@@ -212,12 +230,12 @@ export function createScene(
       });
       const holder = new THREE.Group();
       holder.add(copy);
-      holder.rotation.y = Math.PI / 2; // the model runs along +z; this points it along +x
       holder.scale.setScalar(scale);
-      holder.position.x = centres[i];
       body.add(holder);
+      // The model runs along +z; a quarter turn points it along +x, the direction of travel.
+      cars.push({ holder, behind: (trainLength / 2 - centres[i]) / UNITS_PER_METRE, baseTurn: Math.PI / 2 });
     });
-    return { body, materials };
+    return { body, materials, cars };
   }
 
   function makeTrain(id: number): DrawnTrain {
@@ -226,15 +244,21 @@ export function createScene(
     const model = kit !== null;
     let body: THREE.Object3D;
     let bodyMaterials: THREE.MeshStandardMaterial[];
+    let cars: Car[];
     if (model) {
-      ({ body, materials: bodyMaterials } = modelBody());
+      ({ body, materials: bodyMaterials, cars } = modelBody());
       body.position.y = world.railTop();
     } else {
       const material = new THREE.MeshStandardMaterial({ color: TRAIN_BODY });
       material.userData.base = TRAIN_BODY;
-      body = new THREE.Mesh(trainGeometry, material);
-      body.position.y = world.railTop() + TRAIN_HEIGHT / 2;
+      const box = new THREE.Mesh(trainGeometry, material);
+      box.scale.x = trainLength;
+      box.position.y = TRAIN_HEIGHT / 2;
+      body = new THREE.Group();
+      body.add(box);
+      body.position.y = world.railTop();
       bodyMaterials = [material];
+      cars = [{ holder: box, behind: TRAIN_LENGTH / 2, baseTurn: 0 }];
     }
     const marker = new THREE.Sprite(new THREE.SpriteMaterial({ sizeAttenuation: false, depthTest: false, transparent: true }));
     marker.scale.set(MARKER_SIZE, MARKER_SIZE, 1);
@@ -250,7 +274,7 @@ export function createScene(
     tag.position.y = lift;
     group.add(body, marker, tag);
     scene.add(group);
-    return { group, body, bodyMaterials, marker, tag, model };
+    return { group, body, cars, bodyMaterials, marker, tag, model };
   }
 
   function disposeTrain(t: DrawnTrain): void {
@@ -310,9 +334,31 @@ export function createScene(
     }
   }
 
+  // The platform each train was last seen in. A train on EXIT has left it behind, but its rear
+  // cars still bend out of it through the points.
+  const lastPlatform = new Map<number, PlatformId>();
+  function observe(s: Snapshot): void {
+    for (const t of s.trains) if (t.pos.track.startsWith('P')) lastPlatform.set(t.id, t.pos.track as PlatformId);
+  }
+
+  /** Puts each car where the track is at its own x, turned to follow it. */
+  function placeCars(t: DrawnTrain, frontX: number, route: Route): THREE.Vector3 {
+    let middle = new THREE.Vector3();
+    t.cars.forEach((car, i) => {
+      const x = frontX - car.behind;
+      const { z, slope } = pathAt(x, route);
+      car.holder.position.set(toScreenX(x, frame), car.holder.position.y, z);
+      car.holder.rotation.y = car.baseTurn - Math.atan2(slope, UNITS_PER_METRE);
+      if (i === Math.floor(t.cars.length / 2)) middle = new THREE.Vector3(toScreenX(x, frame), 0, z);
+    });
+    return middle;
+  }
+
   function render(s: Snapshot): void {
+    observe(s);
     world.setDevices(s.switches);
     world.setJunctionBusy(junctionBusy(s));
+    const views = new Map(s.trains.map((v) => [v.id, v]));
 
     const seen = new Set<number>();
     for (const m of markersFor(s, frame)) {
@@ -330,13 +376,16 @@ export function createScene(
       markerMaterial.map = textureFor(spec);
       markerMaterial.opacity = spec.opacity;
       t.tag.visible = spec.stopped;
-      if (!t.model) t.body.scale.x = m.lengthPx;
-      t.group.position.set(m.px - m.lengthPx / 2, 0, m.lane * LANE_SPACING);
+      const v = views.get(m.id)!;
+      const middle = placeCars(t, v.x, routeOf(v.pos.track, lastPlatform.get(m.id) ?? null));
+      t.marker.position.set(middle.x, t.marker.position.y, middle.z);
+      t.tag.position.set(middle.x, t.tag.position.y, middle.z);
     }
     for (const [id, t] of trains) {
       if (!seen.has(id)) {
         disposeTrain(t);
         trains.delete(id);
+        lastPlatform.delete(id);
       }
     }
     renderer.render(scene, camera);
@@ -360,7 +409,8 @@ export function createScene(
     const rect = renderer.domElement.getBoundingClientRect();
     const points: Array<{ id: number; x: number; y: number }> = [];
     for (const [id, t] of trains) {
-      const p = t.group.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1, 0)).project(camera);
+      const middle = t.cars[Math.floor(t.cars.length / 2)].holder;
+      const p = middle.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1, 0)).project(camera);
       if (Math.abs(p.x) > 1 || Math.abs(p.y) > 1 || p.z > 1) continue;
       points.push({ id, x: ((p.x + 1) / 2) * rect.width, y: ((1 - p.y) / 2) * rect.height });
     }
@@ -384,5 +434,5 @@ export function createScene(
 
   setCamera(DEFAULT_CAMERA);
   resize();
-  return { render, setCamera, onPick, trainScreenPoints, resize, dispose };
+  return { render, observe, setCamera, onPick, trainScreenPoints, resize, dispose };
 }

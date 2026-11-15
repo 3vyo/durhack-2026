@@ -7,13 +7,14 @@ import {
   DEVICE_SITES,
   LANE_SPACING,
   UNITS_PER_METRE,
+  POINTS_LENGTH,
   deviceLook,
   laneOf,
   toScreenX,
   type DeviceKey,
   type Frame,
 } from './layout';
-import { railOffsets } from './rails';
+import { railFit } from './rails';
 
 // The fixed scenery: track, platforms, the four devices and the junction zone. It changes only
 // to show which devices are switched on and whether the junction zone has a train in it.
@@ -32,8 +33,6 @@ const STRIP_DEPTH = 2.2;
 const KIT_RAIL_TOP = 0.1;
 /** How far beyond the frame to draw track, in metres, so it never ends inside the picture. */
 const TRACK_MARGIN = 300;
-/** Length of the diagonal points into a platform and out to EXIT, in metres. */
-const POINTS_LENGTH = 120;
 
 const STRIP_COLOR: Record<TrackId, number> = {
   A: 0x4a5a70,
@@ -80,8 +79,11 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
   let top = STRIP_HEIGHT;
 
   // Platform islands sit in the A and B lanes, which are empty beside the platforms.
-  const platformLength = TRACK_LENGTH.P1 * UNITS_PER_METRE;
-  const platformX = x(TRACK_START.P1) + platformLength / 2;
+  // The islands start after the points, where the platform tracks run straight.
+  const islandStart = TRACK_START.P1 + POINTS_LENGTH + 10;
+  const islandEnd = TRACK_START.EXIT;
+  const platformLength = (islandEnd - islandStart) * UNITS_PER_METRE;
+  const platformX = x((islandStart + islandEnd) / 2);
   for (const lane of ['A', 'B'] as const) {
     const island = roundedBox(platformLength, 0.55, 4.2, 0xaebfd6, 0.2);
     island.position.set(platformX, 0.28, z(lane));
@@ -193,16 +195,23 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
     const pieceMetres = pieceUnits / UNITS_PER_METRE;
 
     const placements: THREE.Matrix4[] = [];
-    const straight = (track: TrackId) => {
-      for (const offset of railOffsets(TRACK_LENGTH[track], pieceMetres)) {
-        const at = TRACK_START[track] + offset;
-        if (at < frame.xMin - TRACK_MARGIN || at > frame.xMax + TRACK_MARGIN) continue;
-        placements.push(new THREE.Matrix4().makeTranslation(x(at), 0, z(track)));
+    // Straight track from `from` to `to` metres in one lane, filled exactly with pieces.
+    const straight = (lane: TrackId, from: number, to: number) => {
+      const a = Math.max(from, frame.xMin - TRACK_MARGIN);
+      const b = Math.min(to, frame.xMax + TRACK_MARGIN);
+      const fit = railFit(b - a, pieceMetres);
+      for (let i = 0; i < fit.count; i++) {
+        const at = a + (i + 0.5) * fit.step;
+        placements.push(new THREE.Matrix4().compose(new THREE.Vector3(x(at), 0, z(lane)), new THREE.Quaternion(), new THREE.Vector3(fit.scale, 1, 1)));
       }
     };
-    for (const track of tracks) straight(track);
-    // Diagonal points: from each entry line into its two platforms, and from each platform
-    // out to EXIT. Drawn only; trains change lanes at the end of a track.
+    // Entry lines run straight to their end, where they split. Platforms run straight once
+    // past the points. EXIT runs straight once the platforms have joined it.
+    for (const entry of ['A', 'B'] as const) straight(entry, TRACK_START[entry], TRACK_START[entry] + TRACK_LENGTH[entry]);
+    for (const p of ['P1', 'P2', 'P3', 'P4'] as const) straight(p, TRACK_START[p] + POINTS_LENGTH, TRACK_START.EXIT);
+    straight('EXIT', TRACK_START.EXIT + POINTS_LENGTH, TRACK_START.EXIT + TRACK_LENGTH.EXIT);
+    // The points: each entry line bends into its two platforms, and each platform bends into
+    // EXIT. Trains follow the same path (pathAt in layout.ts).
     const diagonal = (fromX: number, fromZ: number, toX: number, toZ: number) => {
       const dx = x(toX) - x(fromX);
       const dz = toZ - fromZ;
@@ -214,11 +223,11 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
       );
       placements.push(m);
     };
-    const end = TRACK_START.P1;
-    diagonal(end - POINTS_LENGTH, z('A'), end, z('P1'));
-    diagonal(end - POINTS_LENGTH, z('A'), end, z('P2'));
-    diagonal(end - POINTS_LENGTH, z('B'), end, z('P3'));
-    diagonal(end - POINTS_LENGTH, z('B'), end, z('P4'));
+    const split = TRACK_START.P1;
+    diagonal(split, z('A'), split + POINTS_LENGTH, z('P1'));
+    diagonal(split, z('A'), split + POINTS_LENGTH, z('P2'));
+    diagonal(split, z('B'), split + POINTS_LENGTH, z('P3'));
+    diagonal(split, z('B'), split + POINTS_LENGTH, z('P4'));
     for (const p of ['P1', 'P2', 'P3', 'P4'] as const) diagonal(TRACK_START.EXIT, z(p), TRACK_START.EXIT + POINTS_LENGTH, z('EXIT'));
 
     const rails = new THREE.InstancedMesh(geometry, mesh.material, placements.length);

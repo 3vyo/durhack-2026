@@ -1,7 +1,7 @@
 import type { Snapshot } from '../engine/engine';
 import { TRAIN_LENGTH } from '../shared/constants';
-import { JUNCTION_END_X, JUNCTION_START_X, TRACK_START } from '../shared/map';
-import type { TrackId, TrainId, TrainOutput } from '../shared/types';
+import { JUNCTION_END_X, JUNCTION_START_X, TRACK_START, entryOf } from '../shared/map';
+import type { PlatformId, TrackId, TrainId, TrainOutput } from '../shared/types';
 import { MODE_STYLE, SURFACE, contrastRatio } from './palette';
 
 /**
@@ -99,19 +99,19 @@ export const CAMERA_FOV = 45;
  * junction. 1,000 m, so a train is about a tenth of the width and reads as a model. The
  * overhead view still shows the whole frame, and the minimap the whole line.
  */
-export const ANGLED_FOCUS = { xMin: 5500, xMax: 6500 } as const;
+export const ANGLED_FOCUS = { xMin: 5650, xMax: 6650 } as const;
 
 /** Across the line, the scene runs from the control centre (z -10) to the far platform (z 21). */
 const CONTENT_Z = { from: -10, to: 21 };
 /** How far the angled view looks down, in degrees above the horizon. */
 const ANGLED_ELEVATION = 30;
 /** How far the angled view swings to the left of straight-on, in degrees, to look a little along the line. */
-const ANGLED_SWING = 10;
+const ANGLED_SWING = 4;
 /**
  * The angled camera sits this share of the distance that would fit the focus at its middle.
  * Perspective makes the near tracks wider than the middle, so less than 1 still shows the focus.
  */
-const ANGLED_CLOSENESS = 0.9;
+const ANGLED_CLOSENESS = 0.82;
 /** A little room around the frame, so nothing sits on the very edge. */
 const FIT_MARGIN = 1.03;
 
@@ -163,7 +163,7 @@ export function ndcToCss(ndc: { x: number; y: number }, width: number, height: n
 export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: number; kind: 'track' | 'device' }> {
   const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
   const track = (text: string, x: number, t: TrackId) => ({ text, x, z: lane(t), kind: 'track' as const });
-  const platformEntrance = TRACK_START.P1 + 40;
+  const platformEntrance = TRACK_START.P1 + POINTS_LENGTH + 40;
   const device = (text: string, key: DeviceKey) => ({ text, x: DEVICE_SITES[key].x, z: DEVICE_SITES[key].z - 1.4, kind: 'device' as const });
   return [
     track('A', Math.max(f.xMin + 150, ANGLED_FOCUS.xMin + 220), 'A'),
@@ -172,7 +172,7 @@ export function labelAnchors(f: Frame): Array<{ text: string; x: number; z: numb
     track('P2', platformEntrance, 'P2'),
     track('P3', platformEntrance, 'P3'),
     track('P4', platformEntrance, 'P4'),
-    track('EXIT', Math.min(f.xMax - 150, ANGLED_FOCUS.xMax - 30), 'EXIT'),
+    track('EXIT', Math.min(f.xMax - 150, ANGLED_FOCUS.xMax - 110), 'EXIT'),
     device('Control centre', 'centre'),
     device('Platform keeper', 'platformKeeper'),
     device('Sensors', 'sensors'),
@@ -188,9 +188,9 @@ export type DeviceKey = 'centre' | 'platformKeeper' | 'junctionKeeper' | 'sensor
  * control centre stands back from the line, the others beside platform P1's track.
  */
 export const DEVICE_SITES: Record<DeviceKey, { x: number; z: number }> = {
-  centre: { x: 5720, z: -9 },
-  platformKeeper: { x: 5560, z: -4 },
-  sensors: { x: 5880, z: -4 },
+  centre: { x: 5850, z: -9 },
+  platformKeeper: { x: 5740, z: -4 },
+  sensors: { x: 5980, z: -4 },
   junctionKeeper: { x: 6320, z: -4 },
 };
 
@@ -232,4 +232,52 @@ export function junctionBusy(s: Snapshot): boolean {
     const rear = t.x - TRAIN_LENGTH;
     return t.x > JUNCTION_START_X && rear < JUNCTION_END_X;
   });
+}
+
+/**
+ * Length of the points, in metres. Each entry line splits where it ends, and each branch
+ * bends across into its platform over the platform's first POINTS_LENGTH metres. Each
+ * platform bends into EXIT over EXIT's first POINTS_LENGTH metres. Trains stop well clear
+ * of both bends, so a stopped train always stands straight.
+ */
+export const POINTS_LENGTH = 120;
+
+/** The route a train is on, as far as the picture needs it. */
+export interface Route {
+  entry: 'A' | 'B' | null;
+  platform: PlatformId | null;
+}
+
+/**
+ * The route of a train, from the track its front is on. A train on EXIT has left its
+ * platform behind, so the caller passes the platform it was last seen in, if any.
+ */
+export function routeOf(track: TrackId, lastPlatform: PlatformId | null): Route {
+  if (track === 'A' || track === 'B') return { entry: track, platform: null };
+  if (track === 'EXIT') return { entry: lastPlatform ? entryOf(lastPlatform) : null, platform: lastPlatform };
+  return { entry: entryOf(track), platform: track };
+}
+
+/**
+ * Where the track is across the line at x metres along a route: z in scene units, and how
+ * fast z changes per metre (0 on straight track). Through the points it runs straight from
+ * one lane to the next, the way the drawn track does, so each car follows the rails.
+ */
+export function pathAt(x: number, route: Route): { z: number; slope: number } {
+  const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
+  const entry = route.entry ?? (route.platform ? entryOf(route.platform) : null);
+  const start = entry ? lane(entry) : lane('EXIT');
+  const platform = route.platform ? lane(route.platform) : start;
+  const exit = lane('EXIT');
+  const bend = (from: number, to: number, x0: number) => {
+    const t = (x - x0) / POINTS_LENGTH;
+    return { z: from + (to - from) * t, slope: (to - from) / POINTS_LENGTH };
+  };
+  const intoPlatforms = TRACK_START.P1;
+  const intoExit = TRACK_START.EXIT;
+  if (x < intoPlatforms) return { z: start, slope: 0 };
+  if (x < intoPlatforms + POINTS_LENGTH) return route.platform ? bend(start, platform, intoPlatforms) : { z: start, slope: 0 };
+  if (x < intoExit) return { z: platform, slope: 0 };
+  if (x < intoExit + POINTS_LENGTH) return route.platform ? bend(platform, exit, intoExit) : { z: exit, slope: 0 };
+  return { z: exit, slope: 0 };
 }

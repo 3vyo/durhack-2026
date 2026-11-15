@@ -114,10 +114,10 @@ export function heroTiles(i: { delaySeconds: Pair<number>; stopped: Pair<number>
   const saved = i.delaySeconds.baseline - i.delaySeconds.ours;
   const stoppedText = (n: number) => (n === 0 ? 'every train is moving' : trainsText(n, 'stopped on the line'));
   return [
-    { label: "Today's system: delay per train", value: minutes(i.delaySeconds.baseline), sub: stoppedText(i.stopped.baseline), tone: 'baseline' },
-    { label: 'Our fallback: delay per train', value: minutes(i.delaySeconds.ours), sub: stoppedText(i.stopped.ours), tone: 'ours' },
+    { label: "Today's system", value: minutes(i.delaySeconds.baseline), sub: stoppedText(i.stopped.baseline), tone: 'baseline' },
+    { label: 'Our fallback', value: minutes(i.delaySeconds.ours), sub: stoppedText(i.stopped.ours), tone: 'ours' },
     {
-      label: 'Delay saved per train',
+      label: 'Delay saved',
       value: minutes(Math.max(0, saved)),
       sub: saved > 0 ? 'same timetable, same failure' : 'no saving yet',
       tone: 'neutral',
