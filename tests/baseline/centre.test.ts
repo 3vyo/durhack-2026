@@ -769,6 +769,192 @@ describe('taking over from routes our trains set (design: "The centre comes firs
     expect(permitFor(messages, 1)).toMatchObject({ nextTrack: 'P2', untilX: STOP_X });
     expect(permitFor(messages, 2).nextTrack).toBe('P1');
   });
+
+  // "Platform keeper switched off": with the platform sensors off too, a train of ours standing
+  // at the end of its entry track sets its route into each platform of its pair in turn, to
+  // look into it. While both hold a train it goes on looking, one tick each. The centre comes
+  // back on one of those ticks. Train 2 has broken down in P2 and never leaves it.
+  describe('a route that is only a look into a platform another train is on', () => {
+    const waiting = stopped(4, 'A', TRACK_LENGTH.A - 0.01);
+    const stuck = broken(2, 'P2', PLATFORM_STOP);
+    const lookingIntoP2 = routes({ 4: 'P2' });
+
+    it('does not send a train stopped at the end of its entry track there', () => {
+      const memory = updateMemory(initialMemory(timetable), 0, [stuck, waiting], occupied('P2'), lookingIntoP2);
+      expect(memory.platformFor.has(4)).toBe(false);
+    });
+
+    it('gives the train no platform while both of its pair hold a train, and the other one as soon as it is empty', () => {
+      const centre = makeCentre(timetable);
+      const inP1 = stopped(1, 'P1', PLATFORM_STOP);
+      const held = permitFor(centre.step(0, [inP1, stuck, waiting], occupied('P1', 'P2'), lookingIntoP2), 4);
+      expect(held).toMatchObject({ nextTrack: null, untilX: ENTRY_END_X });
+      // Train 1 has gone and P1 reads empty. The route still looks into P2, and the train is
+      // sent to P1 all the same.
+      const freed = permitFor(centre.step(1, [stuck, waiting], occupied('P2'), lookingIntoP2), 4);
+      expect(freed).toMatchObject({ nextTrack: 'P1', untilX: STOP_X });
+    });
+
+    it('never gives the train the platform it looked into, however long the train there stays', () => {
+      const centre = makeCentre(timetable);
+      for (let now = 0; now < 30; now += 1) {
+        const permit = permitFor(centre.step(now, [stuck, waiting], occupied('P1', 'P2'), lookingIntoP2), 4);
+        expect(permit).toMatchObject({ nextTrack: null, untilX: ENTRY_END_X });
+      }
+    });
+
+    it("leaves the centre's own earlier choice of the other platform standing", () => {
+      const chose = sentTo(seen([waiting]), { 4: 'P1' });
+      const memory = updateMemory(chose, 1, [stuck, waiting], occupied('P2'), lookingIntoP2);
+      expect(memory.platformFor.get(4)).toBe('P1');
+    });
+
+    it('still takes over a route into an empty platform from a stopped train', () => {
+      // The fixed split and the end of a creep both set off from a stand at the end of the track.
+      const memory = updateMemory(initialMemory(timetable), 0, [stuck, waiting], occupied('P2'), routes({ 4: 'P1' }));
+      expect(memory.platformFor.get(4)).toBe('P1');
+    });
+
+    it('still takes over a route into a platform another train is on from a train that can no longer stop', () => {
+      // Train 2 is leaving P2 with its rear still in it. Train 4 has set off into P2 and cannot
+      // stop before the end of A, so the centre must not point it anywhere else.
+      const leaving = train(2, 'EXIT', 50);
+      const running = train(4, 'A', TRACK_LENGTH.A - 5, 5);
+      expect(reachOf(running)).toBeGreaterThan(ENTRY_END_X);
+      const memory = updateMemory(initialMemory(timetable), 0, [leaving, running], occupied('P2'), lookingIntoP2);
+      expect(memory.platformFor.get(4)).toBe('P2');
+      expect(nextTrackFor(running, memory)).toBe('P2');
+    });
+
+    it('keeps a route the centre chose itself, which the train sets because its permits name it', () => {
+      // The platform reads empty, as it does for as long as the centre stays on: no other train
+      // is sent to a platform the centre has chosen for one.
+      const far = stopped(4, 'A', 3000);
+      const chose = sentTo(seen([far]), { 4: 'P2' });
+      const memory = updateMemory(chose, 1, [far], clear, lookingIntoP2);
+      expect(memory.platformFor.get(4)).toBe('P2');
+    });
+
+    it('sends the train to the other platform when the one it looked into holds only the tail of a train that is leaving', () => {
+      // The end of a creep: train 4 sees no train in P1, because train 1's rear is in the last
+      // 100 m, out of its sight. The centre's first step lands on that tick, with train 4 still
+      // stopped. P2 is empty, so the centre sends it there and does not hold it for P1.
+      const leaving = train(1, 'EXIT', 50);
+      const permit = permitFor(makeCentre(timetable).step(0, [leaving, waiting], occupied('P1'), routes({ 4: 'P1' })), 4);
+      expect(permit).toMatchObject({ nextTrack: 'P2', untilX: STOP_X });
+    });
+  });
+
+  // The centre chose a platform for a train and was then switched off. A train of ours ahead
+  // took that platform on its own rules, and the centre comes back to a choice that is out of
+  // date. If it kept the choice, it would hold the train for a platform that may never empty.
+  describe('an earlier choice of a platform another train has taken since', () => {
+    const waiting = stopped(4, 'A', TRACK_LENGTH.A - 0.01);
+    const stuck = broken(2, 'P1', PLATFORM_STOP);
+
+    it('lets go of the choice for a train that can still stop', () => {
+      const chose = sentTo(seen([waiting]), { 4: 'P1' });
+      const memory = updateMemory(chose, 1, [stuck, waiting], occupied('P1'), none);
+      expect(memory.platformFor.has(4)).toBe(false);
+    });
+
+    it('lets go of it whether the route names it, names the other platform or names none', () => {
+      // The other platform holds a train too, so a route into either is only a look. A look
+      // into P2, whose train will leave, must not leave the train held for P1.
+      const chose = sentTo(seen([waiting]), { 4: 'P1' });
+      const inP2 = stopped(1, 'P2', PLATFORM_STOP);
+      for (const route of ['P1', 'P2', null] as const) {
+        const memory = updateMemory(chose, 1, [inP2, stuck, waiting], occupied('P1', 'P2'), routes({ 4: route }));
+        expect(memory.platformFor.has(4)).toBe(false);
+      }
+    });
+
+    it('sends the train to the other platform of its pair when the centre comes back', () => {
+      const centre = makeCentre(timetable);
+      // The centre chooses P2 for train 2 and P1 for train 4, the default of each.
+      const before = centre.step(0, [stopped(2, 'A', 5000), stopped(4, 'A', 4800)], clear, none);
+      expect(permitFor(before, 2).nextTrack).toBe('P2');
+      expect(permitFor(before, 4).nextTrack).toBe('P1');
+      // While it is off, train 2 takes P1 on the fixed split and breaks down there.
+      const back = centre.step(100, [stuck, waiting], occupied('P1'), none);
+      expect(permitFor(back, 4)).toMatchObject({ nextTrack: 'P2', untilX: STOP_X });
+    });
+
+    it('keeps the choice for a train that can no longer stop before the end of its entry track', () => {
+      const running = train(4, 'A', TRACK_LENGTH.A - 5, 5);
+      expect(reachOf(running)).toBeGreaterThan(ENTRY_END_X);
+      const chose = sentTo(seen([running]), { 4: 'P1' });
+      const memory = updateMemory(chose, 1, [stuck, running], occupied('P1'), none);
+      expect(memory.platformFor.get(4)).toBe('P1');
+    });
+
+    it('keeps the choice while the platform reads empty', () => {
+      const chose = sentTo(seen([waiting]), { 4: 'P1' });
+      const memory = updateMemory(chose, 1, [broken(2, 'P2', PLATFORM_STOP), waiting], occupied('P2'), none);
+      expect(memory.platformFor.get(4)).toBe('P1');
+    });
+  });
+
+  // Trains on one entry track cannot pass each other. When the front train lets go of its
+  // platform, a train behind it must not go on holding the only free one of the pair.
+  describe('dealing an entry track\'s platforms again, front train first', () => {
+    // Three trains in a row on A, and one on B.
+    const line: TimetableEntry[] = [
+      { id: 1, entry: 'A', enterAt: 0, platform: 'P2', leader: null, dwell: 30 },
+      { id: 2, entry: 'A', enterAt: 60, platform: 'P1', leader: 1, dwell: 30 },
+      { id: 3, entry: 'A', enterAt: 120, platform: 'P2', leader: 2, dwell: 30 },
+      { id: 4, entry: 'B', enterAt: 0, platform: 'P3', leader: null, dwell: 30 },
+    ];
+    const stuck = broken(1, 'P1', PLATFORM_STOP);
+    const front = stopped(2, 'A', TRACK_LENGTH.A - 0.01);
+    const behind = stopped(3, 'A', TRACK_LENGTH.A - 150);
+    const sent = (trains: TrainState[], to: Record<number, PlatformId>) => sentTo(seen(trains, 0, initialMemory(line)), to);
+
+    it('takes the platform of a train behind one that has none, when both can still stop', () => {
+      const memory = updateMemory(sent([front, behind], { 2: 'P1', 3: 'P2' }), 1, [stuck, front, behind], occupied('P1'), none);
+      expect([...memory.platformFor]).toEqual([[1, 'P1']]);
+    });
+
+    it('gives the free platform to the front train and none to the train behind it', () => {
+      const centre = makeCentre(line);
+      // The centre chooses P2 for train 1 and P1 for train 2, the default of each.
+      const before = centre.step(0, [stopped(1, 'A', 5000), stopped(2, 'A', 4800)], clear, none);
+      expect(permitFor(before, 1).nextTrack).toBe('P2');
+      expect(permitFor(before, 2).nextTrack).toBe('P1');
+      // While it is off, train 1 takes P1 on the fixed split and breaks down there. The centre
+      // comes back as train 2 rolls up to the end of A. By the centre's measure train 2 cannot
+      // stop there, so its choice of P1 stands for now, and the free P2 goes to train 3.
+      const rolling = train(2, 'A', TRACK_LENGTH.A - 5, 5);
+      expect(reachOf(rolling)).toBeGreaterThan(ENTRY_END_X);
+      const first = centre.step(100, [stuck, rolling, behind], occupied('P1'), none);
+      expect(permitFor(first, 2)).toMatchObject({ nextTrack: 'P1', untilX: ENTRY_END_X });
+      expect(permitFor(first, 3).nextTrack).toBe('P2');
+      // Train 2 has stopped. It lets P1 go, and train 3 gives P2 up to it.
+      const second = centre.step(101, [stuck, front, behind], occupied('P1'), routes({ 2: 'P1', 3: 'P2' }));
+      expect(permitFor(second, 2)).toMatchObject({ nextTrack: 'P2', untilX: STOP_X });
+      expect(permitFor(second, 3)).toMatchObject({ nextTrack: null, untilX: xOf(behind.pos) });
+    });
+
+    it('leaves a train behind its platform when the train in front has one', () => {
+      const memory = updateMemory(sent([front, behind], { 2: 'P2', 3: 'P1' }), 1, [front, behind], clear, none);
+      expect([...memory.platformFor]).toEqual([[2, 'P2'], [3, 'P1']]);
+    });
+
+    it('leaves a train on another entry track its platform', () => {
+      const onB = stopped(4, 'B', TRACK_LENGTH.B - 150);
+      const memory = updateMemory(sent([front, onB], { 2: 'P1', 4: 'P3' }), 1, [stuck, front, onB], occupied('P1'), none);
+      expect([...memory.platformFor]).toEqual([[1, 'P1'], [4, 'P3']]);
+    });
+
+    it('leaves a train that can no longer stop its platform, though a train in front has none', () => {
+      // This cannot happen on a safe railway, since the train behind would run into the one in
+      // front. The centre still never takes a platform from a train that cannot stop.
+      const running = train(3, 'A', TRACK_LENGTH.A - 5, 5);
+      const ahead = stopped(2, 'A', TRACK_LENGTH.A - 1);
+      const memory = updateMemory(sent([ahead, running], { 3: 'P2' }), 1, [ahead, running], clear, none);
+      expect([...memory.platformFor]).toEqual([[3, 'P2']]);
+    });
+  });
 });
 
 describe('taking over a train already in the junction zone (design: "The centre comes first")', () => {
@@ -1227,6 +1413,26 @@ describe('layouts (design: "Layouts")', () => {
       const messages = makeCentre(hub).step(0, trains, readings(), routes({ 4: 'P7' }));
       expect(permitFor(messages, 4)).toMatchObject({ nextTrack: 'P7', untilX: STOP_X });
       expect(permitFor(messages, 7).nextTrack).toBe('P8');
+    });
+
+    it.each(LAYOUT_IDS)('on %s, does not take over a look into a platform another train is on, on any entry track', (layout) => {
+      applyLayout(layout);
+      for (const platform of PLATFORMS) {
+        const entry = entryOf(platform);
+        const other = pairOf(entry).find((p) => p !== platform)!;
+        const id = hub.find((e) => e.entry === entry)!.id;
+        const waiting = stopped(id, entry, TRACK_LENGTH[entry] - 0.01);
+        const stuck = broken(99, platform, PLATFORM_STOP);
+        const centre = makeCentre(hub);
+        const look = routes({ [id]: platform });
+        // The other platform of the pair holds a train too, then empties.
+        const both = readings({ [platform]: true, [other]: true });
+        expect(permitFor(centre.step(0, [stuck, waiting], both, look), id)).toMatchObject({ nextTrack: null, untilX: ENTRY_END_X });
+        expect(permitFor(centre.step(1, [stuck, waiting], readings({ [platform]: true }), look), id)).toMatchObject({
+          nextTrack: other,
+          untilX: STOP_X,
+        });
+      }
     });
   });
 

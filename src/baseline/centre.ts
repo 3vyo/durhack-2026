@@ -52,7 +52,8 @@ import type {
 //
 // Our trains run on their own rules while the centre is off. When it comes back it takes
 // over from where they are: a platform a train has set its route to, and a train already
-// in the junction zone.
+// in the junction zone. It holds no train that can still stop to a platform another train is
+// on, whether the train's route or the centre's own earlier choice names it.
 //
 // Radio working: once the centre has been down for RADIO_WORKING_DELAY, staff move the
 // stopped trains by radio. radioStep makes the same decisions as step, but releases one
@@ -257,27 +258,112 @@ function updatePlan(
  * train on an entry track whose route is set into a platform of its own pair is sent there,
  * even if the centre chose another one: our trains choose platforms themselves while the
  * centre is off, and the centre takes over from where they are. It ignores a route into
- * another track's pair or into a platform outside the layout.
+ * another track's pair or into a platform outside the layout. Where it takes over no route,
+ * the centre's own earlier choice stands.
+ *
+ * Neither a route nor an earlier choice holds a train to a platform it must let go
+ * (mustLetGo), and each entry track's queue is dealt in order (dealFrontFirst).
+ * Design: "The centre comes first".
  */
-function updatePlatforms(memory: CentreMemory, trains: TrainState[], routes: Routes): Map<TrainId, PlatformId> {
+function updatePlatforms(
+  memory: CentreMemory,
+  trains: TrainState[],
+  sensors: SensorReadings,
+  routes: Routes,
+): Map<TrainId, PlatformId> {
   const platformFor = new Map<TrainId, PlatformId>();
   for (const train of trains) {
-    const { track } = train.pos;
-    const known = memory.platformFor.get(train.id);
-    const route = routes.get(train.id) ?? null;
-    if (isPlatform(track)) platformFor.set(train.id, track);
-    else if (isEntryTrack(track) && route !== null && isOwnPlatform(track, route)) {
-      platformFor.set(train.id, route);
-    } else if (known && (isEntryTrack(track) || rearX(train) < TRACK_START.EXIT)) {
-      platformFor.set(train.id, known);
-    }
+    const known = memory.platformFor.get(train.id) ?? null;
+    const platform = platformToKeep(train, known, routes.get(train.id) ?? null, sensors);
+    if (platform) platformFor.set(train.id, platform);
   }
-  return platformFor;
+  return dealFrontFirst(platformFor, trains);
+}
+
+/**
+ * The platform one train keeps from before this step's choices, or null.
+ * - In a platform: that platform.
+ * - On an entry track: the platform of its own pair its route is set into, else the centre's
+ *   earlier choice, but never one it must let go.
+ * - On EXIT: the platform it left, until its rear is out of it.
+ */
+function platformToKeep(
+  train: TrainState,
+  known: PlatformId | null,
+  route: TrackId | null,
+  sensors: SensorReadings,
+): PlatformId | null {
+  const { track } = train.pos;
+  if (isPlatform(track)) return track;
+  if (isEntryTrack(track)) {
+    if (route !== null && isOwnPlatform(track, route) && !mustLetGo(train, route, sensors)) return route;
+    return known !== null && !mustLetGo(train, known, sensors) ? known : null;
+  }
+  return known !== null && rearX(train) < TRACK_START.EXIT ? known : null;
 }
 
 /** True if `route` is a platform of the layout that this entry track owns. */
 function isOwnPlatform(entry: EntryId, route: TrackId): route is PlatformId {
   return isPlatform(route) && inLayout(route) && pairOf(entry).includes(route);
+}
+
+/** True if a train on an entry track can still stop before the end of that track. */
+function canStopOnEntry(train: TrainState): boolean {
+  return reachOf(train) <= endX(train.pos.track);
+}
+
+/**
+ * True if a train on an entry track must not be held to this platform: another train is on
+ * the platform, and this train can still stop before the end of its entry track. It goes for
+ * a route the train has set and for the centre's own earlier choice alike. Without it the
+ * centre would keep the train at the end of its entry track until that platform is empty. If
+ * the train there has broken down, that is for good, with the other platform of the pair
+ * unused and the whole entry track standing behind.
+ *
+ * A route like this is only a look. With the platform keeper and the platform sensors off, a
+ * train of ours that stands at the end of its entry track sets its route into each platform
+ * of its pair in turn, to look into it with its own sensor. While both hold a train it goes
+ * on doing that, tick by tick. It has not chosen either.
+ *
+ * An earlier choice like this is out of date. While the centre is on, no other train reaches
+ * a platform the centre has chosen for one. While it is off, a train of ours can take that
+ * platform on its own rules. So can one during radio working, whose permits our trains ignore.
+ *
+ * Everything else still stands:
+ * - A keeper grant and the fixed split need the platform to read empty.
+ * - A creep ends when the train sees no train in the platform. One tick later it is moving in
+ *   and can no longer stop.
+ * - A train that can no longer stop is on its way in, and the centre never moves it.
+ * - A baseline train only ever has the centre's own choice, and no other train gets onto that.
+ * Design: "The centre comes first" and "Platform keeper switched off".
+ */
+function mustLetGo(train: TrainState, platform: PlatformId, sensors: SensorReadings): boolean {
+  return !readsEmpty(platform, sensors) && canStopOnEntry(train);
+}
+
+/**
+ * Keeps the platforms of each entry track's queue in order. Trains on one entry track cannot
+ * pass each other. So behind a train that has no platform and can still stop, no train that
+ * can still stop keeps one: a platform held further back could never be reached, and the
+ * train in front could never be given it. assignPlatforms then deals again, front train first.
+ *
+ * While the centre stays on this changes nothing, because it chooses front train first and
+ * keeps its choices. It matters when the centre comes back to an earlier choice that is out
+ * of date. The front train lets go of a platform another train took (mustLetGo), and the
+ * free platform of its pair may be one the centre chose for a train behind it.
+ */
+function dealFrontFirst(platformFor: Map<TrainId, PlatformId>, trains: TrainState[]): Map<TrainId, PlatformId> {
+  const dealt = new Map(platformFor);
+  const tracks = new Set(trains.map((train) => train.pos.track).filter(isEntryTrack));
+  for (const track of tracks) {
+    const queue = trains
+      .filter((train) => train.pos.track === track && canStopOnEntry(train))
+      .sort((a, b) => xOf(b.pos) - xOf(a.pos) || a.id - b.id);
+    const firstWithout = queue.findIndex((train) => !dealt.has(train.id));
+    if (firstWithout < 0) continue;
+    for (const train of queue.slice(firstWithout + 1)) dealt.delete(train.id);
+  }
+  return dealt;
 }
 
 /**
@@ -337,7 +423,7 @@ export function updateMemory(
   memory: CentreMemory,
   now: number,
   trains: TrainState[],
-  _sensors: SensorReadings,
+  sensors: SensorReadings,
   routes: Routes = new Map(),
 ): CentreMemory {
   const restart = isRestart(memory, now);
@@ -349,7 +435,7 @@ export function updateMemory(
   return {
     ...memory,
     plans,
-    platformFor: updatePlatforms(memory, trains, routes),
+    platformFor: updatePlatforms(memory, trains, sensors, routes),
     junctionOrder: updateJunctionOrder(memory, plans, junctionHolder, trains, now),
     junctionHolder,
     lastStepAt: now,
@@ -431,6 +517,7 @@ export function isAvailable(resource: ResourceId, memory: CentreMemory, sensors:
 /**
  * Picks the platform the centre sends a train to, or null if none is free. It picks from
  * the entry track's own pair, the timetable's default first, and keeps a choice once made.
+ * updatePlatforms drops a choice that no longer stands before this is asked.
  * The pair is the one the train's entry track owns: A owns P1 and P2, B owns P3 and P4,
  * C owns P5 and P6, D owns P7 and P8. The centre sees the true state, so it goes by the
  * track the train is on.
