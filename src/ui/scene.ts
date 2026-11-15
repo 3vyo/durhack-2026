@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Snapshot } from '../engine/engine';
-import type { PlatformId } from '../shared/types';
+import type { EntryId, PlatformId } from '../shared/types';
 import { TRAIN_LENGTH } from '../shared/constants';
-import { isPlatform } from '../shared/map';
+import { isEntryTrack, isPlatform } from '../shared/map';
 import {
   DEFAULT_CAMERA,
   LANE_SPACING,
@@ -377,8 +377,14 @@ export function createScene(
   // The platform each train was last seen in. A train on EXIT has left it behind, but its rear
   // cars still bend out of it through the points.
   const lastPlatform = new Map<number, PlatformId>();
+  // The entry line each train was last seen on. A train sent over a cross link has its front in
+  // the next line's platform while its rear cars are still on this line.
+  const lastEntry = new Map<number, EntryId>();
   function observe(s: Snapshot): void {
-    for (const t of s.trains) if (isPlatform(t.pos.track)) lastPlatform.set(t.id, t.pos.track);
+    for (const t of s.trains) {
+      if (isPlatform(t.pos.track)) lastPlatform.set(t.id, t.pos.track);
+      else if (isEntryTrack(t.pos.track)) lastEntry.set(t.id, t.pos.track);
+    }
   }
 
   /** Puts each car where the track is at its own x, turned to follow it. */
@@ -417,7 +423,7 @@ export function createScene(
       markerMaterial.opacity = spec.opacity;
       t.tag.visible = spec.stopped;
       const v = views.get(m.id)!;
-      const middle = placeCars(t, v.x, routeOf(v.pos.track, lastPlatform.get(m.id) ?? null));
+      const middle = placeCars(t, v.x, routeOf(v.pos.track, lastPlatform.get(m.id) ?? null, lastEntry.get(m.id) ?? null));
       t.marker.position.set(middle.x, t.marker.position.y, middle.z);
       t.tag.position.set(middle.x, t.tag.position.y, middle.z);
     }
@@ -426,6 +432,7 @@ export function createScene(
         disposeTrain(t);
         trains.delete(id);
         lastPlatform.delete(id);
+        lastEntry.delete(id);
       }
     }
     controls.update();

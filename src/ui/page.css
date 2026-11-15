@@ -340,6 +340,23 @@ select option {
   text-overflow: ellipsis;
 }
 
+/* The Cross links box sits beside the layout list. It is dimmed where the layout has one line. */
+.cross {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cross input {
+  accent-color: #a9b6c5;
+  cursor: inherit;
+}
+.cross:has(input:disabled) {
+  color: var(--ink-3);
+  cursor: default;
+}
+
 /* A failure switch reads as a signal lamp: lit green when on, red when switched off. */
 .lamp {
   display: inline-flex;

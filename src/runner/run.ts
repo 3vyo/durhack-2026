@@ -3,12 +3,25 @@ import { averageDelay, timeToNormal } from '../engine/metrics';
 import type { TrainProgram } from '../engine/ports';
 import { RUN_LENGTH, generateTimetable, type TimetableOptions } from '../engine/timetable';
 import { SCENARIOS, type Scenario, type ScenarioId } from '../scenarios/scenarios';
-import { DEFAULT_LAYOUT, LAYOUT, LAYOUT_IDS, applyLayout, isLayoutId, type LayoutId } from '../shared/map';
+import {
+  CROSS_LINES,
+  DEFAULT_LAYOUT,
+  LAYOUT,
+  LAYOUT_IDS,
+  applyCrossLines,
+  applyLayout,
+  isLayoutId,
+  type LayoutId,
+} from '../shared/map';
 import { failureWindow, pressesFor } from './failure';
 
 // Every run here is built on the layout in use (src/shared/map.ts): the timetable spreads its
 // trains over that layout's entry tracks, and the engine and both programs read the same
 // layout. Pick the layout before a run, with onLayout or applyLayout, never during one.
+//
+// The cross links switch travels the same way ("Cross links" in docs/design.md). The engine,
+// the centre and both programs read the switch in use, so set it before a run, with
+// onCrossLines or applyCrossLines, never during one. It is off unless a run asks for it.
 
 /**
  * Does `work` with `layout` in use, then puts back the layout that was in use before, even if
@@ -24,6 +37,20 @@ export function onLayout<T>(layout: LayoutId, work: () => T): T {
   }
 }
 
+/**
+ * Does `work` with the cross links switched on or off, then puts the switch back as it was
+ * before, even if `work` throws. So one run's switch cannot leak into the next.
+ */
+export function onCrossLines<T>(on: boolean, work: () => T): T {
+  const before = CROSS_LINES;
+  applyCrossLines(on);
+  try {
+    return work();
+  } finally {
+    applyCrossLines(before);
+  }
+}
+
 export interface RunOptions {
   seed: number;
   scenario: Scenario;
@@ -31,6 +58,11 @@ export interface RunOptions {
   timetable: TimetableOptions;
   /** How long the run may last. RUN_LENGTH unless a test needs a shorter one. */
   runLength?: number;
+  /**
+   * True or false switches the cross links on or off for this run only, and the switch is put
+   * back afterwards. Left out, the run uses the switch as it stands, like the layout.
+   */
+  crossLines?: boolean;
 }
 
 /**
@@ -38,6 +70,11 @@ export interface RunOptions {
  * is stepped until every train has left or RUN_LENGTH runs out.
  */
 export function runScenario(o: RunOptions): RunResult {
+  if (o.crossLines === undefined) return runOnce(o);
+  return onCrossLines(o.crossLines, () => runOnce(o));
+}
+
+function runOnce(o: RunOptions): RunResult {
   const timetable = generateTimetable(o.seed, o.timetable);
   const engine = new Engine({
     timetable,
@@ -163,15 +200,21 @@ export function runBatch(
   };
 }
 
-/** What the page sends the batch worker. No layout means the default one. */
+/**
+ * What the page sends the batch worker. No layout means the default one, and no `crossLines`
+ * means the cross links are off.
+ */
 export interface BatchRequest {
   scenario: ScenarioId;
   layout?: LayoutId;
+  crossLines?: boolean;
 }
 
 /**
- * The batch worker's whole job: run one scenario's batch on the layout the page asked for.
- * Throws for a layout or scenario that does not exist, instead of quietly running another.
+ * The batch worker's whole job: run one scenario's batch on the layout the page asked for,
+ * with the cross links on only if the page asked for them. Throws for a layout or scenario
+ * that does not exist, or a `crossLines` that is not true or false, instead of quietly
+ * running another batch. The layout and the switch in use are put back afterwards.
  */
 export function runBatchRequest(
   request: BatchRequest,
@@ -184,10 +227,16 @@ export function runBatchRequest(
   if (!isLayoutId(layout)) {
     throw new Error(`unknown layout ${JSON.stringify(layout)}: it must be one of ${LAYOUT_IDS.join(', ')}`);
   }
+  const crossLines: unknown = request.crossLines ?? false;
+  if (typeof crossLines !== 'boolean') {
+    throw new Error(`crossLines must be true or false, but is ${JSON.stringify(crossLines)}`);
+  }
   if (!Object.hasOwn(SCENARIOS, request.scenario)) {
     throw new Error(`unknown scenario ${JSON.stringify(request.scenario)}`);
   }
-  return onLayout(layout, () => runBatch(SCENARIOS[request.scenario], seeds, programs, tt, runLength));
+  return onLayout(layout, () =>
+    onCrossLines(crossLines, () => runBatch(SCENARIOS[request.scenario], seeds, programs, tt, runLength)),
+  );
 }
 
 /** True if any run collided, in either program. A baseline collision is a bug in the rig. */

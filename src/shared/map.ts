@@ -76,9 +76,26 @@ export function applyLayout(id: LayoutId): void {
   PLATFORMS = LAYOUT.entries.flatMap((e) => PLATFORM_PAIRS[e]);
 }
 
-/** Go back to the default layout. */
+/** Go back to the default layout, with the cross links switched off. */
 export function resetLayout(): void {
   applyLayout(DEFAULT_LAYOUT);
+  applyCrossLines(false);
+}
+
+/**
+ * The cross links switch, off by default. With it on, the end of an entry track also leads to
+ * the first platform of the next line down: A to P3, B to P5, C to P7. From "Cross links" in
+ * docs/design.md. It is declared with `let`, like the layout, so read it inside a function.
+ */
+export let CROSS_LINES = false;
+
+/**
+ * Switch the cross links on or off for every part of the build. Call it before a run starts,
+ * never in the middle of one. `applyLayout` leaves the switch alone, and `resetLayout` turns
+ * it off.
+ */
+export function applyCrossLines(on: boolean): void {
+  CROSS_LINES = on;
 }
 
 /** Where every entry track ends and every platform starts on the x axis. */
@@ -190,10 +207,29 @@ export function inJunctionZone(pos: Position): boolean {
   return false;
 }
 
-/** The tracks a train can move onto from the end of this one. EXIT leads off the map. */
+/**
+ * The tracks a train can move onto from the end of this one. EXIT leads off the map. An entry
+ * track leads to its own pair, then to the platform its cross link reaches, if it has one.
+ */
 export function successors(track: TrackId): TrackId[] {
-  if (isEntryTrack(track)) return [...PLATFORM_PAIRS[track]];
+  if (isEntryTrack(track)) return [...PLATFORM_PAIRS[track], ...crossPlatforms(track)];
   return track === 'EXIT' ? [] : ['EXIT'];
+}
+
+/**
+ * The platforms of another line that the end of this entry track also leads to: the first
+ * platform of the next line down, so P3 for A, P5 for B and P7 for C. It is empty when the
+ * cross links are switched off, and for the last line of the layout, which has no line below
+ * it. Only one direction is built, so no line reaches the pair above it.
+ *
+ * Only the control centre sends a train this way. The platform keeper, the fixed split and
+ * the creep use `pairOf`, never this.
+ */
+export function crossPlatforms(entry: EntryId): PlatformId[] {
+  if (!CROSS_LINES) return [];
+  const next = ALL_ENTRIES[ALL_ENTRIES.indexOf(entry) + 1];
+  if (next === undefined || !ENTRIES.includes(next)) return [];
+  return [PLATFORM_PAIRS[next][0]];
 }
 
 /** The two platforms an entry track owns, lowest number first. */

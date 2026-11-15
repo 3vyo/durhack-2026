@@ -1,5 +1,5 @@
 import { BRAKE, TICK } from '../shared/constants';
-import { isEntryTrack, successors } from '../shared/map';
+import { crossPlatforms, isEntryTrack, successors } from '../shared/map';
 import type { EntryId, Message, PlatformId, TrackId, TrainId, TrainState } from '../shared/types';
 import { brakeLimit, elapsed, type Leader } from './follow';
 import { STOP_SHORT, type TrainNumbers } from './numbers';
@@ -86,6 +86,10 @@ export function permitLeader(permit: HeldPermit | null): Leader {
  * "The centre comes first". The platform a train on an entry track keeps when the centre fails: the
  * one its last permit sent it to, if it can no longer stop before the end of its entry
  * track. Null if it can still stop, or the permit named no platform of its own pair.
+ *
+ * "Cross links". With the cross links on, the permit may also have named the platform the
+ * train's link leads to. The centre had already started the train across, so it finishes
+ * that move. Nothing else in the train's own rules ever names that platform.
  */
 export function committedPlatform(
   self: TrainState,
@@ -94,7 +98,8 @@ export function committedPlatform(
   numbers: Pick<TrainNumbers, 'pairs' | 'entryLength'>,
 ): PlatformId | null {
   if (permit === null || !isEntryTrack(self.pos.track)) return null;
-  const platform = numbers.pairs[entry].find((p) => p === permit.nextTrack) ?? null;
+  const reachable = [...numbers.pairs[entry], ...crossPlatforms(entry)];
+  const platform = reachable.find((p) => p === permit.nextTrack) ?? null;
   if (platform === null) return null;
   // Full braking in steps of TICK covers about half a tick less than the smooth formula.
   const v = self.speed;

@@ -9,11 +9,12 @@
 //
 // The map's geometry (track lengths, the ask point, the junction zone and the radio ranges) is
 // not a parameter. It is fixed by docs/design.md and lives in map.ts. A file can pick one of
-// the named layouts in map.ts, which says how many entry tracks and platforms there are.
+// the named layouts in map.ts, which says how many entry tracks and platforms there are, and
+// can switch on the cross links between neighbouring lines.
 
 import { DEFAULT_CONSTANTS, resetConstants, setConstants } from './constants';
 import type { ConstantValues } from './constants';
-import { DEFAULT_LAYOUT, LAYOUT_IDS, applyLayout, isLayoutId, resetLayout } from './map';
+import { ASK_POINT, DEFAULT_LAYOUT, LAYOUT_IDS, TRACK_LENGTH, applyCrossLines, applyLayout, isLayoutId, resetLayout } from './map';
 import type { LayoutId } from './map';
 import type { TrainId } from './types';
 
@@ -90,6 +91,9 @@ export interface FailureEvent extends Partial<SwitchParams> {
 export interface SimParams {
   name: string;
   layout: LayoutId; // which of the layouts in map.ts the run uses
+  // True switches on the cross links: the end of an entry track also leads to the first
+  // platform of the next line down. On a layout with one entry track it changes nothing.
+  crossLines: boolean;
   physics: PhysicsParams;
   timers: TimerParams;
   timetable: TimetableParams;
@@ -106,6 +110,7 @@ export function defaultSightSpeed(brake: number, sensorRange: number, margin: nu
 export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
   name: 'default',
   layout: DEFAULT_LAYOUT,
+  crossLines: false,
   physics: defaultsFor(PHYSICS_KEYS),
   timers: defaultsFor(TIMER_KEYS),
   timetable: Object.freeze({ seed: 1, trains: 16, minHeadway: 45, dwell: 30 }),
@@ -230,6 +235,19 @@ function checkValues(p: SimParams, problems: string[]): void {
   }
   if (t.slotWindow > t.slotLength) problems.push(`timers.slotWindow (${t.slotWindow}) must not be longer than timers.slotLength (${t.slotLength})`);
 
+  // With the cross links on, two lines can be sent to one platform. The rules for that rest on
+  // a train that can no longer stop before the end of its line being past the ask point
+  // already. That holds only if a train at top speed can stop between the two.
+  if (p.crossLines && ph.maxSpeed > 0 && ph.brake > 0) {
+    const room = TRACK_LENGTH.A - ASK_POINT; // every entry line is the same length
+    const braking = (ph.maxSpeed * ph.maxSpeed) / (2 * ph.brake);
+    if (braking > room) {
+      problems.push(
+        `crossLines is on, so a train at physics.maxSpeed (${ph.maxSpeed}) must be able to stop within the ${room} m between the ask point and the end of its entry line, but at physics.brake (${ph.brake}) it needs ${braking.toFixed(0)} m`,
+      );
+    }
+  }
+
   p.failures.forEach((f, i) => {
     if (f.at < 0) problems.push(`failures[${i}].at must not be negative, but is ${f.at}`);
     share(f.radioDrop, `failures[${i}].radioDrop`);
@@ -247,7 +265,7 @@ export function parseParams(input: unknown): SimParams {
   const problems: string[] = [];
   if (!isBag(input)) throw new ParamsError(['the file must hold one JSON object']);
 
-  const known = ['name', 'layout', 'physics', 'timers', 'timetable', 'start', 'failures', 'runLength'];
+  const known = ['name', 'layout', 'crossLines', 'physics', 'timers', 'timetable', 'start', 'failures', 'runLength'];
   for (const key of Object.keys(input)) {
     if (!known.includes(key)) problems.push(`${key} is not a known section (known: ${known.join(', ')})`);
   }
@@ -258,8 +276,12 @@ export function parseParams(input: unknown): SimParams {
     physics.sightSpeed = defaultSightSpeed(physics.brake, physics.sensorRange, physics.margin);
   }
   const top = readSection(
-    { ...(input.name === undefined ? {} : { name: input.name }), ...(input.runLength === undefined ? {} : { runLength: input.runLength }) },
-    { name: DEFAULT_PARAMS.name, runLength: DEFAULT_PARAMS.runLength },
+    {
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.runLength === undefined ? {} : { runLength: input.runLength }),
+      ...(input.crossLines === undefined ? {} : { crossLines: input.crossLines }),
+    },
+    { name: DEFAULT_PARAMS.name, runLength: DEFAULT_PARAMS.runLength, crossLines: DEFAULT_PARAMS.crossLines },
     'the file',
     problems,
   );
@@ -273,6 +295,7 @@ export function parseParams(input: unknown): SimParams {
   const params: SimParams = {
     name: top.name,
     layout,
+    crossLines: top.crossLines,
     physics,
     timers: readSection(input.timers, DEFAULT_PARAMS.timers, 'timers', problems),
     timetable: readSection(input.timetable, DEFAULT_PARAMS.timetable, 'timetable', problems),
@@ -294,16 +317,17 @@ export function constantsFor(p: SimParams): ConstantValues {
 }
 
 /**
- * Make these parameters the ones every part of the build reads: the constants and the
- * layout. Call it before a run starts. The timetable and failures are not constants: the
- * runner reads those from the parameters it was given.
+ * Make these parameters the ones every part of the build reads: the constants, the layout
+ * and, after the layout, the cross links switch. Call it before a run starts. The timetable
+ * and failures are not constants: the runner reads those from the parameters it was given.
  */
 export function applyParams(p: SimParams): void {
   setConstants(constantsFor(p));
   applyLayout(p.layout);
+  applyCrossLines(p.crossLines);
 }
 
-/** Go back to the values and the layout in docs/design.md. */
+/** Go back to the values and the layout in docs/design.md, with the cross links off. */
 export function resetParams(): void {
   resetConstants();
   resetLayout();

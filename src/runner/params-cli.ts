@@ -9,6 +9,9 @@
 //
 // A file can pick its layout with "layout". The report names it, and every file starts from
 // the default layout again, so one file's layout or values never carry into the next.
+//
+// A file can switch the cross links on with "crossLines": true. The report says so in one
+// line, and the next file starts with them off again.
 
 // @ts-expect-error Node's own types are not installed. This file only runs under vite-node.
 import { readFileSync } from 'node:fs';

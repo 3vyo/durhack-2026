@@ -9,6 +9,7 @@ import {
   LAYOUTS,
   PLATFORMS,
   TRACK_START,
+  crossPlatforms,
   entryOf,
   isEntryTrack,
   pairOf,
@@ -320,27 +321,43 @@ export function stationFrame(): Frame {
 export interface Route {
   entry: EntryId | null;
   platform: PlatformId | null;
+  /**
+   * The entry line the train came in on, when it crossed into another line's platform over a
+   * cross link. Not set for a train in a platform of its own pair.
+   */
+  from?: EntryId;
 }
 
 /**
  * The route of a train, from the track its front is on. A train on EXIT has left its
  * platform behind, so the caller passes the platform it was last seen in, if any.
+ *
+ * `origin` is the entry line the train was last seen on, if the caller knows it. It matters
+ * only for a train the control centre sent across ("Cross links" in docs/design.md): its front
+ * is in the next line's platform while its rear cars are still on its own line. It is used
+ * only when that line has a cross link into the platform, so with the cross links switched off
+ * the route is the same with or without it.
  */
-export function routeOf(track: TrackId, lastPlatform: PlatformId | null): Route {
+export function routeOf(track: TrackId, lastPlatform: PlatformId | null, origin: EntryId | null = null): Route {
   if (isEntryTrack(track)) return { entry: track, platform: null };
   if (track === 'EXIT') return { entry: lastPlatform ? entryOf(lastPlatform) : null, platform: lastPlatform };
-  return { entry: entryOf(track), platform: track };
+  const route: Route = { entry: entryOf(track), platform: track };
+  if (origin !== null && crossPlatforms(origin).includes(track)) route.from = origin;
+  return route;
 }
 
 /**
  * Where the track is across the line at x metres along a route: z in scene units, and how
  * fast z changes per metre (0 on straight track). Through the points it runs straight from
- * one lane to the next, the way the drawn track does, so each car follows the rails.
+ * one lane to the next, the way the drawn track does, so each car follows the rails. A route
+ * with `from` set starts in that line's lane and bends over the cross link into its platform.
  */
 export function pathAt(x: number, route: Route): { z: number; slope: number } {
   const lane = (t: TrackId) => laneOf(t) * LANE_SPACING;
   const entry = route.entry ?? (route.platform ? entryOf(route.platform) : null);
   const start = entry ? lane(entry) : lane('EXIT');
+  // A train that crossed comes in along its own line, then leaves with the platform's own pair.
+  const cameIn = route.from ? lane(route.from) : start;
   const platform = route.platform ? lane(route.platform) : start;
   const exit = lane('EXIT');
   const bend = (from: number, to: number, x0: number, length = POINTS_LENGTH) => {
@@ -349,8 +366,8 @@ export function pathAt(x: number, route: Route): { z: number; slope: number } {
   };
   const intoPlatforms = TRACK_START.P1;
   const intoExit = TRACK_START.EXIT;
-  if (x < intoPlatforms) return { z: start, slope: 0 };
-  if (x < intoPlatforms + POINTS_LENGTH) return route.platform ? bend(start, platform, intoPlatforms) : { z: start, slope: 0 };
+  if (x < intoPlatforms) return { z: cameIn, slope: 0 };
+  if (x < intoPlatforms + POINTS_LENGTH) return route.platform ? bend(cameIn, platform, intoPlatforms) : { z: start, slope: 0 };
   if (x < intoExit) return { z: platform, slope: 0 };
   if (!route.platform) return { z: exit, slope: 0 };
   // The pair's lane is the entry line's lane, which runs between its two platforms.

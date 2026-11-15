@@ -8,6 +8,7 @@ import {
   PLATFORMS,
   TRACK_LENGTH,
   TRACK_START,
+  crossPlatforms,
   entryOf,
   isPlatform,
 } from '../shared/map';
@@ -28,7 +29,7 @@ import {
 import { railFit } from './rails';
 
 // The fixed scenery: track, platforms, the four devices and the junction zone. It is built
-// once, for the layout in use when the scene is made. After that it changes only to show which
+// once, for the layout in use when the scene is made, with its cross links if they are on. After that it changes only to show which
 // devices are switched on and whether the junction zone has a train in it.
 
 export interface World {
@@ -245,6 +246,12 @@ export function buildWorld(scene: THREE.Scene, frame: Frame, trees = 0): World {
       placements.push(m);
     };
     for (const p of platforms) diagonal(split, z(entryOf(p)), split + POINTS_LENGTH, z(p));
+    // The cross links, if they are switched on: the end of an entry line also bends into the
+    // first platform of the next line down, over the same points length. With the switch off
+    // no line has one, so nothing more is laid. From "Cross links" in docs/design.md.
+    for (const entry of entries) {
+      for (const p of crossPlatforms(entry)) diagonal(split, z(entry), split + POINTS_LENGTH, z(p));
+    }
     // The way out joins in two stages: each pair of platforms first, then every pair into EXIT.
     for (const p of platforms) diagonal(TRACK_START.EXIT, z(p), pairsJoined, z(entryOf(p)));
     for (const entry of entries) {

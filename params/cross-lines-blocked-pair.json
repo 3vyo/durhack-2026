@@ -1,0 +1,10 @@
+{
+  "name": "cross links on, with both of line A's platforms blocked by broken-down trains",
+  "crossLines": true,
+  "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
+  "failures": [
+    { "at": 452, "breakDown": 5 },
+    { "at": 545, "breakDown": 6 }
+  ],
+  "runLength": 7200
+}

@@ -58,7 +58,17 @@ A run picks one layout before it starts. Every layout has the same shape: entry 
 - There is one clock slot for each platform, so the slot cycle is as long as the layout has platforms.
 - A platform that is not in the layout reads as occupied in `SensorReadings`, like a dead sensor, and no train is ever sent to it.
 - The layouts are in `src/shared/map.ts`. `applyLayout` picks one before a run starts. `ENTRIES` and `PLATFORMS` there hold the lines and platforms of the layout in use. They are declared with `let`, like the constants: read them where you use them, inside a function.
-- Nothing else about the map can change. All trains still run left to right, which the safety of the rules depends on.
+- Apart from the cross links below, nothing else about the map can change. All trains still run left to right, which the safety of the rules depends on.
+
+#### Cross links
+
+A run can switch on cross links with `crossLines`. The switch is off by default, and with it off the map is exactly as above.
+
+- With it on, the end of an entry line also leads to the first platform of the next line down, if that line is in the layout: A to P3, B to P5 and C to P7. The last line of a layout has no link, so on `branch` the switch changes nothing.
+- A link is one more set of points at the end of the line. Like the points into a line's own pair it has no length and adds no track. A train that crosses is still a train of its own entry line, with the same leader and the same default platform.
+- Each boundary has a link in one direction only. Two opposite links, A to P3 and B to P2, would cross each other between the platforms, where no lock covers them. With one direction, the only new place two lines meet is the platform itself, and one train per platform is a rule we already have.
+- Only the control centre sends a train over a link. "Sending a train across" under "Today's rule, for comparison" says when. Our own rules never do: no authority, no crossing.
+- The switch is `CROSS_LINES` in `src/shared/map.ts`, set by `applyCrossLines` before a run starts. `crossPlatforms(entry)` lists the platforms a line's link reaches, and is empty with the switch off. `successors(entry)` returns the line's own pair followed by them.
 
 ## Units and constants
 
@@ -102,6 +112,7 @@ These values are the defaults. A parameter file can change them for one run. It 
 {
   "name": "centre outage",
   "layout": "junction",
+  "crossLines": false,
   "physics": { "maxSpeed": 45, "brake": 0.9, "sensorRange": 300 },
   "timers": { "junctionKeeperTimeout": 10 },
   "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
@@ -119,7 +130,8 @@ These values are the defaults. A parameter file can change them for one run. It 
 
 - `src/shared/params.ts` reads and checks the file, and lists every problem at once.
 - `applyParams` replaces the constants before a run starts. The constants are declared with `let`, so every file that imports one sees the new value. Read a constant where you use it, inside a function. A copy made when a file loads keeps the old value.
-- `layout` names one of the layouts in "Layouts". Nothing else about the map is a parameter.
+- `layout` names one of the layouts in "Layouts", and `crossLines` switches on the cross links described there. Nothing else about the map is a parameter.
+- With `crossLines` on, the file is refused if a train at `maxSpeed` cannot stop between the ask point and the end of its entry line. That is when `maxSpeed` squared over twice `brake` is more than 1200 m. The rules for crossing rely on a train that can no longer stop before the end of its line being past the ask point already.
 - `npm run sim -- params/centre-outage.json` runs a file with our program and with the baseline, and prints both. Example files are in `params/`.
 
 ## The actors
@@ -244,6 +256,8 @@ While a train holds a permit under 5 seconds old, it obeys the control centre li
 
 It needs nothing from the train-to-train radio, the platform keeper, the junction keeper or the platform sensors. A failure of any of those, with the centre still working, costs it nothing.
 
+With cross links on, the permit's `nextTrack` may be the platform the train's link leads to. The train takes it as it takes any platform. Only a permit can send it there. "Sending a train across" under "Today's rule, for comparison" says when the centre does.
+
 When its permit goes stale, the train runs on the rules in the rest of this section. It starts from where the centre left it.
 
 - On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the junction keeper.
@@ -252,7 +266,9 @@ When its permit goes stale, the train runs on the rules in the rest of this sect
 
 When permits return, the train obeys them again on the next tick. It forgets its request timers and drops a junction grant, because the centre now orders the junction. The centre takes over from where the trains are.
 
-- A train on an entry line whose route is set into a platform of its own pair is sent there.
+With cross links on, a train whose front is still on its entry line also forgets any platform it had chosen and its platform lock when it starts obeying the centre. A choice made on the tick the centre takes over is invisible to the centre, which may give that platform to a train from another line.
+
+- A train on an entry line whose route is set into a platform it can reach is sent there. That is a platform of its own pair or, with cross links on, the one its link leads to.
 - A train already in the junction zone becomes the junction holder, so the centre lets no other train in until it has cleared the zone.
 
 The centre sees each train's set route as the signalling shows it. The engine passes it with the trains' true state.
@@ -316,6 +332,8 @@ The display labels each train with a mode.
 
 The platform keeper grants a platform only if its sensor says empty and no other train holds the lock. It only offers platforms from the train's own pair. It releases a lock after the sensor has shown the train arrive and then leave. If two trains ask for the same free platform on the same tick, the train with the earlier `enterAt` gets it.
 
+With cross links on, the platform keeper also releases a lock whose holder asks for a different platform, and answers that request afresh. The holder dropped its grant when the centre took over, and the centre may have sent a train from another line to that platform since.
+
 The platform keeper grants only to the front train on each entry track. Trains on one entry track stand in a queue and cannot pass each other. A platform given to a train further back could never be reached, and the queue would stop for good. So while a train with no lock is still asking, the actor refuses every train that entered the same entry track after it.
 
 The train counts its own dwell time from the moment it stops in the platform.
@@ -341,6 +359,8 @@ A train sees one platform at a time, because `sightAhead` follows its `nextTrack
 A train that has just changed `nextTrack` does not accelerate until the next tick, because that tick's `sightAhead` still reports the old path.
 
 This is safe because trains on one entry track arrive in a queue, and trains on different entry tracks never want the same platform.
+
+Cross links do not change this. The platform keeper, the fixed split and the creep never use a cross link. They stay inside a train's own pair. So with no centre no train starts across, and in the fallback trains on different entry tracks still never want the same platform. The one train that crosses without a fresh permit is a train the centre had already started across: it finishes that move, by the rule for a train that can no longer stop before the end of its line.
 
 ### Platform sensors switched off
 
@@ -446,6 +466,19 @@ The centre is today's system, so it never depends on the platform keeper, the ju
 
 The baseline train also brakes for `sightAhead`, as a driver would. The centre is safe without it.
 
+### Sending a train across
+
+With cross links on, the centre may send a train to the platform its link leads to. It does so only when all of these are true.
+
+- The train is standing at the end of its entry line.
+- It is not broken down.
+- No platform of its own pair can be given to it.
+- The first platform of the next line down is free.
+
+Every train gets the pick of its own pair first. A link is used only for a platform that is still free after that, so the line that owns the platform is served first.
+
+The move goes out in the train's normal permit, as its `nextTrack`. Both train programs obey it in the same way, so the comparison stays fair. Our trains never cross on their own rules. Under radio working, staff make the same decisions as the centre, so they can send a baseline train across. Our trains ignore those permits and wait for the centre.
+
 ## Metrics
 
 - Trains per hour leaving the right-hand end of EXIT.
@@ -475,7 +508,9 @@ Stack: TypeScript, Vite, three.js for the view, and Vitest for tests. No server.
 Build these only once everything above works.
 
 - Early booking. A train asks the platform keeper for a platform over long range before the ask point and adjusts its speed to arrive as the platform frees.
-- Borrowing. When the platform keeper is off and nearby trains can hear each other, the lowest ID picks first and may take a free platform from the other pair.
+- The platform keeper half of cross links. Designed, not built. While the centre is down, the platform keeper sends a train standing at the end of its line across to a free platform of the next line down, with the line that owns the platform served first.
+- The reverse link. B to P2, C to P4 and D to P6, with a lock of its own for the place where the two links cross.
+- A mid-line crossover. Points out on the line, so a train can pass a breakdown anywhere and not only at the station. It needs a local actor at the crossover to tell each train who it now follows.
 - Hazard broadcast. A train that spots a problem tells nearby trains, and only trains heading towards it stop.
 - Junction order hints. The control centre suggests a better junction order through its permits.
 - A radio kill for one train. Its long-range radio dies and its short-range radio keeps working.

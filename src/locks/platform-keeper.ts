@@ -1,5 +1,5 @@
 import { REQUEST_REPEAT, RESUME_SETTLE, TICK } from '../shared/constants';
-import { ALL_PLATFORMS, PLATFORMS, pairOf } from '../shared/map';
+import { ALL_PLATFORMS, CROSS_LINES, PLATFORMS, pairOf } from '../shared/map';
 import type {
   LocalActor,
   Message,
@@ -280,6 +280,31 @@ export function recordGrant(
 }
 
 /**
+ * "Entering the station", with the cross links on: a lock holder that asks for a platform
+ * other than the one it holds has dropped that grant. It forgot it when the centre took over,
+ * and the centre may have sent a train from another line to that platform since. So the lock
+ * is released here, before anything else reads the inbox, and the request is then answered
+ * afresh like any train's without a lock.
+ *
+ * This never releases a lock under a train on its way in: that train repeats its request for
+ * the platform it holds until its front is in the platform.
+ *
+ * With the cross links off this does nothing, and the holder gets its old grant again from
+ * answerHolder.
+ */
+export function releaseDroppedLocks(memory: PlatformKeeperMemory, inbox: Message[]): PlatformKeeperMemory {
+  if (!CROSS_LINES) return memory;
+  let released = memory;
+  for (const msg of inbox) {
+    if (msg.type !== 'lockRequest' || msg.resource === 'JUNCTION') continue;
+    const held = heldBy(released, msg.from);
+    if (held === null || held === msg.resource) continue;
+    released = { ...released, locks: { ...released.locks, [held]: null } };
+  }
+  return released;
+}
+
+/**
  * "Platform sensors switched off": note each platform lockRequest from a train that holds
  * a lock in that lock's lastRequestAt, whichever platform it asked for. The release guard
  * in canReleasePlatform uses this.
@@ -429,6 +454,7 @@ export function stepPlatformKeeper(
 ): { memory: PlatformKeeperMemory; out: Outgoing[] } {
   let memory = wasSwitchedOff(before.lastStepAt, now) ? resumePlatformKeeper(before, now) : before;
   const settling = stillSettling(memory.resumedAt, now, RESUME_SETTLE);
+  memory = releaseDroppedLocks(memory, inbox);
   memory = recordHolderRequests(memory, inbox, now);
   memory = updateLocks(memory, sensors, now);
   memory = noteUnlockedOccupied(memory, sensors, now);

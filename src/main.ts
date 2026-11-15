@@ -5,8 +5,8 @@ import type { RunResult } from './engine/engine';
 import { healthyReference, type BatchRequest, type ScenarioSummary } from './runner/run';
 import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
-import { LAYOUT, applyLayout } from './shared/map';
-import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
+import { CROSS_LINES, LAYOUT, applyCrossLines, applyLayout } from './shared/map';
+import { crossUrl, layoutUrl, parseCross, parseLayout, spawnNote, statusTitle } from './ui/controls';
 import { heroTiles, scoreboardRows } from './ui/hud';
 import { describeTrain } from './ui/overlay';
 import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
@@ -19,6 +19,9 @@ import { createScene } from './ui/scene';
 // (the session, the reference run, the scenes and the batch worker) is built on the layout in
 // use, so nothing may be built before this line.
 applyLayout(parseLayout(location.search));
+// The cross links come next: ?cross=1 switches them on, and they are off without it. They are
+// set before a run is built, like the layout, and for the same reason.
+applyCrossLines(parseCross(location.search));
 
 const SEED = 1;
 const SCENARIO = SCENARIOS['centre-outage'];
@@ -31,6 +34,7 @@ const session = new LiveSession({
   scenario: SCENARIO,
   programs: { baseline: baselineProgram, ours: ourProgram },
   timetable: DEFAULT_TIMETABLE,
+  crossLines: CROSS_LINES,
 });
 // 1x on the page is 8 simulated seconds a second, so a run fits the time a judge watches.
 session.speed = NORMAL_SPEED;
@@ -84,6 +88,11 @@ const panel = createPanel(app, {
   // ?layout=, keeping the rest of the address.
   onLayout: (id) => {
     if (id !== LAYOUT.id) location.assign(layoutUrl(location.href, id));
+  },
+  // The cross links are switched the same way: the page loads again with or without ?cross=1,
+  // keeping the layout and the rest of the address.
+  onCrossLinks: (on) => {
+    if (on !== CROSS_LINES) location.assign(crossUrl(location.href, on));
   },
   onView: (side) => {
     view = side;
@@ -144,8 +153,9 @@ const worker = new Worker(new URL('./runner/batch.worker.ts', import.meta.url), 
 worker.addEventListener('message', (e: MessageEvent<ScenarioSummary>) => {
   average = e.data;
 });
-// A worker has its own copy of the layout in use, so the page tells it which one to run.
-const batchRequest: BatchRequest = { scenario: SCENARIO.id, layout: LAYOUT.id };
+// A worker has its own copy of the layout in use and of the cross links switch, so the page
+// tells it both.
+const batchRequest: BatchRequest = { scenario: SCENARIO.id, layout: LAYOUT.id, crossLines: CROSS_LINES };
 worker.postMessage(batchRequest);
 
 function clock(seconds: number): string {

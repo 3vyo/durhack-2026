@@ -1,5 +1,5 @@
 import { ACCEL, BRAKE, MAX_SPEED, TICK } from '../shared/constants';
-import { isEntryTrack, isPlatform } from '../shared/map';
+import { CROSS_LINES, isEntryTrack, isPlatform } from '../shared/map';
 import type {
   Outgoing,
   PlatformId,
@@ -362,7 +362,8 @@ function readInbox(memory: TrainMemory, entry: TimetableEntry, input: TrainInput
  * "The centre comes first". The train starts obeying the centre. It forgets its request
  * timers and fallback state, so a later failure starts them afresh, and it drops a junction
  * grant, because the centre now orders the junction. It keeps a platform it has chosen: the
- * centre sees its route and sends it there.
+ * centre sees its route and sends it there. With the cross links on, forgetChosenPlatform
+ * then takes that platform away from a train still on its entry track.
  */
 export function enterCentral(memory: TrainMemory): void {
   memory.firstPlatformRequestAt = null;
@@ -376,6 +377,23 @@ export function enterCentral(memory: TrainMemory): void {
   memory.junctionGrantAt = null;
   memory.locks = memory.locks.filter((lock) => lock !== 'JUNCTION');
   memory.cleared = false;
+}
+
+/**
+ * "The centre comes first", with the cross links on. A train that starts obeying the centre
+ * with its front still on its entry track also forgets any platform it had chosen, and its
+ * platform lock. A choice made on the tick the centre takes over is invisible to the centre,
+ * which may give that platform to a train from another line. If the centre fails again, the
+ * train must not go back to it. The centre sends it a route it can see, and a train that can
+ * no longer stop keeps the platform of its last permit, as enterLocal says.
+ *
+ * With the cross links off this does nothing: only trains of one queue can want the same
+ * platform, and the following rules keep a queue apart.
+ */
+export function forgetChosenPlatform(memory: TrainMemory, pos: Position): void {
+  if (!CROSS_LINES || !isEntryTrack(pos.track)) return;
+  memory.platform = null;
+  memory.locks = memory.locks.filter((lock) => lock === 'JUNCTION');
 }
 
 /**
@@ -505,7 +523,10 @@ export function createAgent(
 
       const permit = latestPermit(memory.permit, input.inbox, memory.id);
       const central = isPermitFresh(permit, now, numbers);
-      if (central && !memory.central) enterCentral(memory);
+      if (central && !memory.central) {
+        enterCentral(memory);
+        forgetChosenPlatform(memory, self.pos);
+      }
       if (!central && memory.central) enterLocal(memory, entry, self, permit, numbers);
       memory.central = central;
 

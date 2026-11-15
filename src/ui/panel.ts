@@ -1,6 +1,14 @@
 import type { Switches } from '../engine/switches';
 import { LAYOUT, LAYOUT_IDS, LAYOUTS, type LayoutId } from '../shared/map';
-import { entryLines, keepLayoutShown, radioLabel, SWITCH_KEYS, type EntryLine, type SwitchKey } from './controls';
+import {
+  entryLines,
+  keepCrossShown,
+  keepLayoutShown,
+  radioLabel,
+  SWITCH_KEYS,
+  type EntryLine,
+  type SwitchKey,
+} from './controls';
 import type { Row, Tile } from './hud';
 import { legendItems, shapePath } from './markers';
 import { MODE_STYLE } from './palette';
@@ -21,6 +29,8 @@ export interface PanelHandlers {
   onSpawn(line: EntryLine): void;
   /** Another layout was chosen. The page reloads to change it. */
   onLayout(id: LayoutId): void;
+  /** The Cross links box was ticked or cleared. The page reloads to change it. */
+  onCrossLinks(on: boolean): void;
   /** Show this side's 3D view. */
   onView(side: Side): void;
 }
@@ -277,6 +287,20 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   // The list shows the layout in use, and still does after the browser's Back button.
   keepLayoutShown(layout, window);
   layout.addEventListener('change', () => h.onLayout(layout.value as LayoutId));
+  // The cross links: the end of a line also leads into the first platform of the next line,
+  // and the control centre may send a train that way. Like the layout, the switch is set before
+  // a run is built, so changing it reloads the page. A layout with one line has no line to
+  // cross to, so the box cannot be used there.
+  const cross = el('label', 'cross');
+  const crossBox = el('input');
+  crossBox.type = 'checkbox';
+  cross.append(crossBox, 'Cross links');
+  // The box shows what the page is running, and still does after the browser's Back button.
+  keepCrossShown(crossBox, window);
+  cross.title = crossBox.disabled
+    ? 'This layout has one line, so there is no other line to cross to'
+    : 'Lets the control centre send a train from the end of one line into the first platform of the next. Changing it reloads the page';
+  crossBox.addEventListener('change', () => h.onCrossLinks(crossBox.checked));
   const pause = el('button', '', 'Pause');
   pause.title = 'Pause or resume (Space)';
   pause.addEventListener('click', h.onPause);
@@ -284,7 +308,7 @@ export function createPanel(root: HTMLElement, h: PanelHandlers): Panel {
   restart.addEventListener('click', h.onRestart);
   const camera = el('button', '', 'Camera');
   camera.addEventListener('click', h.onCamera);
-  run.append(layout, speed, pause, restart, camera);
+  run.append(layout, cross, speed, pause, restart, camera);
   dock.append(failures, traffic, run);
 
   // The bottom: the key, the minimap and the control dock, stacked.

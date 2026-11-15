@@ -2,7 +2,7 @@ import type { Switches } from '../engine/switches';
 import type { ScenarioSummary } from '../runner/run';
 import { FAILURE_LENGTH } from '../runner/failure';
 import { SCENARIOS } from '../scenarios/scenarios';
-import { DEFAULT_LAYOUT, ENTRIES, LAYOUT, isLayoutId, type LayoutId } from '../shared/map';
+import { DEFAULT_LAYOUT, ENTRIES, LAYOUT, crossPlatforms, isLayoutId, type LayoutId } from '../shared/map';
 import type { EntryId, TrainId } from '../shared/types';
 
 /** The on/off failure switches the demo page shows, in the order it shows them. */
@@ -87,6 +87,63 @@ export function keepLayoutShown(list: LayoutList, page: ShownPage): void {
     list.value = LAYOUT.id;
   };
   list.autocomplete = 'off';
+  show();
+  page.addEventListener('pageshow', show);
+}
+
+/**
+ * True if the page address asks for the cross links with `?cross=1`. Anything else, or no
+ * `cross` at all, leaves them off, which is how every run behaves by default. From "Cross
+ * links" in docs/design.md.
+ */
+export function parseCross(search: string): boolean {
+  return new URLSearchParams(search).get('cross') === '1';
+}
+
+/**
+ * The page address with the cross links on or off: the same address with `cross=1` set or
+ * `cross` taken out, and every other parameter kept, such as `layout=busy`. The switch is set
+ * before anything is built, like the layout, so the page changes it by loading this address.
+ */
+export function crossUrl(href: string, on: boolean): string {
+  const url = new URL(href);
+  if (on) url.searchParams.set('cross', '1');
+  else url.searchParams.delete('cross');
+  return url.href;
+}
+
+/** The parts of the Cross links box that `keepCrossShown` uses. */
+export interface CrossBox {
+  checked: boolean;
+  disabled: boolean;
+  autocomplete: string;
+}
+
+/**
+ * How the Cross links box should look on the layout in use. It is ticked when the layout has a
+ * cross link to draw. It cannot be used on a layout with one line, which has no line to cross
+ * to, and there it is never ticked, even if the address says `cross=1`.
+ */
+export function crossBoxState(): { checked: boolean; disabled: boolean } {
+  return {
+    checked: ENTRIES.some((entry) => crossPlatforms(entry).length > 0),
+    disabled: ENTRIES.length < 2,
+  };
+}
+
+/**
+ * Makes the Cross links box show whether the page is running with cross links, and keeps it
+ * that way, for the reason `keepLayoutShown` gives: ticking it leaves this page, and the
+ * browser's Back button could bring the page back with the box showing what was clicked, not
+ * what is running.
+ */
+export function keepCrossShown(box: CrossBox, page: ShownPage): void {
+  const show = (): void => {
+    const state = crossBoxState();
+    box.checked = state.checked;
+    box.disabled = state.disabled;
+  };
+  box.autocomplete = 'off';
   show();
   page.addEventListener('pageshow', show);
 }

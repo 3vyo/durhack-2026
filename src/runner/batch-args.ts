@@ -7,26 +7,32 @@ import { DEFAULT_LAYOUT, LAYOUT_IDS, isLayoutId, type LayoutId } from '../shared
 export const DEFAULT_SEED_COUNT = 50;
 
 export const BATCH_USAGE =
-  `Usage: npm run batch -- [number of seeds] [--layout=<${LAYOUT_IDS.join('|')}|all>]\n` +
-  `With no arguments it runs ${DEFAULT_SEED_COUNT} seeds on the ${DEFAULT_LAYOUT} layout.`;
+  `Usage: npm run batch -- [number of seeds] [--layout=<${LAYOUT_IDS.join('|')}|all>] [--cross]\n` +
+  `With no arguments it runs ${DEFAULT_SEED_COUNT} seeds on the ${DEFAULT_LAYOUT} layout, with the cross links off.`;
 
 export interface BatchArgs {
   /** The seeds to run: 1 up to the number asked for. */
   seeds: number[];
   /** The layouts to run, in order. `--layout=all` gives every layout, simplest first. */
   layouts: LayoutId[];
+  /** True if `--cross` was given: run with the cross links on. Absent means off. */
+  crossLines?: boolean;
 }
 
 /**
  * Reads the batch command's arguments. A whole number is the number of seeds, and
- * `--layout=<id>` or `--layout=all` picks the layouts. Anything else throws, so a mistyped
- * layout stops the command instead of quietly running the default one.
+ * `--layout=<id>` or `--layout=all` picks the layouts. `--cross` switches the cross links on.
+ * Anything else throws, so a mistyped layout stops the command instead of quietly running the
+ * default one.
  */
 export function parseBatchArgs(args: string[]): BatchArgs {
   let count = DEFAULT_SEED_COUNT;
   let layouts: LayoutId[] = [DEFAULT_LAYOUT];
+  let crossLines = false;
   for (const arg of args) {
-    if (arg.startsWith('--layout=')) {
+    if (arg === '--cross') {
+      crossLines = true;
+    } else if (arg.startsWith('--layout=')) {
       const value = arg.slice('--layout='.length);
       if (value === 'all') layouts = [...LAYOUT_IDS];
       else if (isLayoutId(value)) layouts = [value];
@@ -37,5 +43,5 @@ export function parseBatchArgs(args: string[]): BatchArgs {
       throw new Error(`cannot read the argument "${arg}"`);
     }
   }
-  return { seeds: Array.from({ length: count }, (_, i) => i + 1), layouts };
+  return { seeds: Array.from({ length: count }, (_, i) => i + 1), layouts, ...(crossLines ? { crossLines } : {}) };
 }
