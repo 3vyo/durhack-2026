@@ -40,7 +40,7 @@ export interface World {
   railTop(): number;
   setDevices(sw: Switches): void;
   /**
-   * Shows the junction zone in yellow, brighter while a train is in it. With `visible` false
+   * Shows the junction zone's patch, brighter while a train is in it. With `visible` false
    * the zone is not drawn.
    */
   setJunctionZone(busy: boolean, visible: boolean): void;
@@ -62,9 +62,9 @@ export function sensorReading(occupied: boolean, on: boolean): SensorShown {
 /** The colour of each reading, on the platform track's tint and the box's lamp. */
 export const SENSOR_TINT: Record<SensorShown, number> = { empty: 0x3fbf6a, occupied: 0xff5a5a, off: 0x8794a6 };
 
-/** The junction zone's yellow, and how see-through it is when empty and when a train is in it. */
-export const ZONE_COLOUR = 0xffd23f;
-export const ZONE_OPACITY = { empty: 0.22, busy: 0.45 } as const;
+/** The junction zone's colour, and how see-through it is when empty and when a train is in it. */
+export const ZONE_COLOUR = 0xd9a441;
+export const ZONE_OPACITY = { empty: 0.12, busy: 0.32 } as const;
 
 /** Height of the top of a platform island, where the sensor boxes stand. */
 const ISLAND_TOP = 0.55;

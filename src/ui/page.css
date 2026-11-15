@@ -309,7 +309,7 @@ select option {
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  background: rgba(255, 210, 63, 0.55);
+  background: rgba(217, 164, 65, 0.35);
   border: 1px dashed #d9a441;
 }
 /* A platform track's sensor tint: green for empty, red for occupied. */

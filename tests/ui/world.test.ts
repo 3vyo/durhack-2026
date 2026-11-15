@@ -116,14 +116,14 @@ describe('sensorReading', () => {
 });
 
 describe('the junction zone', () => {
-  /** The yellow patches over the junction zone, found by their colour. */
+  /** The patches over the junction zone, found by their colour. */
   function zonePatches(scene: THREE.Scene): THREE.Mesh[] {
     return scene.children.filter(
       (c) => (c as THREE.Mesh).isMesh && ((c as THREE.Mesh).material as THREE.MeshBasicMaterial).color?.getHex() === ZONE_COLOUR,
     ) as THREE.Mesh[];
   }
 
-  it('is drawn in yellow only while the Show menu has it on, and brighter with a train in it', () => {
+  it('is drawn only while the Show menu has it on, and brighter with a train in it', () => {
     const scene = new THREE.Scene();
     const world = buildWorld(scene, stationFrame(), 0);
     const patches = zonePatches(scene);

@@ -53,7 +53,7 @@ export interface SceneView {
   /**
    * Draws one snapshot and a line for each link (see links.ts). `drawn.sight` adds each train's
    * sensor cone (see sight.ts), and `drawn.tint` colours each platform track by its sensor's
-   * reading, and `drawn.zone` shows the junction zone in yellow. The view only reads them.
+   * reading, and `drawn.zone` shows the junction zone's patch. The view only reads them.
    */
   render(s: Snapshot, links?: Link[], drawn?: Drawn): void;
   setCamera(mode: CameraMode): void;
