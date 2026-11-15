@@ -104,14 +104,14 @@ export function trainChoices(...maps: Array<Array<{ id: TrainId }>>): TrainId[] 
 }
 
 /**
- * What the batch runs behind the averages were, for the scoreboard labels, such as
- * "50 runs with a scripted 2 min centre outage". Live presses never reach these runs.
+ * What the batch runs behind the averages were, for the score panel, such as
+ * "50 runs, 2 min centre outage". Live presses never reach these runs.
  */
 export function batchRunsText(avg: Pick<ScenarioSummary, 'scenario' | 'seeds'>): string {
   const scenario = SCENARIOS[avg.scenario];
-  if (!scenario.failure) return `${avg.seeds} runs with nothing failing`;
+  if (!scenario.failure) return `${avg.seeds} runs, nothing failing`;
   const minutes = Number((FAILURE_LENGTH / 60).toFixed(1));
-  return `${avg.seeds} runs with a scripted ${minutes} min ${scenario.title.toLowerCase()}`;
+  return `${avg.seeds} runs, ${minutes} min ${scenario.title.toLowerCase()}`;
 }
 
 const DOWN_NAMES: Record<SwitchKey, string> = {

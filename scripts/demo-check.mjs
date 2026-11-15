@@ -34,7 +34,7 @@ const OTHER_LAYOUTS = [
 
 /** Extra page text the screen must show, added as the screen grows. */
 const REQUIRED_TEXT = [
-  'Delay saved',
+  'min saved per train',
   'Obeys the control centre',
   'Moved by staff over the radio, at caution speed',
   'Hears the train ahead',
@@ -280,7 +280,7 @@ async function main() {
     await evaluate(`document.querySelector('.key')?.click()`);
     const text = await bodyText();
     await evaluate(`document.querySelector('.key')?.click()`);
-    for (const t of ['All systems working', 'Trains through', ...REQUIRED_TEXT]) {
+    for (const t of ['All systems working', 'Trains out', ...REQUIRED_TEXT]) {
       if (text.toLowerCase().includes(t.toLowerCase())) pass(`page shows "${t}"`);
       else fail(`page shows "${t}"`);
     }

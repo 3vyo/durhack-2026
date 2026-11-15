@@ -7,11 +7,11 @@ import { baselineProgram, ourProgram } from './runner/programs';
 import { SCENARIOS } from './scenarios/scenarios';
 import { LAYOUT, applyLayout } from './shared/map';
 import { layoutUrl, parseLayout, spawnNote, statusTitle } from './ui/controls';
-import { heroTiles, scoreboardRows } from './ui/hud';
+import { scoreBoard } from './ui/hud';
 import { linksFor, wiredLinks } from './ui/links';
 import { kindShown, parseShow, toggleAll, type Show } from './ui/show';
 import { describeTrain } from './ui/overlay';
-import { DEFAULT_CAMERA, isStopped, stationFrame, type CameraMode } from './ui/layout';
+import { DEFAULT_CAMERA, stationFrame, type CameraMode } from './ui/layout';
 import { createMinimap } from './ui/minimap';
 import { NORMAL_SPEED, createPanel, type Side } from './ui/panel';
 import { parseQuality, qualityPreset } from './ui/environment';
@@ -203,7 +203,7 @@ function draw(): void {
   panel.setSwitches(sw);
   if (referenceError !== null || reference === null) {
     panel.setBanner(statusTitle(sw), `${clock(ours.now)} | Cannot score this run: ${referenceError}`);
-    panel.setRows([]);
+    panel.setBoard(null);
     return;
   }
   // The engine stops at the last whole tick, so compare with a little room for rounding.
@@ -223,16 +223,13 @@ function draw(): void {
     baseline: averageDelaySoFar(b, reference, base.now),
     ours: averageDelaySoFar(o, reference, ours.now),
   };
-  const stoppedOn = (trains: Array<{ speed: number }>): number => trains.filter((t) => isStopped(t.speed)).length;
-  panel.setTiles(heroTiles({ delaySeconds, stopped: { baseline: stoppedOn(base.trains), ours: stoppedOn(ours.trains) } }));
-  panel.setRows(
-    scoreboardRows({
+  panel.setBoard(
+    scoreBoard({
+      delaySeconds,
       through: { baseline: b.exits.size, ours: o.exits.size },
       timeToNormalSeconds: { baseline: baseTtn.seconds, ours: oursTtn.seconds },
       timeToNormalCapped: { baseline: baseTtn.capped, ours: oursTtn.capped },
       stillOnLine: ended ? { baseline: stuck(b), ours: stuck(o) } : null,
-      collisions: { baseline: b.collisions, ours: o.collisions },
-      closeCalls: { baseline: b.closeCalls, ours: o.closeCalls },
       avg: average,
     }),
   );
