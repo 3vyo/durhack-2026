@@ -7,11 +7,14 @@
 //   const params = parseParams(JSON.parse(text)); // throws a ParamsError listing every problem
 //   applyParams(params);                          // the constants now hold the file's values
 //
-// The map (track lengths, the ask point, the junction zone and the radio ranges) is not a
-// parameter. It is fixed by docs/design.md and lives in map.ts.
+// The map's geometry (track lengths, the ask point, the junction zone and the radio ranges) is
+// not a parameter. It is fixed by docs/design.md and lives in map.ts. A file can pick one of
+// the named layouts in map.ts, which says how many entry tracks and platforms there are.
 
 import { DEFAULT_CONSTANTS, resetConstants, setConstants } from './constants';
 import type { ConstantValues } from './constants';
+import { DEFAULT_LAYOUT, LAYOUT_IDS, applyLayout, isLayoutId, resetLayout } from './map';
+import type { LayoutId } from './map';
 import type { TrainId } from './types';
 
 // Each file key and the constant it sets. These two tables are the only list of the
@@ -46,7 +49,6 @@ const TIMER_KEYS = {
   restartGap: 'RESTART_GAP', // 0 turns the slow restart off
   slotLength: 'SLOT_LENGTH',
   slotWindow: 'SLOT_WINDOW',
-  slotCount: 'SLOT_COUNT',
 } as const satisfies Record<string, keyof ConstantValues>;
 
 export type PhysicsParams = { -readonly [K in keyof typeof PHYSICS_KEYS]: number };
@@ -60,8 +62,8 @@ function defaultsFor<T extends Record<string, keyof ConstantValues>>(keys: T): {
 }
 
 /**
- * The trains in the run. Each train picks track A or B at random from the seed, so the same
- * seed always gives the same timetable.
+ * The trains in the run. Each train picks one of the layout's entry tracks at random from the
+ * seed, so the same seed and layout always give the same timetable.
  */
 export interface TimetableParams {
   seed: number;
@@ -87,6 +89,7 @@ export interface FailureEvent extends Partial<SwitchParams> {
 
 export interface SimParams {
   name: string;
+  layout: LayoutId; // which of the layouts in map.ts the run uses
   physics: PhysicsParams;
   timers: TimerParams;
   timetable: TimetableParams;
@@ -102,6 +105,7 @@ export function defaultSightSpeed(brake: number, sensorRange: number, margin: nu
 
 export const DEFAULT_PARAMS: Readonly<SimParams> = Object.freeze({
   name: 'default',
+  layout: DEFAULT_LAYOUT,
   physics: defaultsFor(PHYSICS_KEYS),
   timers: defaultsFor(TIMER_KEYS),
   timetable: Object.freeze({ seed: 1, trains: 16, minHeadway: 45, dwell: 30 }),
@@ -195,7 +199,6 @@ function checkValues(p: SimParams, problems: string[]): void {
     if (key !== 'restartGap') positive(value as number, `timers.${key}`);
   }
   if (p.timers.restartGap < 0) problems.push(`timers.restartGap must not be negative, but is ${p.timers.restartGap}`);
-  whole(p.timers.slotCount, 'timers.slotCount', 1);
   whole(p.timetable.trains, 'timetable.trains', 1);
   whole(p.timetable.seed, 'timetable.seed', 0);
   positive(p.timetable.minHeadway, 'timetable.minHeadway');
@@ -244,7 +247,7 @@ export function parseParams(input: unknown): SimParams {
   const problems: string[] = [];
   if (!isBag(input)) throw new ParamsError(['the file must hold one JSON object']);
 
-  const known = ['name', 'physics', 'timers', 'timetable', 'start', 'failures', 'runLength'];
+  const known = ['name', 'layout', 'physics', 'timers', 'timetable', 'start', 'failures', 'runLength'];
   for (const key of Object.keys(input)) {
     if (!known.includes(key)) problems.push(`${key} is not a known section (known: ${known.join(', ')})`);
   }
@@ -261,8 +264,15 @@ export function parseParams(input: unknown): SimParams {
     problems,
   );
 
+  let layout: LayoutId = DEFAULT_PARAMS.layout;
+  if (input.layout !== undefined) {
+    if (isLayoutId(input.layout)) layout = input.layout;
+    else problems.push(`layout must be one of ${LAYOUT_IDS.join(', ')}, but is ${JSON.stringify(input.layout)}`);
+  }
+
   const params: SimParams = {
     name: top.name,
+    layout,
     physics,
     timers: readSection(input.timers, DEFAULT_PARAMS.timers, 'timers', problems),
     timetable: readSection(input.timetable, DEFAULT_PARAMS.timetable, 'timetable', problems),
@@ -284,15 +294,17 @@ export function constantsFor(p: SimParams): ConstantValues {
 }
 
 /**
- * Make these parameters the ones every part of the build reads. Call it before a run
- * starts. The timetable and failures are not constants: the runner reads those from the
- * parameters it was given.
+ * Make these parameters the ones every part of the build reads: the constants and the
+ * layout. Call it before a run starts. The timetable and failures are not constants: the
+ * runner reads those from the parameters it was given.
  */
 export function applyParams(p: SimParams): void {
   setConstants(constantsFor(p));
+  applyLayout(p.layout);
 }
 
-/** Go back to the values in docs/design.md. */
+/** Go back to the values and the layout in docs/design.md. */
 export function resetParams(): void {
   resetConstants();
+  resetLayout();
 }

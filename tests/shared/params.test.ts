@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as constants from '../../src/shared/constants';
+import * as map from '../../src/shared/map';
 import { BRAKE, DEFAULT_CONSTANTS, MAX_SPEED, SIGHT_SPEED, TICK, currentConstants, resetConstants, safeSpeed, setConstants } from '../../src/shared/constants';
 import { DEFAULT_PARAMS, ParamsError, applyParams, constantsFor, defaultSightSpeed, parseParams, resetParams } from '../../src/shared/params';
 
@@ -199,11 +200,11 @@ describe('a parameter file with mistakes', () => {
 
 describe('applying parameters', () => {
   it('makes the constants hold the values from the file', () => {
-    applyParams(parseParams({ physics: { maxSpeed: 30, sightSpeed: 12 }, timers: { junctionKeeperTimeout: 20, slotCount: 2 } }));
+    applyParams(parseParams({ physics: { maxSpeed: 30, sightSpeed: 12 }, timers: { junctionKeeperTimeout: 20, slotLength: 90 } }));
     expect(MAX_SPEED).toBe(30);
     expect(SIGHT_SPEED).toBe(12);
     expect(constants.JUNCTION_KEEPER_TIMEOUT).toBe(20);
-    expect(constants.SLOT_COUNT).toBe(2);
+    expect(constants.SLOT_LENGTH).toBe(90);
     expect(constants.ACCEL).toBe(0.5);
   });
 
@@ -246,5 +247,34 @@ describe('the timetable and the slow restart', () => {
     const p = parseParams({ physics: { maxSpeed: 30, sightSpeed: 20 }, timers: { slotLength: 90 } });
     expect(constantsFor(p)).toMatchObject({ MAX_SPEED: 30, SIGHT_SPEED: 20, SLOT_LENGTH: 90, BRAKE: 0.9 });
     expect(Object.keys(constantsFor(DEFAULT_PARAMS)).sort()).toEqual(Object.keys(DEFAULT_CONSTANTS).sort());
+  });
+});
+
+describe('the layout in a parameter file', () => {
+  it('is the junction layout when the file does not say', () => {
+    expect(parseParams({}).layout).toBe('junction');
+    expect(DEFAULT_PARAMS.layout).toBe('junction');
+  });
+
+  it('reads a named layout', () => {
+    expect(parseParams({ layout: 'hub' }).layout).toBe('hub');
+  });
+
+  it('lists the known layouts when the name is wrong', () => {
+    expect(problemsOf({ layout: 'station' })).toEqual(['layout must be one of branch, junction, busy, hub, but is "station"']);
+    expect(problemsOf({ layout: 3 })).toHaveLength(1);
+  });
+
+  it('no longer takes a slot count: the layout has one slot for each platform', () => {
+    expect(problemsOf({ timers: { slotCount: 2 } })[0]).toMatch(/timers\.slotCount is not a known setting/);
+  });
+
+  it('applyParams makes the layout the one in use, and resetParams puts the default back', () => {
+    applyParams(parseParams({ layout: 'busy' }));
+    expect(map.LAYOUT.id).toBe('busy');
+    expect(map.PLATFORMS).toHaveLength(6);
+    resetParams();
+    expect(map.LAYOUT.id).toBe('junction');
+    expect(map.ENTRIES).toEqual(['A', 'B']);
   });
 });

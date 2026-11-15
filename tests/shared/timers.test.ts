@@ -6,12 +6,12 @@ import {
   POSITION_INTERVAL,
   REQUEST_REPEAT,
   RESUME_SETTLE,
-  SLOT_COUNT,
   SLOT_LENGTH,
   SLOT_WINDOW,
   PLATFORM_KEEPER_TIMEOUT,
   TICK,
 } from '../../src/shared/constants';
+import { PLATFORMS } from '../../src/shared/map';
 
 // Each value is checked against the line in docs/design.md that states it.
 
@@ -36,9 +36,9 @@ describe('timers', () => {
     expect(JUNCTION_KEEPER_TIMEOUT).toBe(10);
   });
 
-  it('uses 60 second slots, 4 of them, with a 15 second start window', () => {
+  it('uses 60 second slots, one for each platform, with a 15 second start window', () => {
     expect(SLOT_LENGTH).toBe(60);
-    expect(SLOT_COUNT).toBe(4);
+    expect(PLATFORMS).toHaveLength(4);
     expect(SLOT_WINDOW).toBe(15);
   });
 

@@ -19,7 +19,7 @@ Radio working is how the railway moves stranded trains today. Staff tell each dr
 
 ## The map
 
-All trains run left to right. Every track sits on one shared x axis, in metres. A train's x is its track's start plus its offset.
+All trains run left to right. Every track sits on one shared x axis, in metres. A train's x is its track's start plus its offset. This is the default layout, called `junction`. "Layouts" below lists the others.
 
 ```
 A ──────────────────┬─ P1 ─┐
@@ -39,8 +39,26 @@ x=0               6000   6400                 12400
 
 Two fixed places matter.
 
-- The ask point is at offset 4800 on A and B. It is the last place a train at full speed can still brake before the station.
+- The ask point is at offset 4800 on every entry line. It is the last place a train at full speed can still brake before the station.
 - The junction zone is the last 100 m of every platform plus the first 200 m of EXIT. Only one train may be in it.
+
+### Layouts
+
+A run picks one layout before it starts. Every layout has the same shape: entry lines, two platforms for each line, one junction zone and one EXIT. Each layout adds one entry line to the one before, so more lines merge into the same exit.
+
+| Layout | Entry lines | Platforms |
+|---|---|---|
+| `branch` | A | P1, P2 |
+| `junction`, the default | A, B | P1 to P4 |
+| `busy` | A, B, C | P1 to P6 |
+| `hub` | A, B, C, D | P1 to P8 |
+
+- Every entry line starts at x 0 and is 6000 long. Every platform starts at x 6000 and is 400 long. So the ask point, the junction zone and the radio ranges are the same in every layout.
+- Line A owns P1 and P2, B owns P3 and P4, C owns P5 and P6, and D owns P7 and P8. Wherever the rules say "its pair" or "the fixed split", they mean this.
+- There is one clock slot for each platform, so the slot cycle is as long as the layout has platforms.
+- A platform that is not in the layout reads as occupied in `SensorReadings`, like a dead sensor, and no train is ever sent to it.
+- The layouts are in `src/shared/map.ts`. `applyLayout` picks one before a run starts. `ENTRIES` and `PLATFORMS` there hold the lines and platforms of the layout in use. They are declared with `let`, like the constants: read them where you use them, inside a function.
+- Nothing else about the map can change. All trains still run left to right, which the safety of the rules depends on.
 
 ## Units and constants
 
@@ -71,7 +89,7 @@ The timers the rules use are constants too.
 | `JUNCTION_KEEPER_TIMEOUT` | 10 | Silence from the junction keeper before a train uses clock slots |
 | `PLATFORM_KEEPER_TIMEOUT` | 10 | Silence from the platform keeper before a stopped train uses the fixed split |
 | `RESUME_SETTLE` | 5 | How long a local actor grants nothing after it is switched back on |
-| `SLOT_LENGTH`, `SLOT_WINDOW`, `SLOT_COUNT` | 60, 15, 4 | The clock slots |
+| `SLOT_LENGTH`, `SLOT_WINDOW` | 60, 15 | The clock slots. There is one slot for each platform in the layout, so 4 on the default layout |
 | `RADIO_WORKING_DELAY` | 1200 | How long the centre is down before staff move the first train by radio |
 | `RADIO_RELEASE_GAP` | 60 | How often staff release one stopped train by radio. Our assumption |
 | `RESTART_GAP` | 0 | Seconds between releases in the slow restart. 0 turns it off |
@@ -83,6 +101,7 @@ These values are the defaults. A parameter file can change them for one run. It 
 ```json
 {
   "name": "centre outage",
+  "layout": "junction",
   "physics": { "maxSpeed": 45, "brake": 0.9, "sensorRange": 300 },
   "timers": { "junctionKeeperTimeout": 10 },
   "timetable": { "seed": 1, "trains": 16, "minHeadway": 45, "dwell": 30 },
@@ -96,18 +115,18 @@ These values are the defaults. A parameter file can change them for one run. It 
 }
 ```
 
-`minHeadway` is the shortest gap between two trains entering. Each gap is drawn from the seed, between `minHeadway` and twice it. Each train picks track A or B at random from the seed.
+`minHeadway` is the shortest gap between two trains entering. Each gap is drawn from the seed, between `minHeadway` and twice it. Each train picks one of the layout's entry lines at random from the seed.
 
 - `src/shared/params.ts` reads and checks the file, and lists every problem at once.
 - `applyParams` replaces the constants before a run starts. The constants are declared with `let`, so every file that imports one sees the new value. Read a constant where you use it, inside a function. A copy made when a file loads keeps the old value.
-- The map is not a parameter.
+- `layout` names one of the layouts in "Layouts". Nothing else about the map is a parameter.
 - `npm run sim -- params/centre-outage.json` runs a file with our program and with the baseline, and prints both. Example files are in `params/`.
 
 ## The actors
 
 - A train knows its own state, the timetable, and whatever messages it has received. It never reads another train's state directly.
 - The junction keeper owns the junction zone and grants one lock at a time.
-- The platform keeper owns the four platforms and grants one lock per platform.
+- The platform keeper owns every platform in the layout and grants one lock per platform.
 - Each platform has a sensor that broadcasts empty or occupied.
 - The control centre sees the true state of every train. While it is switched on, it sends each train a `permit` every second. It is today's system. It does not use the platform keeper, the junction keeper or the platform sensors.
 
@@ -130,8 +149,10 @@ These go in `src/shared/types.ts`. Changing them needs its own pull request.
 
 ```ts
 export type TrainId = number;
-export type TrackId = 'A' | 'B' | 'P1' | 'P2' | 'P3' | 'P4' | 'EXIT';
-export type PlatformId = 'P1' | 'P2' | 'P3' | 'P4';
+// Every track any layout can have. A layout uses the first one to four entry tracks.
+export type EntryId = 'A' | 'B' | 'C' | 'D';
+export type PlatformId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8';
+export type TrackId = EntryId | PlatformId | 'EXIT';
 export type ResourceId = PlatformId | 'JUNCTION';
 
 export interface Position { track: TrackId; offset: number }
@@ -145,7 +166,7 @@ export interface TrainState {
 
 export interface TimetableEntry {
   id: TrainId;
-  entry: 'A' | 'B';
+  entry: EntryId;
   enterAt: number;
   platform: PlatformId;   // default platform, always in the entry track's own pair
   leader: TrainId | null; // the train directly ahead on the same entry track
@@ -186,7 +207,7 @@ export interface TrainAgent {
 export type TrainAgentFactory = (id: TrainId, timetable: TimetableEntry[]) => TrainAgent;
 
 export interface SensorReadings {
-  platformOccupied: Record<PlatformId, boolean>;
+  platformOccupied: Record<PlatformId, boolean>; // a platform outside the layout reads occupied
   junctionOccupied: boolean;
   exitStartClear: boolean;   // true if the first 300 m of EXIT is empty
 }
@@ -208,7 +229,7 @@ The engine calls `decide` on every train each tick, applies the returned acceler
 
 A message sent on tick t is in the inbox on tick t + 1. This holds for trains, local actors and the control centre.
 
-A train enters at the start of A or B at `SIGHT_SPEED`, the one speed that can always stop within what it sees. It waits outside the map until the first `SENSOR_RANGE + TRAIN_LENGTH` metres of its entry track are clear, and the wait counts as delay. Trains on one entry track enter in timetable order.
+A train enters at the start of its entry line at `SIGHT_SPEED`, the one speed that can always stop within what it sees. It waits outside the map until the first `SENSOR_RANGE + TRAIN_LENGTH` metres of its entry track are clear, and the wait counts as delay. Trains on one entry track enter in timetable order.
 
 ## Train rules
 
@@ -226,12 +247,12 @@ It needs nothing from the train-to-train radio, the platform keeper, the junctio
 When its permit goes stale, the train runs on the rules in the rest of this section. It starts from where the centre left it.
 
 - On EXIT, or past offset 300 in its platform and so in the junction zone, it takes the `leader` its last permit named as its leader. The centre let it through, so it carries on out without asking the junction keeper.
-- On A or B, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the platform keeper for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
+- On an entry line, if it can no longer stop before the end of its entry track, it keeps the platform its last permit sent it to and asks the platform keeper for that platform. The centre only sent it there if the platform was free, and no other train can reach that platform before it.
 - Anywhere else it stops where its own rules say and asks for what it needs.
 
 When permits return, the train obeys them again on the next tick. It forgets its request timers and drops a junction grant, because the centre now orders the junction. The centre takes over from where the trains are.
 
-- A train on A or B whose route is set into a platform of its own pair is sent there.
+- A train on an entry line whose route is set into a platform of its own pair is sent there.
 - A train already in the junction zone becomes the junction holder, so the centre lets no other train in until it has cleared the zone.
 
 The centre sees each train's set route as the signalling shows it. The engine passes it with the trains' true state.
@@ -240,7 +261,7 @@ The centre sees each train's set route as the signalling shows it. The engine pa
 
 Each train broadcasts a `position` message every second over long range.
 
-A train knows who its leader is. On A and B the timetable names it. On EXIT the junction keeper names it in the `follow` field of the grant.
+A train knows who its leader is. On an entry line the timetable names it. On EXIT the junction keeper names it in the `follow` field of the grant.
 
 "No leader" and "leader unknown" are different.
 
@@ -286,7 +307,7 @@ The display labels each train with a mode.
 
 ### Entering the station
 
-1. A train may not pass the end of A or B without a platform. It treats the end of its entry track as a stop point until it has one.
+1. A train may not pass the end of its entry line without a platform. It treats the end of its entry track as a stop point until it has one.
 2. At the ask point it sends a `lockRequest` and repeats it every 2 seconds. It asks for its default platform, unless it kept a platform from its last permit.
 3. On a `lockGrant` it sets `nextTrack` to that platform and runs in. It keeps repeating its request for that platform every 2 seconds until its front is in the platform.
 4. On a `lockRefuse` with an alternative it requests the alternative. With no alternative it keeps braking and keeps asking.
@@ -301,7 +322,7 @@ The train counts its own dwell time from the moment it stops in the platform.
 
 ### Platform keeper switched off
 
-A train stopped at the end of its entry track with no reply for `PLATFORM_KEEPER_TIMEOUT` uses the fixed split. The time counts from the later of its first request and the last reply it heard. Track A owns P1 and P2. Track B owns P3 and P4.
+A train stopped at the end of its entry track with no reply for `PLATFORM_KEEPER_TIMEOUT` uses the fixed split. The time counts from the later of its first request and the last reply it heard. Each entry line owns its own two platforms: A owns P1 and P2, B owns P3 and P4, and so on.
 
 ```
 for each platform my entry track owns, lowest number first:
@@ -355,9 +376,11 @@ The engine steps a local actor only while its switch is on, so an actor that com
 After 10 seconds without a reply, a train uses clock slots. The 10 seconds count from the later of its first `JUNCTION` request and the last reply it heard from the junction keeper. Every train has an accurate clock, so no messages are needed.
 
 ```
-slot = floor(now / 60) mod 4
+slot = floor(now / 60) mod (the number of platforms in the layout)
 platform Pk may start during the first 15 seconds of slot k - 1
 ```
+
+On the default layout there are 4 slots. On `hub` there are 8, so a platform's turn comes round every 8 minutes. That is slow and still safe: the windows never overlap.
 
 A train starts only if `sightAhead` shows the junction zone empty. It does not know its leader on EXIT, so it stays at `SIGHT_SPEED` until it hears one.
 
