@@ -129,6 +129,10 @@ const frameShown = stationFrame();
 const baselineView = createScene(panel.baselineStage, frameShown, quality);
 const oursView = createScene(panel.oursStage, frameShown, quality);
 panel.setView(view);
+// One camera for both views: moving either one moves the other to match.
+baselineView.onCameraMove((pose) => oursView.setPose(pose));
+oursView.onCameraMove((pose) => baselineView.setPose(pose));
+
 // Click a train to see how it is deciding. Each scene keeps its own selection.
 const selected: { baseline: number | null; ours: number | null } = { baseline: null, ours: null };
 baselineView.onPick((id) => {
